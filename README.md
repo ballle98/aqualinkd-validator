@@ -140,6 +140,46 @@ Real captures must be reviewed before publication. They must not include
 credentials, private network details, serial-device paths, or unrelated
 operational data.
 
+## Capturing RS485 traffic during a test
+
+The validator should capture serial traffic without stopping the behavior
+being tested. The capture source depends on the operating mode:
+
+- **Panel-free tests:** record at the PTY master boundary. This is the
+  authoritative capture because the validator sees every byte injected into
+  AqualinkD and every byte AqualinkD writes, can label the direction exactly,
+  and can timestamp both directions with the same monotonic clock used for
+  logs and scenario events.
+- **Live-panel tests:** enable AqualinkD's normal
+  `debug_RSProtocol_packets` logging while the daemon remains operational,
+  then copy `/tmp/RS485.log` into the run's artifact directory. This log
+  contains decoded packets read and written by AqualinkD.
+- **Raw live-panel diagnostics:** AqualinkD's
+  `debug_RSProtocol_bytes` option writes received bus bytes to
+  `/tmp/RS485raw.log`. This is useful for framing or corruption problems, but
+  it contains received bytes only and is not a bidirectional capture.
+- **Independent bus capture:** a separate receive-only RS485 adapter may be
+  used when a complete passive view of the physical bus is required. A second
+  process must not read AqualinkD's serial device because the readers would
+  compete for bytes.
+
+AqualinkD's existing AQ Manager **Run Serial Logger** / RS485 Monitor is a
+diagnostic takeover mode: it runs synchronously in the daemon's main serial
+loop and pauses normal packet processing until the monitor exits. The
+validator must therefore not invoke it during an operational or
+timing-sensitive test.
+
+The browser-based PDA and other interface simulators can remain active during
+an operational capture. Their traffic uses AqualinkD's normal serial path and
+will appear alongside the daemon's other packet activity. In panel-free mode,
+simulator traffic also crosses the PTY and is captured automatically.
+
+The current AqualinkD log paths are fixed and their files are truncated when a
+new logger starts. The validator should initially serialize tests that collect
+these files, snapshot them into the run artifacts before cleanup, and record
+which logging options were enabled. A future AqualinkD enhancement could make
+the log paths configurable per run.
+
 ## Safety principles
 
 - Never use a real serial device unless the user explicitly enables
@@ -162,15 +202,18 @@ operational data.
 3. Generate an isolated configuration and wait for HTTP readiness.
 4. Add HTTP actions, status polling, log assertions, and deterministic
    timeouts.
-5. Add PTY creation, raw serial capture, and packet expectations.
+5. Add PTY creation, bidirectional raw serial capture with monotonic
+   timestamps, and packet expectations.
 6. Define and validate the YAML scenario schema.
 7. Replay a minimal probe/ACK exchange without a physical panel.
-8. Add failure artifacts and JUnit output suitable for CI.
-9. Add the first timing-sensitive PDA scenario.
+8. Add failure artifacts, including snapshots of any enabled AqualinkD
+   protocol logs, and JUnit output suitable for CI.
+9. Add an operational PDA simulator capture test.
+10. Add the first timing-sensitive PDA scenario.
 
-Stateful protocol drivers, capture recording from live panels, timing fault
-injection, and broader protocol coverage will follow after the basic runner is
-proven.
+Stateful protocol drivers, passive capture from a dedicated live-bus adapter,
+timing fault injection, and broader protocol coverage will follow after the
+basic runner is proven.
 
 ## Relationship to AqualinkD tests and simulators
 
