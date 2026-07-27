@@ -6,8 +6,127 @@ complete daemon through its process, logging, HTTP, and serial interfaces so
 that timing-sensitive behavior can be reproduced and checked consistently.
 
 > [!IMPORTANT]
-> This project is in its initial design phase. The commands and scenario
-> examples below describe the intended interface and are not implemented yet.
+> This project is in its initial implementation phase. The `doctor`, `run`,
+> and `compare` commands described below are available. PTY panel emulation,
+> HTTP scenario actions, PCAPNG serial capture, and legacy importers remain
+> planned.
+
+## Current quick start
+
+The initial implementation has no third-party runtime dependencies:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/aqualinkd-validator doctor
+```
+
+The first usable `run` mode supervises an explicitly selected AqualinkD binary
+against a live panel or externally managed Jandy simulator. It captures
+stdout/stderr, a timestamped event timeline, raw `/proc` process samples, a
+performance summary, and fingerprints of the binary, configuration, and
+source revision:
+
+```sh
+aqualinkd-validator run \
+  --mode live-panel \
+  --allow-live-panel \
+  --serial-device /dev/ttyUSB0 \
+  --aqualinkd /path/to/AqualinkD/release/aqualinkd \
+  --source-tree /path/to/AqualinkD \
+  --config /path/to/aqualinkd.conf \
+  --duration 600 \
+  --label merge-pda-3.1.x \
+  --artifacts ./artifacts
+```
+
+`--allow-live-panel` and `--serial-device` are mandatory. The explicit device
+must exist as a character device and resolve to the active `serial_port` in
+the configuration. The validator never invokes `sudo`, stops services, or
+selects hardware implicitly. Stop any existing AqualinkD service yourself
+before a run so two processes never compete for the serial port.
+
+The effective configuration is fingerprinted but is not copied into artifacts
+yet, avoiding accidental publication of MQTT credentials or other secrets.
+Configuration sanitization will be added before generated configurations are
+retained.
+
+These are live-panel integration/regression tests rather than unit tests.
+Pure unit tests remain appropriate for isolated AqualinkD C functions.
+
+## Raspberry Pi container
+
+The reference image uses the official multi-architecture Python 3.12
+Bookworm base and targets 64-bit Raspberry Pi OS (`linux/arm64`) as well as
+`linux/amd64`. Build it natively on a 64-bit Pi:
+
+```sh
+docker build -t aqualinkd-validator:local .
+```
+
+The validator and the selected AqualinkD binary run in the same container.
+Map only the intended serial device; broad `--privileged` access is not
+required:
+
+```sh
+docker run --rm --network host \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --mount type=bind,source=/home/pi/git/AqualinkD-merge-pda-3.1.x,target=/aqualinkd,readonly \
+  --mount type=bind,source=/etc/aqualinkd.conf,target=/config/aqualinkd.conf,readonly \
+  --mount type=bind,source=/home/pi/git/AqualinkD-merge-pda-3.1.x/web,target=/var/www/aqualinkd,readonly \
+  --mount type=bind,source=/home/pi/aqualinkd-validator-artifacts,target=/artifacts \
+  aqualinkd-validator:local run \
+    --mode live-panel \
+    --allow-live-panel \
+    --serial-device /dev/ttyUSB0 \
+    --aqualinkd /aqualinkd/release/aqualinkd \
+    --source-tree /aqualinkd \
+    --source-commit COMMIT_SHA \
+    --source-branch merge-pda-3.1.x \
+    --workdir /aqualinkd \
+    --config /config/aqualinkd.conf \
+    --duration 600 \
+    --label merge-pda-3.1.x \
+    --artifacts /artifacts
+```
+
+The binary must be built for the Pi architecture and its configuration's
+`web_directory` must match a mounted path. The example uses host networking
+to avoid changing AqualinkD's network path between benchmark runs. Supply
+`--source-commit` when mounting a linked Git worktree because its `.git`
+pointer may refer to a path outside the container. The recorded binary
+SHA-256 remains the authoritative identity of the executable being tested.
+
+Containers share the host kernel, so CPU execution does not incur virtual
+machine emulation overhead. The measurable overhead comes primarily from the
+Python supervisor, log writes, and `/proc` sampling. Sampling defaults to once
+per second and occurs outside AqualinkD. For fair comparisons, use the same
+container, sampling interval, capture options, configuration, and test
+duration for every revision.
+
+## Comparing AqualinkD revisions
+
+The immediate comparison targets are the `rel/2.3.7`, `upstream/master`, and
+`merge-pda-3.1.x` Git refs. Build each in a separate worktree on the same Pi
+using identical compiler options. Run the same scenario multiple times,
+rotate the revision order, and allow the panel and Pi temperature to return
+to a comparable state between runs.
+
+Each run records CPU model, governor, temperature when exposed through sysfs,
+kernel, configuration hash, binary hash, source commit, CPU time, RSS, thread
+count, context switches, and process I/O. Compare two or more completed runs:
+
+```sh
+aqualinkd-validator compare \
+  artifacts/20260727T120000Z-rel-2.3.7 \
+  artifacts/20260727T121500Z-upstream-master \
+  artifacts/20260727T123000Z-merge-pda-3.1.x
+```
+
+The comparison warns when the architecture, CPU model, kernel, container
+runtime, configuration fingerprint, or sampling interval differs. The current
+implementation establishes idle/observation resource baselines; HTTP-to-panel
+latency distributions will be added with the scenario runner.
 
 ## Why this project exists
 
