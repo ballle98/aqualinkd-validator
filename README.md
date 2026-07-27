@@ -1,6 +1,6 @@
 # AqualinkD Validator
 
-`aqualinkd-validator` is a planned Python validation harness for
+`aqualinkd-validator` is a planned containerized Python validation harness for
 [AqualinkD](https://github.com/aqualinkd/AqualinkD). It will exercise the
 complete daemon through its process, logging, HTTP, and serial interfaces so
 that timing-sensitive behavior can be reproduced and checked consistently.
@@ -36,6 +36,18 @@ logs, and enforce timing expectations.
 Live-panel tests will require an explicit opt-in and identify the serial device
 being used. The validator must never silently select a real serial port.
 
+### Jandy simulator mode
+
+The validator supervises AqualinkD while it is connected to one of Jandy's
+legacy Windows panel simulators through two RS485 adapters: one attached to
+the Windows host or VM and one attached to the Linux host or container. The
+simulator and serial link are initially treated as externally managed; the
+validator drives AqualinkD through HTTP, evaluates state and timing, and
+collects synchronized artifacts.
+
+This mode is distinct from AqualinkD's browser-based AllButton, OneTouch, and
+PDA interface simulators.
+
 ### Panel-free mode
 
 The validator creates a pseudo-terminal (PTY) pair and configures AqualinkD to
@@ -49,6 +61,11 @@ use the slave PTY as its `serial_port`. A panel driver uses the master side to:
 This mode is interactive by design. A one-way byte replay is insufficient for
 many scenarios because AqualinkD writes responses to the serial bus and later
 panel messages may depend on them.
+
+The first panel-free milestone is deliberately a bounded feasibility test: a
+minimal probe/ACK exchange followed by one end-to-end HTTP action and expected
+serial response. A complete stateful panel emulator will only be pursued if
+that experiment proves useful.
 
 ## Intended architecture
 
@@ -73,7 +90,19 @@ The main components are expected to be:
 | Panel driver | Replay captures and implement stateful panel behavior |
 | Scenario runner | Execute declarative steps with monotonic deadlines |
 | Assertions | Check HTTP state, logs, serial packets, timing, and process status |
-| Artifact writer | Save merged timelines, raw streams, generated config, and reports |
+| Capture pipeline | Import legacy captures and write PCAPNG, JSONL, and provenance metadata |
+| Artifact writer | Save capture bundles, generated config, logs, and reports |
+
+The canonical supported runtime will be a container with a pinned Python
+version and locked dependencies. It should run panel-free tests without broad
+host privileges and write artifacts to a mounted directory. Live-panel and
+Jandy simulator modes must map only explicitly selected serial devices rather
+than requiring an unrestricted privileged container.
+
+A local Python virtual environment may be documented as a development
+convenience, but it is not the reproducibility boundary: it isolates Python
+packages, not the interpreter, native libraries, processes, devices, or
+AqualinkD runtime dependencies.
 
 ## Scenario format
 
@@ -84,7 +113,7 @@ possible PDA scenario might look like:
 name: pda-wakes-for-filter-pump-request
 mode: replay
 panel: pda
-capture: captures/pda/idle.jsonl
+capture: captures/pda/idle/serial.pcapng
 
 steps:
   - wait_http_ready:
@@ -121,24 +150,67 @@ The schema will evolve as real scenarios expose which primitives are useful.
 Initial support should favor a small set of composable steps rather than
 protocol-specific behavior embedded directly in the scenario runner.
 
-## Capture format
+## Capture bundle and formats
 
-The initial capture format is expected to be line-delimited JSON so captures
-remain inspectable and diffable:
+Each validation run should produce a versioned capture bundle:
+
+```text
+run-<id>/
+├── manifest.yaml
+├── serial.pcapng
+├── timeline.jsonl
+├── stdout.log
+├── stderr.log
+├── http.jsonl
+├── effective-aqualinkd.conf
+└── result.json
+```
+
+`serial.pcapng` is the canonical serial-analysis artifact. Each complete
+RS485 frame is represented as a timestamped packet with a small versioned
+pseudo-header containing direction, capture point, and framing/checksum
+status. PCAPNG provides a path to Wireshark inspection while retaining the
+unmodified RS485 frame as packet data.
+
+`timeline.jsonl` remains the inspectable and diffable view that combines
+serial traffic with HTTP requests, process output, and scenario events:
 
 ```json
 {"offset_ns":0,"direction":"panel_to_aqualinkd","data":"1002600200621003"}
 {"offset_ns":28000000,"direction":"aqualinkd_to_panel","data":"00100200010000131003"}
 ```
 
-Each record should use a monotonic offset, an explicit direction, and the
-unmodified bytes seen on the serial connection. Metadata such as panel model,
-revision, AqualinkD version, configuration, and sanitization notes should live
-in a separate capture manifest.
+Capture timestamps should originate from a monotonic clock. Replay uses
+timestamp deltas rather than wall-clock values. The manifest records the panel
+model and revision, AqualinkD version/commit, configuration, capture source,
+sanitization notes, and fidelity of framing, direction, and timing.
+
+Legacy importers must preserve what their source contains without fabricating
+missing information:
+
+| Source | Framing | Direction | Timing |
+| --- | --- | --- | --- |
+| `/tmp/RS485.log` | Decoded packets | Read/write | Unavailable |
+| `/tmp/RS485raw.log` | Must be reconstructed | Received only | Unavailable |
+| `rs485mon -t` output | Decoded packets | Observed/inferred | Approximate milliseconds |
+| Legacy binary dumps | Format-dependent | Format-dependent | Format-dependent |
+| Validator PTY capture | Exact | Exact | Monotonic, high resolution |
+| Dedicated passive adapter | Exact when framing succeeds | Observed/inferred | Monotonic, high resolution |
+
+Import metadata should explicitly classify each property as exact, inferred,
+approximate, reconstructed, or unavailable. Captures without timing remain
+useful as protocol examples and test vectors, but cannot be treated as
+faithful timing-sensitive replay inputs.
 
 Real captures must be reviewed before publication. They must not include
 credentials, private network details, serial-device paths, or unrelated
 operational data.
+
+An initial Wireshark Lua dissector should expose Jandy/Pentair protocol,
+source/destination IDs, commands, messages, checksum status, and direction as
+filterable fields. A later Wireshark extcap adapter may expose the validator's
+recorder as a live capture interface; neither a compiled Wireshark plugin nor
+live extcap integration is required for the first end-to-end milestone.
 
 ## Capturing RS485 traffic during a test
 
@@ -198,34 +270,47 @@ the log paths configurable per run.
 ## Initial implementation milestones
 
 1. Establish the Python package, CLI, linting, type checking, and unit tests.
-2. Supervise `aqualinkd -d` and capture stdout and stderr concurrently.
-3. Generate an isolated configuration and wait for HTTP readiness.
-4. Add HTTP actions, status polling, log assertions, and deterministic
+2. Add the reference container, pinned Python runtime, dependency lock, and
+   mounted artifact directory; retain a local virtual environment as an
+   optional development path.
+3. Supervise `aqualinkd -d` and capture stdout and stderr concurrently.
+4. Generate an isolated configuration and wait for HTTP readiness.
+5. Add HTTP actions, status polling, log assertions, and deterministic
    timeouts.
-5. Add PTY creation, bidirectional raw serial capture with monotonic
+6. Add PTY creation, bidirectional raw serial capture with monotonic
    timestamps, and packet expectations.
-6. Define and validate the YAML scenario schema.
-7. Replay a minimal probe/ACK exchange without a physical panel.
-8. Add failure artifacts, including snapshots of any enabled AqualinkD
-   protocol logs, and JUnit output suitable for CI.
-9. Add an operational PDA simulator capture test.
-10. Add the first timing-sensitive PDA scenario.
+7. Write the versioned capture bundle, including serial PCAPNG, the combined
+   JSONL timeline, and a provenance/fidelity manifest.
+8. Define and validate the YAML scenario schema.
+9. Complete the bounded panel-free feasibility test: a minimal probe/ACK
+   exchange plus one HTTP action and expected serial response.
+10. Add failure artifacts, including snapshots of any enabled AqualinkD
+    protocol logs, and JUnit output suitable for CI.
+11. Add an operational Jandy simulator scenario.
+12. Add a Wireshark Lua dissector and legacy capture importers.
+13. Add the first timing-sensitive PDA sleep/wake and menu scenario.
 
 Stateful protocol drivers, passive capture from a dedicated live-bus adapter,
-timing fault injection, and broader protocol coverage will follow after the
-basic runner is proven.
+Wireshark extcap integration, timing fault injection, and broader protocol
+coverage will follow after the basic runner is proven. PDA reliability is the
+first protocol priority; the same capture infrastructure should also support
+development for unavailable devices such as Jandy RS485 lights and Chem
+readers.
 
 ## Relationship to AqualinkD tests and simulators
 
 This project is intended to complement:
 
 - C unit tests for pure functions, parsers, checksums, and packet processing;
-- AqualinkD's browser-based AllButton, OneTouch, and PDA simulators; and
+- AqualinkD's browser-based AllButton, OneTouch, and PDA simulators;
+- Jandy's legacy Windows panel simulators; and
 - manual testing with real control panels.
 
 The existing simulators emulate user interfaces that communicate with a
 physical controller. Panel-free validator mode instead emulates enough of the
-controller-facing serial conversation to run AqualinkD itself.
+controller-facing serial conversation to run AqualinkD itself. The repository
+history around AqualinkD's retired file-backed serial support should be
+reviewed for framing and replay lessons before implementing legacy importers.
 
 The upstream design discussion is
 [aqualinkd/AqualinkD discussion #539](https://github.com/aqualinkd/AqualinkD/discussions/539).
