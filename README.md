@@ -121,15 +121,22 @@ sudo apt install \
   containerd.io \
   docker-buildx-plugin \
   docker-compose-plugin
-sudo systemctl enable --now docker
 ```
 
-Verify the engine, Compose plugin, and arm64 container execution:
+Docker normally starts automatically on Debian. Verify its status as described
+in Docker's installation instructions:
 
 ```sh
-sudo docker version
+sudo systemctl status docker
+```
+
+If Docker is not running, start it with `sudo systemctl start docker`. Then
+complete Docker's installation check and verify the Compose plugin needed by
+this project:
+
+```sh
+sudo docker run hello-world
 sudo docker compose version
-sudo docker run --rm hello-world
 ```
 
 Use `sudo docker` initially. Adding a user to the `docker` group grants
