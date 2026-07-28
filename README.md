@@ -56,9 +56,10 @@ Pure unit tests remain appropriate for isolated AqualinkD C functions.
 
 ## Raspberry Pi container
 
-The reference image uses the official multi-architecture Python 3.12
-Bookworm base and targets 64-bit Raspberry Pi OS (`linux/arm64`) as well as
-`linux/amd64`.
+The reference image uses the official multi-architecture Python 3.12 Trixie
+base and targets 64-bit Raspberry Pi OS (`linux/arm64`) as well as
+`linux/amd64`. Using the same Debian generation as the tested Pi allows the
+container to run AqualinkD binaries linked against the Pi's Trixie sysroot.
 
 ### Install Docker Engine on a 64-bit Raspberry Pi
 
@@ -201,6 +202,44 @@ Python supervisor, log writes, and `/proc` sampling. Sampling defaults to once
 per second and occurs outside AqualinkD. For fair comparisons, use the same
 container, sampling interval, capture options, configuration, and test
 duration for every revision.
+
+### Parallel WSL and Raspberry Pi development
+
+The maintained multi-root VS Code workspace opens AqualinkD and
+`aqualinkd-validator` together. Its
+**AqualinkD + Validator: containerized live-panel test on Pi** task implements
+this development loop:
+
+1. Cross-build the current AqualinkD working tree for arm64.
+2. Stage its binary, web files, and test configuration under `/tmp` on the Pi.
+3. Synchronize the current validator working tree to
+   `/tmp/aqualinkd-validator-src`.
+4. Rebuild `aqualinkd-validator:dev` natively on the Pi. Docker reuses
+   unchanged layers between runs.
+5. Stop the installed `aqualinkd` service and refuse to continue if another
+   AqualinkD process still owns the serial path.
+6. Run the validator and staged AqualinkD binary in one container with host
+   networking and only the configured serial device mapped.
+7. Write artifacts to `/tmp/aqualinkd-validator-artifacts`, remove the test
+   container, and restore the installed service even when the test fails or
+   is interrupted.
+
+The task prompts for the run duration and defaults to 600 seconds. The Pi's
+`/tmp` directory is also opened in the workspace, so completed artifacts are
+available under `pi-tmp/aqualinkd-validator-artifacts`.
+
+The validator image contains the Python harness but not a fixed AqualinkD
+build. The task bind-mounts the newly staged `/tmp/aqualinkd`, allowing the C
+daemon and Python validator to be developed independently without rebuilding
+an AqualinkD-specific image. Dirty working trees are staged for development;
+the manifest records the source commit and authoritative binary hash, while
+the task labels dirty builds explicitly.
+
+This task changes a live remote system: it stops the installed service and
+opens the configured RS485 device. Review the selected SSH host, configuration,
+and serial path before running it. The current `run` command performs a timed
+observation and collects process evidence; HTTP scenario actions and serial
+packet assertions remain planned.
 
 ## Comparing AqualinkD revisions
 
