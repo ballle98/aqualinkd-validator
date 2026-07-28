@@ -228,6 +228,12 @@ The task prompts for the run duration and defaults to 600 seconds. The Pi's
 `/tmp` directory is also opened in the workspace, so completed artifacts are
 available under `pi-tmp/aqualinkd-validator-artifacts`.
 
+The deployment helper creates `/tmp/aqualinkd.conf` from the checkout only
+when the remote test configuration does not already exist. It also preserves
+the writable web `config.json`. This prevents normal code iterations from
+overwriting Pi-specific test settings; update the staged configuration
+deliberately when a test requires a configuration change.
+
 The validator image contains the Python harness but not a fixed AqualinkD
 build. The task bind-mounts the newly staged `/tmp/aqualinkd`, allowing the C
 daemon and Python validator to be developed independently without rebuilding
