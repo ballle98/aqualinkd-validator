@@ -58,10 +58,101 @@ Pure unit tests remain appropriate for isolated AqualinkD C functions.
 
 The reference image uses the official multi-architecture Python 3.12
 Bookworm base and targets 64-bit Raspberry Pi OS (`linux/arm64`) as well as
-`linux/amd64`. Build it natively on a 64-bit Pi:
+`linux/amd64`.
+
+### Install Docker Engine on a 64-bit Raspberry Pi
+
+The tested Pi is `aarch64` and runs Debian 13 (`trixie`). Docker officially
+supports Debian 13 on arm64. Use the
+[official Debian installation method](https://docs.docker.com/engine/install/debian/)
+for 64-bit Raspberry Pi systems, not the separate 32-bit Raspberry Pi OS
+instructions.
+
+Confirm the architecture and Debian codename:
 
 ```sh
-docker build -t aqualinkd-validator:local .
+uname -m
+dpkg --print-architecture
+. /etc/os-release
+echo "$ID $VERSION_CODENAME"
+```
+
+The expected values on the tested Pi are `aarch64`, `arm64`, and
+`debian trixie`. Stop here if the architecture is 32-bit (`armhf`); current
+Docker support and images differ for that platform.
+
+Install the repository prerequisites and Docker's official signing key:
+
+```sh
+sudo apt update
+sudo apt install ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg \
+  -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+```
+
+Add Docker's Debian repository:
+
+```sh
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+```
+
+If Docker, Podman compatibility packages, `containerd`, or `runc` were
+previously installed from another repository, review Docker's official
+conflicting-package instructions before continuing. Do not remove packages
+blindly on a host already running containers.
+
+Install Docker Engine, Buildx, and the Compose plugin:
+
+```sh
+sudo apt install \
+  docker-ce \
+  docker-ce-cli \
+  containerd.io \
+  docker-buildx-plugin \
+  docker-compose-plugin
+sudo systemctl enable --now docker
+```
+
+Verify the engine, Compose plugin, and arm64 container execution:
+
+```sh
+sudo docker version
+sudo docker compose version
+sudo docker run --rm hello-world
+```
+
+Use `sudo docker` initially. Adding a user to the `docker` group grants
+root-equivalent control over the host; it is a convenience, not a normal
+unprivileged permission. If that tradeoff is acceptable on a dedicated
+development Pi, enable it explicitly and then log out and back in:
+
+```sh
+sudo usermod -aG docker "$USER"
+```
+
+Docker can change host firewall behavior, and published container ports may
+bypass `ufw` or `firewalld` rules. Review Docker's
+[firewall limitations](https://docs.docker.com/engine/install/debian/#firewall-limitations)
+before exposing the Pi outside a trusted network. The validator maps only the
+required RS485 device with `--device`; it does not require `--privileged`.
+
+### Build and run the validator image
+
+Build it natively on a 64-bit Pi:
+
+```sh
+sudo docker build -t aqualinkd-validator:local .
 ```
 
 The validator and the selected AqualinkD binary run in the same container.
@@ -69,7 +160,7 @@ Map only the intended serial device; broad `--privileged` access is not
 required:
 
 ```sh
-docker run --rm --network host \
+sudo docker run --rm --network host \
   --device /dev/ttyUSB0:/dev/ttyUSB0 \
   --mount type=bind,source=/home/pi/git/AqualinkD-merge-pda-3.1.x,target=/aqualinkd,readonly \
   --mount type=bind,source=/etc/aqualinkd.conf,target=/config/aqualinkd.conf,readonly \
