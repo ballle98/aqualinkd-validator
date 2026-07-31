@@ -75,11 +75,77 @@ def format_comparison(comparison: dict[str, Any]) -> str:
         "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
         for row in rows
     )
+    scenario_table = _format_scenario_timings(comparison["runs"])
+    if scenario_table:
+        lines.extend(["", "Scenario timings (ms):", *scenario_table])
     if comparison["warnings"]:
         lines.append("")
         lines.append("Comparability warnings:")
         lines.extend(f"- {warning}" for warning in comparison["warnings"])
     return "\n".join(lines)
+
+
+def _format_scenario_timings(runs: list[dict[str, Any]]) -> list[str]:
+    measurements = [_scenario_measurements(run) for run in runs]
+    names = sorted({name for values in measurements for name in values})
+    if not names:
+        return []
+    headings = ["measurement", *(run["label"] for run in runs)]
+    rows = [
+        [
+            name,
+            *[
+                _format_number(values.get(name), 3)
+                for values in measurements
+            ],
+        ]
+        for name in names
+    ]
+    widths = [
+        max(len(headings[index]), *(len(row[index]) for row in rows))
+        for index in range(len(headings))
+    ]
+    return [
+        "  ".join(
+            heading.ljust(widths[index])
+            for index, heading in enumerate(headings)
+        ),
+        "  ".join("-" * width for width in widths),
+        *[
+            "  ".join(
+                value.ljust(widths[index])
+                for index, value in enumerate(row)
+            )
+            for row in rows
+        ],
+    ]
+
+
+def _scenario_measurements(run: dict[str, Any]) -> dict[str, float]:
+    scenario = run["performance"].get("scenario")
+    if not isinstance(scenario, dict):
+        return {}
+    values: dict[str, float] = {}
+    measurements = scenario.get("measurements", [])
+    if not isinstance(measurements, list):
+        return values
+    for measurement in measurements:
+        if not isinstance(measurement, dict):
+            continue
+        name = measurement.get("name")
+        if not isinstance(name, str):
+            continue
+        timing_fields = (
+            ("activation_ms", "activation"),
+            ("programmer_duration_ms", "programmer"),
+            ("state_convergence_ms", "state"),
+            ("duration_ms", "end_to_end"),
+        )
+        for field, suffix in timing_fields:
+            duration = measurement.get(field)
+            if isinstance(duration, (int, float)):
+                values[f"{name}.{suffix}"] = float(duration)
+    return values
 
 
 def _load_run(path: Path) -> dict[str, Any]:
@@ -108,6 +174,29 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
             "interval_seconds"
         ),
         "container runtime": lambda run: run["manifest"]["host"].get("container"),
+        "suite": lambda run: (run["manifest"].get("suite") or {}).get("name"),
+        "PDA device restriction": lambda run: (
+            run["manifest"]
+            .get("equipment_control", {})
+            .get("pda_test_devices")
+        ),
+        "PDA resolved switches": lambda run: (
+            (run["performance"].get("scenario") or {})
+            .get("device_selection", {})
+            .get("resolved")
+        ),
+        "PDA timeouts": lambda run: (
+            run["manifest"]
+            .get("equipment_control", {})
+            .get("timeouts_seconds")
+        ),
+        "panel time configuration": lambda run: (
+            run["manifest"]
+            .get("equipment_control", {})
+            .get("panel_time")
+        ),
+        "PDA panel type": _pda_panel_type,
+        "PDA firmware": _pda_firmware,
     }
     for name, getter in fields.items():
         values = {json.dumps(getter(run), sort_keys=True) for run in runs}
@@ -117,6 +206,27 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
     if statuses != {"passed"}:
         warnings.append("one or more runs did not pass")
     return warnings
+
+
+def _pda_panel_type(run: dict[str, Any]) -> Any:
+    init_screen = _pda_init_screen(run)
+    return init_screen.get("panel_type") if init_screen is not None else None
+
+
+def _pda_firmware(run: dict[str, Any]) -> Any:
+    init_screen = _pda_init_screen(run)
+    return init_screen.get("firmware") if init_screen is not None else None
+
+
+def _pda_init_screen(run: dict[str, Any]) -> dict[str, Any] | None:
+    scenario = run["performance"].get("scenario")
+    if not isinstance(scenario, dict):
+        return None
+    panel = scenario.get("panel")
+    if not isinstance(panel, dict):
+        return None
+    init_screen = panel.get("init_screen")
+    return init_screen if isinstance(init_screen, dict) else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:

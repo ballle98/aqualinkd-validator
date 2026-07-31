@@ -4,10 +4,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aqualinkd_validator.config import ConfigurationError, read_config_value
+from aqualinkd_validator.config import (
+    ConfigurationError,
+    read_config_value,
+    resolve_api_base_url,
+)
 
 
 class ConfigTests(unittest.TestCase):
+    def test_resolves_wildcard_listen_address_to_loopback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "aqualinkd.conf"
+            path.write_text(
+                "listen_address=http://0.0.0.0:8080\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                resolve_api_base_url(path, None),
+                "http://127.0.0.1:8080",
+            )
+
     def test_reads_last_active_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "aqualinkd.conf"
@@ -34,4 +50,3 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

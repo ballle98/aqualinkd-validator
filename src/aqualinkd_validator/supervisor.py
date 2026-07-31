@@ -6,9 +6,10 @@ import json
 import os
 import signal
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Protocol, TextIO
 
 
 @dataclass(frozen=True)
@@ -19,24 +20,114 @@ class RunResult:
     duration_ns: int
 
 
+@dataclass(frozen=True)
+class ScenarioOutcome:
+    status: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class LineEvent:
+    sequence: int
+    offset_ns: int
+    stream: str
+    text: str
+
+
+class OutputMonitor:
+    def __init__(self, history_size: int = 4096) -> None:
+        self._condition = asyncio.Condition()
+        self._events: deque[LineEvent] = deque(maxlen=history_size)
+        self._sequence = 0
+
+    @property
+    def cursor(self) -> int:
+        return self._sequence
+
+    def recent_events(self, *, before: int | None = None) -> list[LineEvent]:
+        return [
+            event
+            for event in self._events
+            if before is None or event.sequence < before
+        ]
+
+    async def publish(self, offset_ns: int, stream: str, text: str) -> None:
+        async with self._condition:
+            self._sequence += 1
+            self._events.append(
+                LineEvent(
+                    sequence=self._sequence,
+                    offset_ns=offset_ns,
+                    stream=stream,
+                    text=text,
+                )
+            )
+            self._condition.notify_all()
+
+    async def wait_for(
+        self,
+        predicate: str,
+        *,
+        after: int = 0,
+        timeout_seconds: float,
+    ) -> LineEvent:
+        async def wait() -> LineEvent:
+            cursor = after
+            while True:
+                async with self._condition:
+                    for event in self._events:
+                        if event.sequence > cursor and predicate in event.text:
+                            return event
+                    cursor = max(cursor, self._sequence)
+                    await self._condition.wait()
+
+        try:
+            return await asyncio.wait_for(wait(), timeout_seconds)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"timed out after {timeout_seconds:g}s waiting for log "
+                f"marker: {predicate}"
+            ) from error
+
+
 class Timeline:
     def __init__(self, path: Path, start_ns: int) -> None:
         self._handle = path.open("w", encoding="utf-8")
         self._start_ns = start_ns
         self._lock = asyncio.Lock()
 
-    async def write(self, kind: str, **fields: Any) -> None:
+    @property
+    def start_ns(self) -> int:
+        return self._start_ns
+
+    def offset_ns(self) -> int:
+        return time.monotonic_ns() - self._start_ns
+
+    async def write(self, kind: str, **fields: Any) -> int:
+        offset_ns = self.offset_ns()
         event = {
-            "offset_ns": time.monotonic_ns() - self._start_ns,
+            "offset_ns": offset_ns,
             "kind": kind,
             **fields,
         }
         async with self._lock:
             self._handle.write(json.dumps(event, separators=(",", ":")) + "\n")
             self._handle.flush()
+        return offset_ns
 
     def close(self) -> None:
         self._handle.close()
+
+
+@dataclass(frozen=True)
+class ScenarioContext:
+    artifact_dir: Path
+    monitor: OutputMonitor
+    timeline: Timeline
+
+
+class Scenario(Protocol):
+    async def run(self, context: ScenarioContext) -> ScenarioOutcome: ...
 
 
 async def supervise(
@@ -47,15 +138,19 @@ async def supervise(
     duration_seconds: float | None,
     sample_interval_seconds: float,
     terminate_grace_seconds: float,
+    scenario: Scenario | None = None,
+    scenario_cleanup_seconds: float = 120.0,
 ) -> RunResult:
     start_ns = time.monotonic_ns()
     timeline = Timeline(artifact_dir / "timeline.jsonl", start_ns)
+    monitor = OutputMonitor()
     stdout_handle = (artifact_dir / "stdout.log").open("w", encoding="utf-8")
     stderr_handle = (artifact_dir / "stderr.log").open("w", encoding="utf-8")
     metrics_handle = (artifact_dir / "metrics.jsonl").open("w", encoding="utf-8")
     process: asyncio.subprocess.Process | None = None
     readers: list[asyncio.Task[None]] = []
     sampler: asyncio.Task[None] | None = None
+    scenario_task: asyncio.Task[ScenarioOutcome] | None = None
     reason = "startup_failed"
     status = "failed"
     returncode: int | None = None
@@ -74,10 +169,22 @@ async def supervise(
         assert process.stderr is not None
         readers = [
             asyncio.create_task(
-                _read_stream(process.stdout, stdout_handle, "stdout", timeline)
+                _read_stream(
+                    process.stdout,
+                    stdout_handle,
+                    "stdout",
+                    timeline,
+                    monitor,
+                )
             ),
             asyncio.create_task(
-                _read_stream(process.stderr, stderr_handle, "stderr", timeline)
+                _read_stream(
+                    process.stderr,
+                    stderr_handle,
+                    "stderr",
+                    timeline,
+                    monitor,
+                )
             ),
         ]
         sampler = asyncio.create_task(
@@ -89,7 +196,57 @@ async def supervise(
             )
         )
 
-        if duration_seconds is None:
+        if scenario is not None:
+            scenario_task = asyncio.create_task(
+                scenario.run(
+                    ScenarioContext(
+                        artifact_dir=artifact_dir,
+                        monitor=monitor,
+                        timeline=timeline,
+                    )
+                )
+            )
+            process_wait = asyncio.create_task(process.wait())
+            done, _ = await asyncio.wait(
+                {process_wait, scenario_task},
+                timeout=duration_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                reason = "scenario_timeout"
+                status = "failed"
+                await timeline.write(
+                    "scenario_timeout",
+                    duration_seconds=duration_seconds,
+                )
+                await _cancel_task(scenario_task, scenario_cleanup_seconds)
+                await _stop_process(process, timeline, terminate_grace_seconds)
+                returncode = process.returncode
+            elif process_wait in done:
+                returncode = process_wait.result()
+                reason = "child_exit_during_scenario"
+                status = "failed"
+                await _cancel_task(scenario_task, terminate_grace_seconds)
+            else:
+                try:
+                    outcome = scenario_task.result()
+                except Exception as error:
+                    reason = "scenario_error"
+                    status = "failed"
+                    await timeline.write(
+                        "scenario_error",
+                        error=f"{type(error).__name__}: {error}",
+                    )
+                else:
+                    reason = outcome.reason
+                    status = outcome.status
+                await _stop_process(process, timeline, terminate_grace_seconds)
+                returncode = process.returncode
+            if not process_wait.done():
+                process_wait.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await process_wait
+        elif duration_seconds is None:
             returncode = await process.wait()
             status = "passed" if returncode == 0 else "failed"
             reason = "child_exit"
@@ -111,12 +268,16 @@ async def supervise(
     except asyncio.CancelledError:
         reason = "interrupted"
         status = "failed"
+        if scenario_task is not None and not scenario_task.done():
+            await _cancel_task(scenario_task, scenario_cleanup_seconds)
         if process is not None:
             await _stop_process(process, timeline, terminate_grace_seconds)
             returncode = process.returncode
         raise
     finally:
         if process is not None and process.returncode is None:
+            if scenario_task is not None and not scenario_task.done():
+                await _cancel_task(scenario_task, scenario_cleanup_seconds)
             await _stop_process(process, timeline, terminate_grace_seconds)
             returncode = process.returncode
         if sampler is not None:
@@ -149,12 +310,58 @@ async def _read_stream(
     destination: TextIO,
     name: str,
     timeline: Timeline,
+    monitor: OutputMonitor,
 ) -> None:
     while line := await stream.readline():
         text = line.decode("utf-8", errors="replace")
         destination.write(text)
         destination.flush()
-        await timeline.write("process_output", stream=name, text=text.rstrip("\n"))
+        stripped = text.rstrip("\n")
+        offset_ns = await timeline.write(
+            "process_output",
+            stream=name,
+            text=stripped,
+        )
+        await monitor.publish(offset_ns, name, stripped)
+        _echo_process_update(name, stripped)
+
+
+def _echo_process_update(stream: str, text: str) -> None:
+    state_markers = (
+        (
+            "Waiting for Control Panel probe",
+            "[STATE ] Waiting on control-panel probe",
+        ),
+        (
+            "Got probe on ",
+            "[STATE ] Control-panel probe received",
+        ),
+        (
+            "Starting programming thread 'Init PDA'",
+            "[STATE ] Init PDA task created; waiting to become active",
+        ),
+    )
+    for marker, message in state_markers:
+        if marker in text:
+            print(message, flush=True)
+            break
+
+    severity = text.partition(":")[0].strip().lower()
+    if severity in {"warning", "error", "critical", "fatal"}:
+        print(f"[AQUALINKD {severity.upper()}] {text}", flush=True)
+    elif stream == "stderr":
+        print(f"[AQUALINKD STDERR] {text}", flush=True)
+
+
+async def _cancel_task(
+    task: asyncio.Task[Any],
+    cleanup_timeout_seconds: float,
+) -> None:
+    if task.done():
+        return
+    task.cancel()
+    with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+        await asyncio.wait_for(task, cleanup_timeout_seconds)
 
 
 async def _sample_process(

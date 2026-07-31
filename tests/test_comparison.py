@@ -20,6 +20,9 @@ class ComparisonTests(unittest.TestCase):
             rendered = format_comparison(comparison)
             self.assertIn("rel-2.3.7", rendered)
             self.assertIn("upstream-master", rendered)
+            self.assertIn("Scenario timings (ms)", rendered)
+            self.assertIn("pda.init", rendered)
+            self.assertIn("pda.init.programmer", rendered)
             self.assertIn("config fingerprint differs", rendered)
 
     def test_requires_two_runs(self) -> None:
@@ -49,7 +52,17 @@ class ComparisonTests(unittest.TestCase):
                 "rss_bytes": {"maximum": 10 * 1024 * 1024},
                 "threads": {"average": 3.0},
                 "context_switches": {"voluntary": 10, "nonvoluntary": 2},
-            }
+            },
+            "scenario": {
+                "measurements": [
+                    {
+                        "name": "pda.init",
+                        "activation_ms": 12.0,
+                        "programmer_duration_ms": 111.456,
+                        "duration_ms": 123.456,
+                    },
+                ]
+            },
         }
         (path / "manifest.yaml").write_text(json.dumps(manifest), encoding="utf-8")
         (path / "performance.json").write_text(
