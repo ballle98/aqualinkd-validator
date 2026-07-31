@@ -13,7 +13,7 @@ COPY src ./src
 
 ENV PYTHONPATH=/opt/aqualinkd-validator/src
 
-VOLUME ["/artifacts"]
+VOLUME ["/tmp/aqualinkd-validator-artifacts"]
 
 ENTRYPOINT ["python", "-m", "aqualinkd_validator"]
 CMD ["doctor"]

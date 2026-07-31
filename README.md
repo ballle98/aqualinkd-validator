@@ -1,57 +1,329 @@
 # AqualinkD Validator
 
-`aqualinkd-validator` is a planned containerized Python validation harness for
-[AqualinkD](https://github.com/aqualinkd/AqualinkD). It will exercise the
-complete daemon through its process, logging, HTTP, and serial interfaces so
-that timing-sensitive behavior can be reproduced and checked consistently.
+`aqualinkd-validator` is a containerized Python validation harness for
+[AqualinkD](https://github.com/aqualinkd/AqualinkD). It currently supervises
+the complete daemon through its process, logging, and HTTP interfaces, and is
+intended to add serial capture and replay so timing-sensitive behavior can be
+reproduced and checked consistently.
 
 > [!IMPORTANT]
-> This project is in its initial implementation phase. The `doctor`, `run`,
-> and `compare` commands described below are available. PTY panel emulation,
-> HTTP scenario actions, PCAPNG serial capture, and legacy importers remain
-> planned.
+> This project is under active development. The `doctor`, `run`, and `compare`
+> commands and the `pda-live-fast` and `pda-live-long` hardware suites are
+> implemented. The live suites supervise AqualinkD, perform HTTP actions,
+> validate PDA state and timing, restore changed equipment state, and retain
+> diagnostic and performance artifacts. Generic YAML scenarios, isolated PTY
+> panel emulation, PCAPNG serial capture, operational RS485-log collection,
+> and legacy importers remain planned under
+> [issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1).
 
-## Current quick start
+## Installation and first test
 
-The initial implementation has no third-party runtime dependencies:
+### Prerequisites
+
+To run a live-panel suite, prepare all of the following:
+
+- A Linux host, currently tested on 64-bit Raspberry Pi OS/Debian 13.
+- Docker Engine for the canonical container workflow, or Python 3.11 or newer
+  for direct development use.
+- A separately built AqualinkD binary compatible with the test host.
+- A reviewed AqualinkD configuration for the connected panel. Its active
+  `serial_port` must name the exact character device passed to the validator,
+  and its `web_directory` must exist in the runtime environment.
+- Exclusive access to that serial device. Stop the installed AqualinkD
+  service before testing and arrange to restart it afterward.
+- Knowledge of what every switch exposed by `/api/devices` physically
+  controls. `--panel-read-write` authorizes the long suite to operate all of
+  those discovered switches unless an explicit device restriction is used.
+
+Live PDA suites operate real equipment. Do not use them while maintenance is
+in progress, valves are in an unsafe position, water level is unsuitable, or
+equipment operation would otherwise be hazardous. Freeze-protection changes
+and service-mode entry are intentionally excluded.
+
+The recommended first run uses Docker on the same Raspberry Pi as the
+installed AqualinkD service. If Docker is not installed, follow
+[Install Docker Engine on a 64-bit Raspberry Pi](#install-docker-engine-on-a-64-bit-raspberry-pi)
+first.
+
+### Build the validator image
+
+Run these commands on the Pi:
 
 ```sh
+git clone https://github.com/ballle98/aqualinkd-validator.git
+cd aqualinkd-validator
+sudo docker build -t aqualinkd-validator:local .
+sudo docker run --rm aqualinkd-validator:local doctor
+```
+
+The image contains the Python validator, not AqualinkD. The installed binary,
+configuration, web directory, serial device, and artifact directory are
+provided as runtime mounts. Building the image does not copy or reserve
+anything under `/tmp`.
+
+### First test: installed AqualinkD
+
+This example assumes the normal Pi installation:
+
+- `/usr/local/bin/aqualinkd`
+- `/etc/aqualinkd.conf`
+- `serial_port=/dev/ttyUSB0`
+- `web_directory=/var/www/aqualinkd/`
+- panel timezone `America/Chicago`
+
+Adjust the device, web directory, and timezone if the installed configuration
+differs. The validator reads `serial_port` from the mounted configuration and
+verifies that it matches the mapped character device. AqualinkD needs its
+configured web directory mounted because the child process sees only the
+container filesystem.
+
+Stop the service, run the fast suite, and restore the service:
+
+```sh
+# stop aqualinkd service
+sudo systemctl stop aqualinkd
+
+#run validator
+sudo docker run --rm \
+  --env TZ=America/Chicago \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --mount type=bind,source=/usr/local/bin/aqualinkd,target=/usr/local/bin/aqualinkd,readonly \
+  --mount type=bind,source=/etc/aqualinkd.conf,target=/etc/aqualinkd.conf,readonly \
+  --mount type=bind,source=/var/www/aqualinkd,target=/var/www/aqualinkd \
+  --volume /home/pi/aqualinkd-validator-artifacts:/tmp/aqualinkd-validator-artifacts \
+  aqualinkd-validator:local run \
+    --panel-read-write \
+    pda-live-fast
+
+# start aqualinkd service
+sudo systemctl start aqualinkd
+```
+
+Do not continue if another AqualinkD process still owns the serial device
+after the service is stopped. The validator supervises a new AqualinkD process
+so it can capture stdout/stderr and metrics; it does not attach to the running
+systemd process. It stops only its child and does not restart the service.
+
+The validator defaults to `/tmp/aqualinkd-validator-artifacts` and creates it
+when needed. The volume above maps that container path to the persistent host
+directory `/home/pi/aqualinkd-validator-artifacts`; Docker creates the host
+directory if it is absent. The host directory can be elsewhere without adding
+a validator option—change only the left side of `--volume`.
+
+### Testing an AqualinkD build staged under `/tmp`
+
+The same validator image can test a development binary without installing it.
+Rebuild the image only when validator code changes. When AqualinkD changes,
+stage its binary, configuration, and web files on the Pi:
+
+```sh
+sudo install -m 0755 ~/git/AqualinkD/release/aqualinkd /tmp/aqualinkd
+sudo cp -n /etc/aqualinkd.conf /tmp/aqualinkd.conf
+sudo mkdir -p /tmp/aqualinkd-web
+sudo cp -a ~/git/AqualinkD/web/. /tmp/aqualinkd-web/
+sudo sed -i -E \
+  's|^[[:space:]]*web_directory[[:space:]]*=.*$|web_directory=/tmp/aqualinkd-web/|' \
+  /tmp/aqualinkd.conf
+```
+
+Review `/tmp/aqualinkd.conf` before using it. In particular, confirm its
+`serial_port`, PDA settings, HTTP listener, and any credentials or external
+integrations. Then stop the installed service and run the staged SUT:
+
+```sh
+# stop aqualinkd service
+sudo systemctl stop aqualinkd
+
+# run validator
+sudo docker run --rm \
+  --env TZ=America/Chicago \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --mount type=bind,source=/tmp/aqualinkd,target=/usr/local/bin/aqualinkd,readonly \
+  --mount type=bind,source=/tmp/aqualinkd.conf,target=/etc/aqualinkd.conf,readonly \
+  --mount type=bind,source=/tmp/aqualinkd-web,target=/tmp/aqualinkd-web \
+  --volume /tmp/aqualinkd-validator-artifacts:/tmp/aqualinkd-validator-artifacts \
+  aqualinkd-validator:local run \
+    --panel-read-write \
+    pda-live-fast
+
+#start aqualinkd service
+sudo systemctl start aqualinkd
+```
+
+The staged binary and configuration are mounted at the validator defaults,
+so no path options are needed. `/tmp` is only a convenient host staging area
+for this SUT. Results use `/tmp/aqualinkd-validator-artifacts` on both the Pi
+and in the container; move the host side of the volume to a persistent path
+when results must survive a reboot.
+
+### Running without Docker on a constrained Pi
+
+On a Pi Zero or another resource-constrained system, run the validator
+directly to avoid the container image and Docker daemon. The package has no
+third-party runtime dependencies:
+
+```sh
+git clone https://github.com/ballle98/aqualinkd-validator.git
+cd aqualinkd-validator
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/aqualinkd-validator doctor
+
+sudo systemctl stop aqualinkd
+pgrep -a aqualinkd
+sudo .venv/bin/aqualinkd-validator run \
+  --panel-read-write \
+  pda-live-fast
+validator_status=$?
+sudo systemctl start aqualinkd
+printf 'validator exit status: %s\n' "$validator_status"
 ```
 
-The first usable `run` mode supervises an explicitly selected AqualinkD binary
-against a live panel or externally managed Jandy simulator. It captures
-stdout/stderr, a timestamped event timeline, raw `/proc` process samples, a
-performance summary, and fingerprints of the binary, configuration, and
-source revision:
+Direct mode defaults to `/usr/local/bin/aqualinkd`,
+`/etc/aqualinkd.conf`, that configuration's `serial_port`, and the system's
+local IANA timezone. It creates artifacts under
+`/tmp/aqualinkd-validator-artifacts`. Use `--aqualinkd`, `--config`,
+`--serial-device`, `--panel-timezone`, or `--artifacts` only for overrides.
+Because AqualinkD runs directly on the host, its configured web directory is
+already visible and needs no mount.
 
-```sh
-aqualinkd-validator run \
-  --mode live-panel \
-  --allow-live-panel \
-  --serial-device /dev/ttyUSB0 \
-  --aqualinkd /path/to/AqualinkD/release/aqualinkd \
-  --source-tree /path/to/AqualinkD \
-  --config /path/to/aqualinkd.conf \
-  --duration 600 \
-  --label merge-pda-3.1.x \
-  --artifacts ./artifacts
-```
+Direct execution still adds the Python supervisor, log writing, and `/proc`
+sampling overhead, but it does not require a Docker daemon or container
+filesystem. Files created through `sudo` may need their ownership corrected
+afterward.
 
-`--allow-live-panel` and `--serial-device` are mandatory. The explicit device
-must exist as a character device and resolve to the active `serial_port` in
-the configuration. The validator never invokes `sudo`, stops services, or
-selects hardware implicitly. Stop any existing AqualinkD service yourself
-before a run so two processes never compete for the serial port.
-
-The effective configuration is fingerprinted but is not copied into artifacts
-yet, avoiding accidental publication of MQTT credentials or other secrets.
-Configuration sanitization will be added before generated configurations are
-retained.
-
+For PDA suites, the validator reads AqualinkD's
+`Starting web server on ...` startup log and uses the reported port, including
+non-default ports such as `8080`. The effective configuration is fingerprinted
+but not copied into artifacts, avoiding accidental publication of credentials.
 These are live-panel integration/regression tests rather than unit tests.
+
+### PDA live-panel suites
+
+The live-panel coverage is split into two profiles:
+
+| Suite | Intended use | Coverage |
+| --- | --- | --- |
+| `pda-live-fast` | Default development regression | Initialization, panel identity and clock, filter-pump round trip, and optional pool-heater setpoint and enable round trips |
+| `pda-live-long` | State-dependent performance and regression | Everything in the fast suite, plus filter-pump operations while the equipment-status menu is present, consecutive operations across every discovered switch, and operations after PDA sleep |
+
+Multiple positional suites are serialized. For example,
+`run --panel-read-write pda-live-fast pda-live-long` completes the fast suite,
+stops its supervised AqualinkD process, and writes its artifacts before
+starting a new AqualinkD process for the long suite. A failed suite stops the
+sequence, and suites never compete for the serial bus.
+
+Both profiles start AqualinkD in the foreground with `-vv`, enabling
+`DEBUG_SERIAL` logging in addition to the normal validator arguments:
+
+```text
+aqualinkd -d -c /path/to/aqualinkd.conf -vv
+```
+
+The container console reports each phase as it runs, for example:
+
+```text
+[ RUN  ] PDA initialization, identity, and clock
+[STATE ] Waiting on control-panel probe
+[STATE ] Control-panel probe received
+[STATE ] Init PDA started
+[STATE ] Init PDA complete
+[ PASS ] PDA initialization, identity, and clock completed in 18.427s
+[ RUN  ] Filter pump after initialization
+[ PASS ] Filter pump after initialization completed in 4.913s
+```
+
+Failures include the error after the elapsed time, optional cases emit
+`[ SKIP ]`, and the suite finishes with an overall pass or fail line. Output
+is flushed immediately so it remains visible through Docker, SSH, and the VS
+Code task terminal. AqualinkD warning, error, critical, and fatal messages are
+also forwarded immediately with an `[AQUALINKD ...]` prefix; any otherwise
+unclassified stderr line is forwarded as `[AQUALINKD STDERR]`. Forwarding
+does not remove diagnostics from the artifact logs or timeline.
+
+The fast suite performs these phases:
+
+1. Wait for the PDA programmer to become active after the panel probe and for
+   `(Init PDA) finished`, recording activation wait and active runtime
+   separately. Capture the panel type and firmware directly from the PDA
+   firmware-version screen, then record the normalized `/api/status` panel
+   identity.
+2. Allow initialization-time clock synchronization to settle, then check that
+   the panel clock is within 120 seconds of the system clock in the local
+   timezone, or the explicit `--panel-timezone` override.
+3. Toggle the filter pump after initialization and restore its original
+   state.
+4. If a pool heater is present, move its setpoint down one degree, up one
+   degree, and back to the original setting. It also toggles the heater
+   enable state and restores the original state. A direction is skipped when
+   the original setpoint is at its supported boundary.
+
+The long suite then adds:
+
+1. Ensure the filter pump is on, wait for the PDA equipment-status menu, then
+   time filter-pump off and on operations while that menu is active.
+2. Discover every `/api/devices` entry whose type is `switch`, change those
+   devices consecutively, then restore them in reverse order. Supplying one or
+   more repeated `--pda-test-device` options restricts this phase to only
+   those switch IDs.
+3. Wait for AqualinkD's PDA sleep marker, toggle the filter pump, and restore
+   it.
+
+Freeze-protection mutation and service-mode entry are deliberately excluded
+from both live-panel suites. They affect safety or maintenance behavior and
+belong in future panel-free simulator/replay suites where no physical
+equipment is connected. Read-only observation of those states may be added to
+live suites without changing this policy.
+
+Each physical action records separate timings for HTTP acknowledgement,
+HTTP-request-to-programmer activation, active programmer runtime, API state
+convergence after programmer completion, and total end-to-end time. PDA
+initialization similarly separates the wait for a panel probe and task
+activation from the active `Init PDA` runtime. Console `[ WAIT ]`, `[ACTIVE]`,
+`[ DONE ]`, and `[STATE ]` lines expose these transitions while the test is
+running. `scenario.json` contains the panel identity, clock check,
+measurements, skipped optional cases, and restoration report; the same data
+is embedded in `performance.json`.
+
+The scenario snapshots every state it may change and performs best-effort
+restoration after success, failure, timeout, or interruption. A restoration
+failure fails the run. The suite exits when its scenario passes or fails;
+`--pda-init-timeout` (180 seconds by default) applies separately to
+initialization activation and completion. `--pda-activation-timeout` defaults
+to 130 seconds so it exceeds AqualinkD's 120-second programmer-queue wait,
+`--pda-action-timeout` defaults to 90 seconds and starts when that task becomes
+active, and `--pda-state-timeout` allows 10 seconds for API convergence after
+it finishes. A matching PDA programmer error in the log fails the action
+immediately instead of waiting for the state timeout.
+`--pda-sleep-timeout` controls state waits. On cancellation, the daemon is
+kept alive for up to `--pda-cleanup-timeout` seconds so restoration can finish
+before it is terminated. Override the clock tolerance with
+`--panel-time-tolerance` when the panel requires a wider bound.
+
+The high-volume `-vv` diagnostics are captured in `stdout.log` and
+`stderr.log`, and every line is timestamped against the monotonic run clock
+in `timeline.jsonl`. The manifest records the selected suite, effective
+AqualinkD command, API origin, requested device restriction, and the resolved
+set of discovered switches.
+
+Every current run creates a unique artifact directory containing:
+
+```text
+<timestamp>-<label>/
+├── manifest.yaml
+├── metrics.jsonl
+├── performance.json
+├── result.json
+├── scenario.json
+├── stderr.log
+├── stdout.log
+└── timeline.jsonl
+```
+
+`scenario.json` is present for a selected PDA suite. `manifest.yaml` currently
+contains JSON-compatible structured data despite its filename. Preserve the
+entire directory when reporting a failure.
+
 Pure unit tests remain appropriate for isolated AqualinkD C functions.
 
 ## Raspberry Pi container
@@ -132,8 +404,9 @@ sudo systemctl status docker
 ```
 
 If Docker is not running, start it with `sudo systemctl start docker`. Then
-complete Docker's installation check and verify the Compose plugin needed by
-this project:
+complete Docker's installation check and verify the installed Compose plugin.
+Compose is convenient for future workflows but is not required by the current
+single-container commands:
 
 ```sh
 sudo docker run hello-world
@@ -155,60 +428,30 @@ bypass `ufw` or `firewalld` rules. Review Docker's
 before exposing the Pi outside a trusted network. The validator maps only the
 required RS485 device with `--device`; it does not require `--privileged`.
 
-### Build and run the validator image
+### Container behavior and overhead
 
-Build it natively on a 64-bit Pi:
-
-```sh
-sudo docker build -t aqualinkd-validator:local .
-```
-
-The validator and the selected AqualinkD binary run in the same container.
-Map only the intended serial device; broad `--privileged` access is not
-required:
-
-```sh
-sudo docker run --rm --network host \
-  --device /dev/ttyUSB0:/dev/ttyUSB0 \
-  --mount type=bind,source=/home/pi/git/AqualinkD-merge-pda-3.1.x,target=/aqualinkd,readonly \
-  --mount type=bind,source=/etc/aqualinkd.conf,target=/config/aqualinkd.conf,readonly \
-  --mount type=bind,source=/home/pi/git/AqualinkD-merge-pda-3.1.x/web,target=/var/www/aqualinkd,readonly \
-  --mount type=bind,source=/home/pi/aqualinkd-validator-artifacts,target=/artifacts \
-  aqualinkd-validator:local run \
-    --mode live-panel \
-    --allow-live-panel \
-    --serial-device /dev/ttyUSB0 \
-    --aqualinkd /aqualinkd/release/aqualinkd \
-    --source-tree /aqualinkd \
-    --source-commit COMMIT_SHA \
-    --source-branch merge-pda-3.1.x \
-    --workdir /aqualinkd \
-    --config /config/aqualinkd.conf \
-    --duration 600 \
-    --label merge-pda-3.1.x \
-    --artifacts /artifacts
-```
-
-The binary must be built for the Pi architecture and its configuration's
-`web_directory` must match a mounted path. The example uses host networking
-to avoid changing AqualinkD's network path between benchmark runs. Supply
-`--source-commit` when mounting a linked Git worktree because its `.git`
-pointer may refer to a path outside the container. The recorded binary
-SHA-256 remains the authoritative identity of the executable being tested.
+The AqualinkD binary must match the Pi architecture. The binary,
+configuration, configured web directory, serial character device, and artifact
+directory are runtime inputs; they are not included in the validator image.
+The recorded binary SHA-256 is the authoritative executable identity.
 
 Containers share the host kernel, so CPU execution does not incur virtual
 machine emulation overhead. The measurable overhead comes primarily from the
 Python supervisor, log writes, and `/proc` sampling. Sampling defaults to once
 per second and occurs outside AqualinkD. For fair comparisons, use the same
-container, sampling interval, capture options, configuration, and test
-duration for every revision.
+container, suite, per-phase timeouts, sampling interval, capture options, and
+configuration for every revision.
 
 ### Parallel WSL and Raspberry Pi development
 
+This subsection describes maintainer automation stored in a separate dotfiles
+checkout; the helper and workspace file are not installed by this repository.
+New users can run the complete public workflow with the Docker commands above.
+
 The maintained multi-root VS Code workspace opens AqualinkD and
-`aqualinkd-validator` together. Its
-**AqualinkD + Validator: containerized live-panel test on Pi** task implements
-this development loop:
+`aqualinkd-validator` together. Its **AqualinkD + Validator: pda-live-fast on
+staged Pi** and **AqualinkD + Validator: pda-live-long on staged Pi** tasks
+implement this staged-development loop:
 
 1. Cross-build the current AqualinkD working tree for arm64.
 2. Stage its binary, web files, and test configuration under `/tmp` on the Pi.
@@ -218,15 +461,31 @@ this development loop:
    unchanged layers between runs.
 5. Stop the installed `aqualinkd` service and refuse to continue if another
    AqualinkD process still owns the serial path.
-6. Run the validator and staged AqualinkD binary in one container with host
-   networking and only the configured serial device mapped.
+6. Run `/tmp/aqualinkd -c /tmp/aqualinkd.conf` under the validator in one
+   container with only the configured serial device mapped. The web directory
+   is read from that staged configuration and mounted at the same path.
 7. Write artifacts to `/tmp/aqualinkd-validator-artifacts`, remove the test
    container, and restore the installed service even when the test fails or
    is interrupted.
 
-The task prompts for the run duration and defaults to 600 seconds. The Pi's
-`/tmp` directory is also opened in the workspace, so completed artifacts are
-available under `pi-tmp/aqualinkd-validator-artifacts`.
+Choose the task for the desired suite. Both run until their scenario passes or
+fails; there is no runtime prompt. The long task operates every switch
+discovered through `/api/devices`; running it with `--panel-read-write`
+explicitly grants that permission. A manual CLI invocation can use repeated
+`--pda-test-device` options to restrict the consecutive-device phase. The
+Pi's `/tmp` directory is also opened in the workspace, so completed artifacts
+are available under `pi-tmp/aqualinkd-validator-artifacts`.
+
+The **AqualinkD + Validator: pda-live-fast on installed Pi** task does not
+cross-build or deploy AqualinkD. It stops the installed service and supervises
+`/usr/local/bin/aqualinkd -c /etc/aqualinkd.conf` in the container. It reads
+and mounts the installed configuration's `serial_port` and `web_directory`,
+then restores the service afterward. This tests the installed system without
+allowing two AqualinkD processes to use the panel simultaneously.
+
+The Pi helper reads the host's IANA timezone from `timedatectl` and sets the
+container's `TZ` environment. AqualinkD uses that local timezone, and the
+validator infers the same value for its panel-clock check.
 
 The deployment helper creates `/tmp/aqualinkd.conf` from the checkout only
 when the remote test configuration does not already exist. It also preserves
@@ -243,9 +502,9 @@ the task labels dirty builds explicitly.
 
 This task changes a live remote system: it stops the installed service and
 opens the configured RS485 device. Review the selected SSH host, configuration,
-and serial path before running it. The current `run` command performs a timed
-observation and collects process evidence; HTTP scenario actions and serial
-packet assertions remain planned.
+serial path, heater settings, and every switch exposed by `/api/devices`
+before running it. The PDA suite performs HTTP actions and timing assertions.
+Raw serial PCAPNG capture and packet-level assertions remain planned.
 
 ## Comparing AqualinkD revisions
 
@@ -267,9 +526,12 @@ aqualinkd-validator compare \
 ```
 
 The comparison warns when the architecture, CPU model, kernel, container
-runtime, configuration fingerprint, or sampling interval differs. The current
-implementation establishes idle/observation resource baselines; HTTP-to-panel
-latency distributions will be added with the scenario runner.
+runtime, configuration fingerprint, suite, selected PDA devices, or sampling
+interval differs. It also compares the panel type and firmware captured from
+the PDA initialization screen. PDA suite comparisons include a per-action
+timing table in milliseconds alongside process CPU and memory measurements.
+Missing actions are shown as `n/a`, making skipped or incomplete phases
+visible.
 
 ## Why this project exists
 
@@ -287,20 +549,22 @@ isolated C unit tests. Examples include:
 The validator is intended to make those checks repeatable while retaining the
 logs and serial evidence needed to diagnose a failure.
 
-## Proposed operating modes
+## Operating modes and roadmap
 
 ### Live-panel mode
 
-The validator starts or attaches to AqualinkD connected to a real control
-panel. A scenario can perform HTTP actions, wait for state changes, inspect
+The implemented live-panel mode starts AqualinkD connected to a real control
+panel. The PDA suites perform HTTP actions, wait for state changes, inspect
 logs, and enforce timing expectations.
 
-Live-panel tests will require an explicit opt-in and identify the serial device
-being used. The validator must never silently select a real serial port.
+Live-panel tests require an explicit read-only or read-write panel-access
+authorization. The validator reads the serial device from the selected
+AqualinkD configuration and reports it before starting the daemon; an explicit
+override must match that configuration.
 
 ### Jandy simulator mode
 
-The validator supervises AqualinkD while it is connected to one of Jandy's
+The planned Jandy simulator mode supervises AqualinkD while it is connected to one of Jandy's
 legacy Windows panel simulators through two RS485 adapters: one attached to
 the Windows host or VM and one attached to the Linux host or container. The
 simulator and serial link are initially treated as externally managed; the
@@ -312,8 +576,9 @@ PDA interface simulators.
 
 ### Panel-free mode
 
-The validator creates a pseudo-terminal (PTY) pair and configures AqualinkD to
-use the slave PTY as its `serial_port`. A panel driver uses the master side to:
+The planned panel-free mode creates a pseudo-terminal (PTY) pair and configures
+AqualinkD to use the slave PTY as its `serial_port`. A panel driver uses the
+master side to:
 
 - inject captured or scripted RS485 packets;
 - preserve, scale, or deliberately perturb packet timing;
@@ -412,9 +677,9 @@ The schema will evolve as real scenarios expose which primitives are useful.
 Initial support should favor a small set of composable steps rather than
 protocol-specific behavior embedded directly in the scenario runner.
 
-## Capture bundle and formats
+## Planned capture bundle and formats
 
-Each validation run should produce a versioned capture bundle:
+Future capture-enabled validation runs should produce a versioned bundle:
 
 ```text
 run-<id>/
@@ -423,6 +688,7 @@ run-<id>/
 ├── timeline.jsonl
 ├── stdout.log
 ├── stderr.log
+├── scenario.json
 ├── http.jsonl
 ├── effective-aqualinkd.conf
 └── result.json
@@ -579,9 +845,18 @@ The upstream design discussion is
 
 ## Development status
 
-The repository currently contains the design only. The first implementation
-will be tracked in GitHub issues, starting with the minimum end-to-end
-foreground-process and PTY smoke test.
+The repository contains the Python package, reference container, process
+supervisor, live-panel safety gates, HTTP client, performance comparison, and
+timing-sensitive PDA live-panel suites described above. These features are
+usable but remain pre-1.0 and should be treated as active development,
+especially when operating physical equipment.
+
+[GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
+tracks the initial panel-free end-to-end milestone. Its isolated configuration
+builder, PTY transport, bidirectional serial timeline and PCAPNG writer,
+generic YAML scenario runner, HTTP history, and probe/ACK smoke scenario are
+not implemented yet. The PDA live-panel work was developed ahead of that
+panel-free milestone and does not close the issue.
 
 Contributions and examples of existing AqualinkD validation workflows are
 welcome, especially reusable packet captures with documented panel models and

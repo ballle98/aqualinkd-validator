@@ -4,6 +4,7 @@ import hashlib
 import re
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$")
 
@@ -27,8 +28,11 @@ def read_config_value(path: Path, key: str) -> str | None:
     return result
 
 
-def validate_live_serial_device(config_path: Path, requested_device: Path) -> Path:
-    """Require the explicit device to match the active config serial port."""
+def validate_live_serial_device(
+    config_path: Path,
+    requested_device: Path | None = None,
+) -> Path:
+    """Resolve the configured serial device and validate any explicit override."""
     configured = read_config_value(config_path, "serial_port")
     if configured is None:
         raise ConfigurationError(
@@ -36,8 +40,12 @@ def validate_live_serial_device(config_path: Path, requested_device: Path) -> Pa
         )
 
     configured_path = Path(configured).expanduser().resolve(strict=False)
-    requested_path = requested_device.expanduser().resolve(strict=False)
-    if configured_path != requested_path:
+    requested_path = (
+        requested_device.expanduser().resolve(strict=False)
+        if requested_device is not None
+        else configured_path
+    )
+    if requested_device is not None and configured_path != requested_path:
         raise ConfigurationError(
             "Explicit serial device does not match the configuration: "
             f"requested {requested_path}, configured {configured_path}"
@@ -64,8 +72,39 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_api_base_url(
+    config_path: Path,
+    requested_url: str | None,
+) -> str:
+    value = requested_url or read_config_value(config_path, "listen_address")
+    if value is None:
+        raise ConfigurationError(
+            "No API URL was supplied and the configuration has no active "
+            "listen_address"
+        )
+    return normalize_api_base_url(value)
+
+
+def normalize_api_base_url(value: str) -> str:
+    """Normalize an AqualinkD listener URL for local API access."""
+    parsed = urlsplit(value)
+    if parsed.scheme != "http" or parsed.hostname is None:
+        raise ConfigurationError(f"Invalid AqualinkD API URL: {value}")
+    hostname = (
+        "127.0.0.1"
+        if parsed.hostname in {"0.0.0.0", "::", "[::]"}
+        else parsed.hostname
+    )
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{hostname}:{parsed.port}"
+    path = parsed.path.rstrip("/")
+    return urlunsplit((parsed.scheme, netloc, path, "", ""))
+
+
 def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
-
