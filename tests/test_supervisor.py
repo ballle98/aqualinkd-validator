@@ -67,8 +67,9 @@ class SupervisorTests(unittest.TestCase):
                                 "flush=True);"
                                 "print(\"Info: Starting programming thread "
                                 "'Init PDA'\",flush=True);"
-                                "print('Warning: test warning',flush=True);"
-                                "print('Error: test error',"
+                                "print('16:52:42.520 Warning: test warning',"
+                                "flush=True);"
+                                "print('16:52:42 Error: test error',"
                                 "file=sys.stderr,flush=True);"
                                 "time.sleep(0.15)"
                             ),
@@ -86,18 +87,18 @@ class SupervisorTests(unittest.TestCase):
                 "Notice: Waiting for Control Panel probe\n"
                 "Notice: Got probe on '0x60'\n"
                 "Info: Starting programming thread 'Init PDA'\n"
-                "Warning: test warning\n",
+                "16:52:42.520 Warning: test warning\n",
             )
             self.assertEqual(
                 (artifact_dir / "stderr.log").read_text(),
-                "Error: test error\n",
+                "16:52:42 Error: test error\n",
             )
             self.assertIn(
-                "[AQUALINKD WARNING] Warning: test warning",
+                "[AQUALINKD WARNING] 16:52:42.520 Warning: test warning",
                 console.getvalue(),
             )
             self.assertIn(
-                "[AQUALINKD ERROR] Error: test error",
+                "[AQUALINKD ERROR] 16:52:42 Error: test error",
                 console.getvalue(),
             )
             self.assertIn(

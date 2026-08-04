@@ -3,16 +3,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import copy
+import io
 import json
 import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TextIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import __version__
@@ -20,8 +23,10 @@ from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
     normalize_api_base_url,
+    read_disabled_button_numbers,
     sha256_file,
     validate_live_serial_device,
+    write_config_with_overrides,
 )
 from .metadata import (
     collect_binary_metadata,
@@ -29,8 +34,9 @@ from .metadata import (
     collect_source_metadata,
 )
 from .metrics import summarize_metrics
+from .pda.cases import PdaCaseId
 from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
-from .suites import SUITES, get_suite
+from .suites import SUITES, SuiteProfile, get_suite
 from .supervisor import supervise
 
 
@@ -134,9 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help=(
-            "Restrict the long suite's consecutive-device phase to this "
-            "switch ID; repeat for more than one (default: every discovered "
-            "switch)"
+            "Restrict consecutive-device validation in pda-live-awake or "
+            "pda-live-long to this switch ID; repeat for more than one "
+            "(default: every discovered switch)"
         ),
     )
     run.add_argument(
@@ -150,6 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_float,
         default=90.0,
         help="Maximum runtime after a PDA programmer task becomes active",
+    )
+    run.add_argument(
+        "--pda-status-timeout",
+        type=_positive_float,
+        default=180.0,
+        help="Maximum wait for the complete PDA equipment-status loop",
     )
     run.add_argument(
         "--pda-state-timeout",
@@ -170,8 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--pda-cleanup-timeout",
         type=_positive_float,
-        default=180.0,
-        help="Maximum time allowed for restoration after cancellation",
+        default=300.0,
+        help=(
+            "Maximum wait for delayed equipment restoration and restoration "
+            "after cancellation"
+        ),
     )
     run.add_argument(
         "--panel-timezone",
@@ -289,9 +304,13 @@ def _run(args: argparse.Namespace) -> int:
             "Selected live-panel suites change physical equipment and require "
             "--panel-read-write"
         )
-    if args.pda_test_device and "pda-live-long" not in selected_names:
+    if args.pda_test_device and not any(
+        _suite_contains_case(name, PdaCaseId.CONSECUTIVE_DEVICES)
+        for name in selected_names
+    ):
         raise ConfigurationError(
-            "--pda-test-device requires the pda-live-long suite"
+            "--pda-test-device requires a suite containing consecutive-device "
+            "validation"
         )
     if args.panel_timezone is None:
         args.panel_timezone = _local_timezone_name()
@@ -311,9 +330,110 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _run_one(args: argparse.Namespace) -> int:
+    suite = get_suite(args.suite)
+    if suite is not None and suite.is_composite:
+        return _run_composite_suite(args)
+    if suite is not None and suite.config_overrides:
+        return _run_process_suite(args)
+    return _run_process(args)
 
+
+def _run_composite_suite(args: argparse.Namespace) -> int:
+    composite = get_suite(args.suite)
+    if composite is None or not composite.is_composite:
+        raise ConfigurationError(f"Suite is not composite: {args.suite}")
+    overall_exit_code = 0
+    safe_to_continue = True
+    original_label = args.label
+    for member_name in composite.members:
+        member = get_suite(member_name)
+        assert member is not None
+        member_args = copy.copy(args)
+        member_args.suite = member.name
+        suffix = member.artifact_suffix or member.name
+        member_args.label = f"{original_label}-{suffix}"
+        print(
+            f"\n=== {composite.name} member: {member.name} ===",
+            flush=True,
+        )
+        exit_code = _run_one(member_args)
+        args.last_artifact_dir = getattr(member_args, "last_artifact_dir", None)
+        member_safe = getattr(
+            member_args,
+            "last_run_safe_to_continue",
+            exit_code == 0,
+        )
+        safe_to_continue = safe_to_continue and member_safe
+        if exit_code == 0:
+            continue
+        overall_exit_code = exit_code
+        if not member_safe:
+            print(
+                f"[ STOP ] {member.name} did not restore a verified safe "
+                "state; remaining composite members will not run",
+                flush=True,
+            )
+            args.last_run_safe_to_continue = False
+            return exit_code
+        print(
+            f"[ CONT ] {member.name} failed assertions but restored the "
+            "panel; continuing composite validation",
+            flush=True,
+        )
+    args.last_run_safe_to_continue = safe_to_continue
+    return overall_exit_code
+
+
+def _run_process_suite(args: argparse.Namespace) -> int:
+    suite = get_suite(args.suite)
+    assert suite is not None and not suite.is_composite
+    source_config = args.config.expanduser().resolve(strict=True)
+    overrides = suite.override_map()
+    with tempfile.TemporaryDirectory(
+        prefix="aqualinkd-validator-config-"
+    ) as directory:
+        runtime_dir = Path(directory)
+        derived_config = runtime_dir / f"{suite.name}.conf"
+        write_config_with_overrides(
+            source_config,
+            derived_config,
+            overrides,
+        )
+        process_args = copy.copy(args)
+        process_args.config = derived_config
+        process_args.source_config = source_config
+        process_args.config_overrides = overrides
+        exit_code = _run_process(process_args)
+        args.last_run_safe_to_continue = getattr(
+            process_args,
+            "last_run_safe_to_continue",
+            False,
+        )
+        args.last_artifact_dir = getattr(
+            process_args,
+            "last_artifact_dir",
+            None,
+        )
+        return exit_code
+
+
+def _suite_contains_case(name: str, case_id: PdaCaseId) -> bool:
+    suite = get_suite(name)
+    assert suite is not None
+    if case_id in suite.cases:
+        return True
+    return any(_suite_contains_case(member, case_id) for member in suite.members)
+
+
+def _run_process(args: argparse.Namespace) -> int:
+    args.last_run_safe_to_continue = False
     binary = args.aqualinkd.expanduser().resolve(strict=True)
     config = args.config.expanduser().resolve(strict=True)
+    source_config = getattr(args, "source_config", config)
+    config_overrides: dict[str, str] = getattr(
+        args, "config_overrides", {}
+    )
+    disabled_button_numbers = read_disabled_button_numbers(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
     source_tree = (
         args.source_tree.expanduser().resolve(strict=True)
@@ -334,8 +454,14 @@ def _run_one(args: argparse.Namespace) -> int:
     api_base_url: str | None = None
     suite_test_devices: list[str] = []
     if suite is not None:
+        if suite.is_composite:
+            raise ConfigurationError(
+                f"Composite suite cannot run in one process: {suite.name}"
+            )
         suite_test_devices = (
-            args.pda_test_device if suite.include_state_waits else []
+            args.pda_test_device
+            if PdaCaseId.CONSECUTIVE_DEVICES in suite.cases
+            else []
         )
         api_base_url = (
             normalize_api_base_url(args.api_base_url)
@@ -346,19 +472,69 @@ def _run_one(args: argparse.Namespace) -> int:
             None,
             PdaScenarioConfig(
                 suite_name=suite.name,
-                include_state_waits=suite.include_state_waits,
+                execution_phase=suite.execution_role,
                 activation_timeout_seconds=args.pda_activation_timeout,
                 action_timeout_seconds=args.pda_action_timeout,
+                status_timeout_seconds=args.pda_status_timeout,
                 state_timeout_seconds=args.pda_state_timeout,
+                restoration_timeout_seconds=args.pda_cleanup_timeout,
                 init_timeout_seconds=args.pda_init_timeout,
                 sleep_timeout_seconds=args.pda_sleep_timeout,
                 test_devices=tuple(suite_test_devices),
+                disabled_button_numbers=disabled_button_numbers,
                 panel_timezone=args.panel_timezone,
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
+                case_ids=suite.cases,
             ),
             api_base_url_override=api_base_url,
         )
     artifact_dir = _new_artifact_dir(args.artifacts, args.label)
+    args.last_artifact_dir = artifact_dir
+    with (artifact_dir / "summary.log").open(
+        "w",
+        encoding="utf-8",
+    ) as summary_handle, contextlib.redirect_stdout(
+        _TeeTextIO(sys.stdout, summary_handle)
+    ):
+        return _run_in_artifact(
+            args,
+            artifact_dir=artifact_dir,
+            binary=binary,
+            config=config,
+            source_config=source_config,
+            config_overrides=config_overrides,
+            execution_phase=(
+                suite.execution_role if suite is not None else "single"
+            ),
+            disabled_button_numbers=disabled_button_numbers,
+            serial_device=serial_device,
+            source_tree=source_tree,
+            workdir=workdir,
+            suite=suite,
+            scenario=scenario,
+            api_base_url=api_base_url,
+            suite_test_devices=suite_test_devices,
+        )
+
+
+def _run_in_artifact(
+    args: argparse.Namespace,
+    *,
+    artifact_dir: Path,
+    binary: Path,
+    config: Path,
+    source_config: Path,
+    config_overrides: dict[str, str],
+    execution_phase: Literal["single", "awake", "sleep"],
+    disabled_button_numbers: tuple[int, ...],
+    serial_device: Path,
+    source_tree: Path | None,
+    workdir: Path,
+    suite: SuiteProfile | None,
+    scenario: PdaLivePanelScenario | None,
+    api_base_url: str | None,
+    suite_test_devices: list[str],
+) -> int:
     command = build_aqualinkd_command(binary, config, args.suite)
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -372,7 +548,8 @@ def _run_one(args: argparse.Namespace) -> int:
                 "description": suite.description,
                 "mode": suite.mode,
                 "aqualinkd_args": list(suite.aqualinkd_args),
-                "include_state_waits": suite.include_state_waits,
+                "cases": [case_id.value for case_id in suite.cases],
+                "execution_phase": execution_phase,
             }
             if suite is not None
             else None
@@ -387,9 +564,13 @@ def _run_one(args: argparse.Namespace) -> int:
                 else "aqualinkd_startup_log"
             ),
             "pda_test_devices": suite_test_devices,
+            "configured_none_buttons": list(disabled_button_numbers),
             "pda_device_selection": (
                 "not_applicable"
-                if suite is None or not suite.include_state_waits
+                if (
+                    suite is None
+                    or PdaCaseId.CONSECUTIVE_DEVICES not in suite.cases
+                )
                 else (
                     "restricted"
                     if suite_test_devices
@@ -403,6 +584,7 @@ def _run_one(args: argparse.Namespace) -> int:
             "timeouts_seconds": {
                 "activation": args.pda_activation_timeout,
                 "action": args.pda_action_timeout,
+                "status": args.pda_status_timeout,
                 "cleanup": args.pda_cleanup_timeout,
                 "init": args.pda_init_timeout,
                 "sleep": args.pda_sleep_timeout,
@@ -417,8 +599,10 @@ def _run_one(args: argparse.Namespace) -> int:
             source_branch=args.source_branch,
         ),
         "config": {
-            "name": config.name,
-            "sha256": sha256_file(config),
+            "name": source_config.name,
+            "sha256": sha256_file(source_config),
+            "effective_sha256": sha256_file(config),
+            "overrides": config_overrides,
         },
         "serial": {
             "device": str(serial_device),
@@ -437,6 +621,11 @@ def _run_one(args: argparse.Namespace) -> int:
     print(f"Artifacts: {artifact_dir}", flush=True)
     print(f"AqualinkD: {binary}", flush=True)
     print(f"Config fingerprint: {manifest['config']['sha256']}", flush=True)
+    if config_overrides:
+        formatted_overrides = ", ".join(
+            f"{key}={value}" for key, value in config_overrides.items()
+        )
+        print(f"Config overrides: {formatted_overrides}", flush=True)
     print(f"Serial device: {serial_device}", flush=True)
     print(f"Mode: {args.mode}", flush=True)
     print(f"Suite: {suite.name if suite is not None else 'none'}", flush=True)
@@ -479,7 +668,18 @@ def _run_one(args: argparse.Namespace) -> int:
         scenario_data = json.loads(
             scenario_path.read_text(encoding="utf-8")
         )
+        args.last_run_safe_to_continue = bool(
+            scenario_data.get("safe_to_continue", False)
+        )
         performance["scenario"] = scenario_data
+        scenario_aqualinkd = scenario_data.get("aqualinkd")
+        if isinstance(scenario_aqualinkd, dict):
+            manifest["aqualinkd"]["reported_version"] = (
+                scenario_aqualinkd.get("version")
+            )
+            manifest["aqualinkd"]["configured_panel_type"] = (
+                scenario_aqualinkd.get("configured_panel_type")
+            )
         manifest["equipment_control"]["api_base_url"] = scenario_data.get(
             "api_base_url"
         )
@@ -507,6 +707,24 @@ def build_aqualinkd_command(
     if suite is not None:
         command.extend(suite.aqualinkd_args)
     return command
+
+
+class _TeeTextIO(io.TextIOBase):
+    def __init__(self, primary: TextIO, summary: TextIO) -> None:
+        self._primary = primary
+        self._summary = summary
+
+    def write(self, text: str) -> int:
+        self._primary.write(text)
+        self._summary.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self._primary.flush()
+        self._summary.flush()
+
+    def isatty(self) -> bool:
+        return self._primary.isatty()
 
 
 def _new_artifact_dir(root: Path, label: str) -> Path:

@@ -8,8 +8,8 @@ reproduced and checked consistently.
 
 > [!IMPORTANT]
 > This project is under active development. The `doctor`, `run`, and `compare`
-> commands and the `pda-live-fast` and `pda-live-long` hardware suites are
-> implemented. The live suites supervise AqualinkD, perform HTTP actions,
+> commands and the PDA live-panel hardware suites are implemented. The live
+> suites supervise AqualinkD, perform HTTP actions,
 > validate PDA state and timing, restore changed equipment state, and retain
 > diagnostic and performance artifacts. Generic YAML scenarios, isolated PTY
 > panel emulation, PCAPNG serial capture, operational RS485-log collection,
@@ -32,8 +32,10 @@ To run a live-panel suite, prepare all of the following:
 - Exclusive access to that serial device. Stop the installed AqualinkD
   service before testing and arrange to restart it afterward.
 - Knowledge of what every switch exposed by `/api/devices` physically
-  controls. `--panel-read-write` authorizes the long suite to operate all of
-  those discovered switches unless an explicit device restriction is used.
+  controls. `--panel-read-write` authorizes the selected suite to operate the
+  equipment covered by its cases. The awake and long suites operate all
+  discovered switches unless an explicit consecutive-device restriction is
+  used.
 
 Live PDA suites operate real equipment. Do not use them while maintenance is
 in progress, valves are in an unsafe position, water level is unsuitable, or
@@ -52,9 +54,19 @@ Run these commands on the Pi:
 ```sh
 git clone https://github.com/ballle98/aqualinkd-validator.git
 cd aqualinkd-validator
-sudo docker build -t aqualinkd-validator:local .
+VALIDATOR_COMMIT=$(git rev-parse HEAD)
+sudo env BUILDX_GIT_INFO=0 docker build \
+  --build-arg "VCS_REF=$VALIDATOR_COMMIT" \
+  -t aqualinkd-validator:local .
 sudo docker run --rm aqualinkd-validator:local doctor
 ```
+
+`sudo docker build` runs Buildx as root. On a Pi-owned checkout, Git's safe
+ownership check can prevent Buildx from detecting the commit and produce a
+harmless `current commit information was not captured` warning. The command
+above reads the commit as the checkout owner, passes it into the image's
+revision label, and disables only Buildx's automatic Git provenance lookup.
+See Docker's [`BUILDX_GIT_INFO` documentation](https://docs.docker.com/build/building/variables/#buildx_git_info).
 
 The image contains the Python validator, not AqualinkD. The installed binary,
 configuration, web directory, serial device, and artifact directory are
@@ -192,28 +204,46 @@ sampling overhead, but it does not require a Docker daemon or container
 filesystem. Files created through `sudo` may need their ownership corrected
 afterward.
 
-For PDA suites, the validator reads AqualinkD's
-`Starting web server on ...` startup log and uses the reported port, including
-non-default ports such as `8080`. The effective configuration is fingerprinted
-but not copied into artifacts, avoiding accidental publication of credentials.
-These are live-panel integration/regression tests rather than unit tests.
+For PDA suites, the validator reads either the current AqualinkD
+`Starting web server on <URL>` startup log or the ballle98 2.3.7
+`Starting web server on port <N>` form. It uses the reported port, including
+non-default ports such as `8080`, without requiring `--api-base-url`. Both
+timestamped and non-timestamped log forms are accepted. The effective
+configuration is fingerprinted but not copied into artifacts, avoiding
+accidental publication of credentials. These are live-panel
+integration/regression tests rather than unit tests.
 
 ### PDA live-panel suites
 
-The live-panel coverage is split into two profiles:
+The live-panel coverage is assembled from reusable cases, process suites, and
+one composite suite:
 
 | Suite | Intended use | Coverage |
 | --- | --- | --- |
 | `pda-live-fast` | Default development regression | Initialization, panel identity and clock, filter-pump round trip, and optional pool-heater setpoint and enable round trips |
-| `pda-live-long` | State-dependent performance and regression | Everything in the fast suite, plus filter-pump operations while the equipment-status menu is present, consecutive operations across every discovered switch, and operations after PDA sleep |
+| `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
+| `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and a filter-pump round trip initiated while sleeping |
+| `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
 
 Multiple positional suites are serialized. For example,
 `run --panel-read-write pda-live-fast pda-live-long` completes the fast suite,
 stops its supervised AqualinkD process, and writes its artifacts before
-starting a new AqualinkD process for the long suite. A failed suite stops the
-sequence, and suites never compete for the serial bus.
+starting a new AqualinkD process for the long suite. Independently supplied
+positional suites stop at the first failure, and suites never compete for the
+serial bus.
 
-Both profiles start AqualinkD in the foreground with `-vv`, enabling
+`pda-live-long` itself uses two serialized AqualinkD processes because the
+equipment-status and sleep cases require opposite `pda_sleep_mode` settings.
+The validator copies the selected configuration to private temporary files,
+appends `pda_sleep_mode = no` for `pda-live-awake` and
+`pda_sleep_mode = yes` for `pda-live-sleep`, and passes each file through
+`aqualinkd -c`. The supplied configuration remains unchanged. Temporary
+configurations are removed after the command and are not copied into
+artifacts, where they could expose credentials. Each manifest instead records
+the source configuration fingerprint, effective derived fingerprint, and the
+single applied override.
+
+All process suites start AqualinkD in the foreground with `-vv`, enabling
 `DEBUG_SERIAL` logging in addition to the normal validator arguments:
 
 ```text
@@ -228,6 +258,10 @@ The container console reports each phase as it runs, for example:
 [STATE ] Control-panel probe received
 [STATE ] Init PDA started
 [STATE ] Init PDA complete
+[INFO  ] AqualinkD version: v2.3.7 (rev dbfcb39)
+[INFO  ] Configured panel: PDA-8 Combo Pool/Spa
+[INFO  ] Panel reported: PDA-PS6 Combo; firmware PDA: 7.1.0
+[ WARN ] Configured panel type does not match the physical panel: configured PDA-8 Combo Pool/Spa; reported PDA-PS6 Combo
 [ PASS ] PDA initialization, identity, and clock completed in 18.427s
 [ RUN  ] Filter pump after initialization
 [ PASS ] Filter pump after initialization completed in 4.913s
@@ -245,9 +279,11 @@ The fast suite performs these phases:
 
 1. Wait for the PDA programmer to become active after the panel probe and for
    `(Init PDA) finished`, recording activation wait and active runtime
-   separately. Capture the panel type and firmware directly from the PDA
-   firmware-version screen, then record the normalized `/api/status` panel
-   identity.
+   separately. Capture the AqualinkD version and configured panel type from
+   startup logs, and the physical panel type and firmware directly from the
+   PDA firmware-version screen. A normalized family/capacity mismatch is
+   recorded and printed as a warning, while all raw identity strings are
+   retained for comparisons.
 2. Allow initialization-time clock synchronization to settle, then check that
    the panel clock is within 120 seconds of the system clock in the local
    timezone, or the explicit `--panel-timezone` override.
@@ -258,16 +294,44 @@ The fast suite performs these phases:
    enable state and restores the original state. A direction is skipped when
    the original setpoint is at its supported boundary.
 
-The long suite then adds:
+The long suite composes the following two process suites:
 
-1. Ensure the filter pump is on, wait for the PDA equipment-status menu, then
-   time filter-pump off and on operations while that menu is active.
-2. Discover every `/api/devices` entry whose type is `switch`, change those
-   devices consecutively, then restore them in reverse order. Supplying one or
-   more repeated `--pda-test-device` options restricts this phase to only
-   those switch IDs.
-3. Wait for AqualinkD's PDA sleep marker, toggle the filter pump, and restore
-   it.
+Before operating a discovered switch, the validator cross-checks three
+sources: the effective `button_??_label` assignments in `--config`, the
+device name returned by `/api/devices`, and the panel size reported by the
+physical PDA firmware screen. A switch is reported and skipped when its
+configured or API name is `NONE`. `Aux_N` is also skipped when `N` is equal
+to or greater than the reported panel size; for example, a PDA-PS6 permits
+Aux 1 through Aux 5 and excludes Aux 6 and above. This protects against a
+configuration declaring a larger panel than the connected hardware.
+
+1. `pda-live-awake`, with `pda_sleep_mode = no`: run the fast checks, enable
+   every eligible configured switch and heater, wait for the PDA to return home,
+   and capture a complete multi-page `EQUIPMENT STATUS` loop. Verify every
+   expected device appeared and remained on in `/api/devices` after AqualinkD
+   reconciled the full loop. If an SWG is present, verify its status was
+   captured and its reported percentage agrees with the API. Then exercise
+   consecutive device operations and restore them in reverse order.
+   Supplying repeated `--pda-test-device` options restricts the separate
+   consecutive-device operation to those switch IDs.
+2. `pda-live-sleep`, with `pda_sleep_mode = yes`: restart AqualinkD, repeat PDA
+   initialization and identity checks, wait for AqualinkD's PDA sleep marker,
+   observe one complete natural sleep/wake cycle, then toggle the filter pump
+   while the PDA is sleeping and restore it. The natural cycle records time
+   asleep, the `PDA init after wake` equipment-status refresh, the delay from
+   status completion until the PDA sleeps again, total cycle duration, and
+   awake/sleep duty-cycle percentages.
+
+Each mutating case attempts to restore the equipment it changed before the
+next case begins. A case assertion failure is retained in the final result,
+but later cases continue when restoration succeeds. If restoration cannot be
+verified, the current process stops and a composite suite does not start its
+next member. Consequently, `pda-live-long` can still collect sleep coverage
+after an awake assertion failure when the panel was safely restored. Each
+restart includes a separately measured PDA initialization because the panel
+may need to exhaust acknowledgements and probe the emulated PDA again. Run
+`pda-live-awake` or `pda-live-sleep` directly for focused diagnostics; no
+phase-selection option is needed.
 
 Freeze-protection mutation and service-mode entry are deliberately excluded
 from both live-panel suites. They affect safety or maintenance behavior and
@@ -282,12 +346,19 @@ initialization similarly separates the wait for a panel probe and task
 activation from the active `Init PDA` runtime. Console `[ WAIT ]`, `[ACTIVE]`,
 `[ DONE ]`, and `[STATE ]` lines expose these transitions while the test is
 running. `scenario.json` contains the panel identity, clock check,
-measurements, skipped optional cases, and restoration report; the same data
-is embedded in `performance.json`.
+measurements, sleep-cycle duty-cycle summary, skipped optional cases, and
+restoration report; the same data is embedded in `performance.json`.
 
 The scenario snapshots every state it may change and performs best-effort
 restoration after success, failure, timeout, or interruption. A restoration
-failure fails the run. The suite exits when its scenario passes or fails;
+failure fails the run. Cleanup removes heater demand first, restores ordinary
+auxiliaries, restores SPA mode, and handles the filter pump last. This lets
+panel-controlled heater and pump cooldown finish without violating equipment
+dependencies. If the API reports an off request as `state=off` with a
+flashing/pending status, cleanup waits instead of sending another PDA toggle.
+It likewise never blindly resends a restoration toggle after a timeout; this
+prevents stale API state from reversing a physical change that already
+completed. The suite exits when its scenario passes or fails;
 `--pda-init-timeout` (180 seconds by default) applies separately to
 initialization activation and completion. `--pda-activation-timeout` defaults
 to 130 seconds so it exceeds AqualinkD's 120-second programmer-queue wait,
@@ -295,16 +366,19 @@ to 130 seconds so it exceeds AqualinkD's 120-second programmer-queue wait,
 active, and `--pda-state-timeout` allows 10 seconds for API convergence after
 it finishes. A matching PDA programmer error in the log fails the action
 immediately instead of waiting for the state timeout.
-`--pda-sleep-timeout` controls state waits. On cancellation, the daemon is
-kept alive for up to `--pda-cleanup-timeout` seconds so restoration can finish
-before it is terminated. Override the clock tolerance with
+`--pda-sleep-timeout` controls state waits. Delayed restoration and restoration
+after cancellation use `--pda-cleanup-timeout`, which defaults to 300 seconds
+to accommodate SPA/heater pump-delay cycles. On cancellation, the daemon is
+kept alive for that interval so cleanup can finish before it is terminated.
+Override the clock tolerance with
 `--panel-time-tolerance` when the panel requires a wider bound.
 
 The high-volume `-vv` diagnostics are captured in `stdout.log` and
 `stderr.log`, and every line is timestamped against the monotonic run clock
 in `timeline.jsonl`. The manifest records the selected suite, effective
-AqualinkD command, API origin, requested device restriction, and the resolved
-set of discovered switches.
+AqualinkD command and reported version, configured panel identity, API origin,
+execution role and config override, requested device restriction, and the
+resolved set of discovered switches.
 
 Every current run creates a unique artifact directory containing:
 
@@ -317,12 +391,24 @@ Every current run creates a unique artifact directory containing:
 ├── scenario.json
 ├── stderr.log
 ├── stdout.log
+├── summary.log
 └── timeline.jsonl
 ```
 
 `scenario.json` is present for a selected PDA suite. `manifest.yaml` currently
 contains JSON-compatible structured data despite its filename. Preserve the
 entire directory when reporting a failure.
+
+`summary.log` is a concise copy of validator console output: suite and member
+headers, state transitions, action timings, skips, warnings, errors, and the
+final result. It excludes the routine high-volume AqualinkD stdout stream,
+which remains available in `stdout.log`; daemon warnings and errors forwarded
+to the console are retained in the summary.
+
+`pda-live-long` creates two such directories with `-awake` and `-sleep` label
+suffixes. Compare awake results only with other awake results, and sleep
+results only with other sleep results; the comparison command warns when
+execution roles differ.
 
 Pure unit tests remain appropriate for isolated AqualinkD C functions.
 
@@ -850,6 +936,21 @@ supervisor, live-panel safety gates, HTTP client, performance comparison, and
 timing-sensitive PDA live-panel suites described above. These features are
 usable but remain pre-1.0 and should be treated as active development,
 especially when operating physical equipment.
+
+PDA organization has three layers:
+
+- `pda/cases.py` gives each independently reported validation case a stable
+  ID, display name, and mutation policy.
+- `pda/suites.py` declares process suites as ordered case lists plus required
+  configuration overrides, and declares composite suites as ordered
+  process-suite members.
+- `pda_scenario.py` contains the shared live-panel runtime, protocol-log
+  interpretation, HTTP operations, timing, and restoration machinery.
+
+This keeps suite composition declarative: adding or regrouping coverage does
+not add another CLI mode or phase selector. Case implementations still share
+one runtime because they use the same initial snapshot, log cursor, timing
+model, exclusion rules, and restoration guarantees.
 
 [GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
 tracks the initial panel-free end-to-end milestone. Its isolated configuration
