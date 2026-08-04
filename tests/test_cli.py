@@ -9,14 +9,202 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
-from aqualinkd_validator.cli import build_aqualinkd_command, build_parser, main
+from aqualinkd_validator.cli import (
+    _run_composite_suite,
+    _run_process_suite,
+    build_aqualinkd_command,
+    build_parser,
+    main,
+)
 from aqualinkd_validator.config import (
     ConfigurationError,
+    read_config_value,
     validate_live_serial_device,
 )
 
 
 class CliTests(unittest.TestCase):
+    def test_long_suite_runs_awake_then_sleep_with_derived_configs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\n"
+                "pda_sleep_mode=yes\n"
+                "mqtt_password=do-not-record\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "run",
+                    "--panel-read-write",
+                    "--config",
+                    str(config),
+                    "--label",
+                    "baseline",
+                    "pda-live-long",
+                ]
+            )
+            args.suite = "pda-live-long"
+            observed: list[tuple[str, str, str | None, Path, dict[str, str]]] = []
+            derived_paths: list[Path] = []
+
+            def record_phase(phase_args: argparse.Namespace) -> int:
+                derived_paths.append(phase_args.config)
+                phase_args.last_run_safe_to_continue = True
+                observed.append(
+                    (
+                        phase_args.suite,
+                        phase_args.label,
+                        read_config_value(
+                            phase_args.config,
+                            "pda_sleep_mode",
+                        ),
+                        phase_args.source_config,
+                        phase_args.config_overrides,
+                    )
+                )
+                return 0
+
+            with patch(
+                "aqualinkd_validator.cli._run_process",
+                side_effect=record_phase,
+            ):
+                self.assertEqual(_run_composite_suite(args), 0)
+
+            self.assertEqual(
+                observed,
+                [
+                    (
+                        "pda-live-awake",
+                        "baseline-awake",
+                        "no",
+                        config,
+                        {"pda_sleep_mode": "no"},
+                    ),
+                    (
+                        "pda-live-sleep",
+                        "baseline-sleep",
+                        "yes",
+                        config,
+                        {"pda_sleep_mode": "yes"},
+                    ),
+                ],
+            )
+            self.assertTrue(all(not path.exists() for path in derived_paths))
+            self.assertEqual(
+                read_config_value(config, "pda_sleep_mode"),
+                "yes",
+            )
+
+    def test_long_suite_continues_after_restored_awake_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\npda_sleep_mode=yes\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "run",
+                    "--panel-read-write",
+                    "--config",
+                    str(config),
+                    "pda-live-long",
+                ]
+            )
+            args.suite = "pda-live-long"
+            observed: list[str] = []
+
+            def fail_awake(phase_args: argparse.Namespace) -> int:
+                observed.append(phase_args.suite)
+                phase_args.last_run_safe_to_continue = True
+                return 1 if phase_args.suite == "pda-live-awake" else 0
+
+            with patch(
+                "aqualinkd_validator.cli._run_process",
+                side_effect=fail_awake,
+            ):
+                self.assertEqual(_run_composite_suite(args), 1)
+
+            self.assertEqual(
+                observed,
+                ["pda-live-awake", "pda-live-sleep"],
+            )
+
+    def test_long_suite_stops_when_awake_cannot_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\npda_sleep_mode=yes\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "run",
+                    "--panel-read-write",
+                    "--config",
+                    str(config),
+                    "pda-live-long",
+                ]
+            )
+            args.suite = "pda-live-long"
+            observed: list[str] = []
+
+            def fail_unsafely(phase_args: argparse.Namespace) -> int:
+                observed.append(phase_args.suite)
+                phase_args.last_run_safe_to_continue = False
+                return 1
+
+            with patch(
+                "aqualinkd_validator.cli._run_process",
+                side_effect=fail_unsafely,
+            ):
+                self.assertEqual(_run_composite_suite(args), 1)
+
+            self.assertEqual(observed, ["pda-live-awake"])
+
+    def test_sleep_suite_can_run_independently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\npda_sleep_mode=no\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args(
+                [
+                    "run",
+                    "--panel-read-write",
+                    "--config",
+                    str(config),
+                    "pda-live-sleep",
+                ]
+            )
+            args.suite = "pda-live-sleep"
+            observed: list[tuple[str, str | None]] = []
+
+            def record_phase(phase_args: argparse.Namespace) -> int:
+                phase_args.last_run_safe_to_continue = True
+                observed.append(
+                    (
+                        phase_args.suite,
+                        read_config_value(
+                            phase_args.config,
+                            "pda_sleep_mode",
+                        ),
+                    )
+                )
+                return 0
+
+            with patch(
+                "aqualinkd_validator.cli._run_process",
+                side_effect=record_phase,
+            ):
+                self.assertEqual(_run_process_suite(args), 0)
+
+            self.assertEqual(observed, [("pda-live-sleep", "yes")])
+            self.assertEqual(read_config_value(config, "pda_sleep_mode"), "no")
+
     def test_run_uses_installed_paths_and_tmp_artifacts_by_default(self) -> None:
         args = build_parser().parse_args(
             ["run", "--panel-read-write", "pda-live-fast"]
@@ -28,9 +216,14 @@ class CliTests(unittest.TestCase):
             args.artifacts,
             Path("/tmp/aqualinkd-validator-artifacts"),
         )
+        self.assertEqual(args.pda_cleanup_timeout, 300.0)
 
     def test_pda_suites_add_serial_debug_argument(self) -> None:
-        for suite in ("pda-live-fast", "pda-live-long"):
+        for suite in (
+            "pda-live-fast",
+            "pda-live-awake",
+            "pda-live-sleep",
+        ):
             with self.subTest(suite=suite):
                 command = build_aqualinkd_command(
                     Path("/opt/aqualinkd"),
@@ -238,7 +431,8 @@ class CliTests(unittest.TestCase):
                 )
             self.assertEqual(exit_context.exception.code, 2)
             self.assertIn(
-                "--pda-test-device requires the pda-live-long suite",
+                "--pda-test-device requires a suite containing "
+                "consecutive-device validation",
                 stderr.getvalue(),
             )
 
@@ -298,6 +492,11 @@ class CliTests(unittest.TestCase):
             stdout = (run_dir / "stdout.log").read_text()
             self.assertIn("mock started", stdout)
             self.assertIn("arguments: -d -c", stdout)
+            summary = (run_dir / "summary.log").read_text()
+            self.assertIn(f"Artifacts: {run_dir}", summary)
+            self.assertIn("[AQUALINKD STDERR] mock warning", summary)
+            self.assertIn("Result: passed (duration_elapsed)", summary)
+            self.assertNotIn("mock started", summary)
 
 
 if __name__ == "__main__":

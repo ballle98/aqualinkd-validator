@@ -175,6 +175,9 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
         ),
         "container runtime": lambda run: run["manifest"]["host"].get("container"),
         "suite": lambda run: (run["manifest"].get("suite") or {}).get("name"),
+        "PDA execution role": lambda run: (
+            run["manifest"].get("suite") or {}
+        ).get("execution_phase"),
         "PDA device restriction": lambda run: (
             run["manifest"]
             .get("equipment_control", {})
@@ -197,6 +200,11 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
         ),
         "PDA panel type": _pda_panel_type,
         "PDA firmware": _pda_firmware,
+        "AqualinkD reported version": lambda run: (
+            (run["performance"].get("scenario") or {})
+            .get("aqualinkd", {})
+            .get("version")
+        ),
     }
     for name, getter in fields.items():
         values = {json.dumps(getter(run), sort_keys=True) for run in runs}

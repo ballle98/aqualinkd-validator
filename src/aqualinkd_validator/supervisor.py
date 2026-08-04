@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import signal
 import time
 from collections import deque
@@ -87,6 +88,36 @@ class OutputMonitor:
             raise TimeoutError(
                 f"timed out after {timeout_seconds:g}s waiting for log "
                 f"marker: {predicate}"
+            ) from error
+
+    async def wait_for_any(
+        self,
+        predicates: tuple[str, ...],
+        *,
+        after: int = 0,
+        timeout_seconds: float,
+    ) -> LineEvent:
+        if not predicates:
+            raise ValueError("at least one log marker is required")
+
+        async def wait() -> LineEvent:
+            cursor = after
+            while True:
+                async with self._condition:
+                    for event in self._events:
+                        if event.sequence > cursor and any(
+                            predicate in event.text for predicate in predicates
+                        ):
+                            return event
+                    cursor = max(cursor, self._sequence)
+                    await self._condition.wait()
+
+        try:
+            return await asyncio.wait_for(wait(), timeout_seconds)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"timed out after {timeout_seconds:g}s waiting for any log "
+                f"marker: {', '.join(predicates)}"
             ) from error
 
 
@@ -346,8 +377,14 @@ def _echo_process_update(stream: str, text: str) -> None:
             print(message, flush=True)
             break
 
-    severity = text.partition(":")[0].strip().lower()
-    if severity in {"warning", "error", "critical", "fatal"}:
+    severity_match = re.match(
+        r"^(?:\d{2}:\d{2}:\d{2}(?:\.\d{3})?\s+)?"
+        r"(warning|error|critical|fatal):",
+        text,
+        re.IGNORECASE,
+    )
+    severity = severity_match.group(1).lower() if severity_match else None
+    if severity is not None:
         print(f"[AQUALINKD {severity.upper()}] {text}", flush=True)
     elif stream == "stderr":
         print(f"[AQUALINKD STDERR] {text}", flush=True)
