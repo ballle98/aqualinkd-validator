@@ -218,6 +218,16 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(args.pda_cleanup_timeout, 300.0)
 
+    def test_run_rejects_unknown_positional_suite(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
+            build_parser().parse_args(
+                ["run", "--panel-read-write", "not-a-suite"]
+            )
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("unknown suite 'not-a-suite'", stderr.getvalue())
+
     def test_pda_suites_add_serial_debug_argument(self) -> None:
         for suite in (
             "pda-live-fast",

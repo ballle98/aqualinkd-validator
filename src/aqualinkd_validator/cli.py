@@ -212,7 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "suites",
         nargs="*",
-        choices=tuple(SUITES),
+        type=_suite_name,
+        metavar="SUITE",
         help="Validation suites to run sequentially",
     )
     return parser
@@ -801,3 +802,12 @@ def _positive_float(value: str) -> float:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than zero")
     return parsed
+
+
+def _suite_name(value: str) -> str:
+    if value not in SUITES:
+        choices = ", ".join(SUITES)
+        raise argparse.ArgumentTypeError(
+            f"unknown suite {value!r}; choose from: {choices}"
+        )
+    return value
