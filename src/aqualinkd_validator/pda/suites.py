@@ -64,7 +64,8 @@ SUITES: dict[str, PdaSuiteDefinition] = {
         cases=(
             PdaCaseId.INITIALIZATION,
             PdaCaseId.SLEEP_CYCLE,
-            PdaCaseId.FILTER_FROM_SLEEP,
+            PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+            PdaCaseId.DEVICE_AFTER_PROBE,
         ),
         config_overrides=(("pda_sleep_mode", "yes"),),
         execution_role="sleep",

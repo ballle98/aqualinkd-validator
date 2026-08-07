@@ -432,7 +432,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_context.exception.code, 2)
             self.assertIn(
                 "--pda-test-device requires a suite containing "
-                "consecutive-device validation",
+                "device-focused validation",
                 stderr.getvalue(),
             )
 

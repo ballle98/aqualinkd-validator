@@ -22,6 +22,8 @@ from aqualinkd_validator.pda_scenario import (
     LEGACY_POOL_HEATER_SETPOINT_ACTIVE,
     LEGACY_POOL_HEATER_SETPOINT_FINISHED,
     LEGACY_STATUS_MENU_PRESENT,
+    PDA_ADDRESS_PROBE,
+    PDA_ADDRESS_STATUS,
     PDA_SLEEPING,
     POOL_HEATER,
     POOL_HEATER_SETPOINT_ACTIVE,
@@ -265,6 +267,36 @@ class PdaScenarioTests(unittest.TestCase):
         self.assertEqual(
             scenario._excluded_device_ids,
             {"Aux_2", "Aux_3", "Aux_6", "Aux_7", "Solar_Heater"},
+        )
+        self.assertEqual(
+            scenario._sleep_test_device(phase="devices.sleep.test"),
+            "Aux_5",
+        )
+
+    def test_sleep_selection_uses_highest_aux_on_small_pool_only_panel(
+        self,
+    ) -> None:
+        scenario = PdaLivePanelScenario(None, PdaScenarioConfig())
+        scenario._reported_panel_size = 4
+        scenario._reported_panel_combo = False
+        scenario._initial_snapshot = DeviceSnapshot(
+            temp_units="f",
+            devices={
+                "Aux_1": {"type": "switch", "name": "Aux 1"},
+                "Filter_Pump": {
+                    "type": "switch",
+                    "name": "Filter Pump",
+                },
+                "Aux_3": {"type": "switch", "name": "Aux 3"},
+                "Aux_2": {"type": "switch", "name": "Aux 2"},
+            },
+        )
+
+        scenario._record_device_constraints()
+
+        self.assertEqual(
+            scenario._sleep_test_device(phase="devices.sleep.test"),
+            "Aux_3",
         )
 
     def test_scenario_rejects_panel_clock_outside_tolerance(self) -> None:
@@ -598,6 +630,8 @@ class PdaScenarioTests(unittest.TestCase):
                     status_timeout_seconds=0.5,
                     init_timeout_seconds=0.5,
                     sleep_timeout_seconds=0.5,
+                    status_retry_command_delay_seconds=0.01,
+                    probe_command_min_delay_seconds=0.04,
                     panel_timezone="UTC",
                     panel_time_tolerance_seconds=120.0,
                 ),
@@ -685,9 +719,13 @@ class PdaScenarioTests(unittest.TestCase):
             )
             expected_selection = (
                 {
-                    "mode": "not_applicable",
+                    "mode": "auto_last_switch",
                     "requested": [],
-                    "resolved": [],
+                    "resolved": [
+                        "Filter_Pump"
+                        if disabled_button_numbers
+                        else "Aux_1"
+                    ],
                     "configured_none_buttons": list(
                         disabled_button_numbers
                     ),
@@ -739,7 +777,14 @@ class PdaScenarioTests(unittest.TestCase):
             elif execution_phase == "sleep":
                 self.assertNotIn("pda.status_menu.present", measurement_names)
                 self.assertIn("pda.sleep.duration", measurement_names)
-                self.assertIn("pda.sleep.command_ready", measurement_names)
+                self.assertIn(
+                    "pda.sleep.status_retry.command_ready",
+                    measurement_names,
+                )
+                self.assertIn(
+                    "pda.sleep.probe.command_ready",
+                    measurement_names,
+                )
                 self.assertIn("pda.after_wake.status_refresh", measurement_names)
                 self.assertIn("pda.after_wake.return_to_sleep", measurement_names)
                 self.assertIn("pda.wake.duration", measurement_names)
@@ -1142,6 +1187,18 @@ class PdaScenarioTests(unittest.TestCase):
                 "stdout",
                 PDA_SLEEPING,
             )
+            await asyncio.sleep(0.005)
+            await context.monitor.publish(
+                context.timeline.offset_ns(),
+                "stdout",
+                f"Read Jandy packet {PDA_ADDRESS_STATUS}",
+            )
+            await asyncio.sleep(0.03)
+            await context.monitor.publish(
+                context.timeline.offset_ns(),
+                "stdout",
+                f"Read Jandy packet {PDA_ADDRESS_PROBE}",
+            )
             await context.monitor.publish(
                 context.timeline.offset_ns(),
                 "stdout",
@@ -1157,3 +1214,4 @@ class PdaScenarioTests(unittest.TestCase):
                 "stdout",
                 PDA_SLEEPING,
             )
+            await asyncio.sleep(0.02)

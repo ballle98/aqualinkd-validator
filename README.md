@@ -222,7 +222,7 @@ one composite suite:
 | --- | --- | --- |
 | `pda-live-fast` | Default development regression | Initialization, panel identity and clock, filter-pump round trip, and optional pool-heater setpoint and enable round trips |
 | `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
-| `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and a filter-pump round trip initiated while sleeping |
+| `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and switch round trips during STATUS retries and after probing begins |
 | `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
 
 Multiple positional suites are serialized. For example,
@@ -316,8 +316,13 @@ configuration declaring a larger panel than the connected hardware.
    consecutive-device operation to those switch IDs.
 2. `pda-live-sleep`, with `pda_sleep_mode = yes`: restart AqualinkD, repeat PDA
    initialization and identity checks, wait for AqualinkD's PDA sleep marker,
-   observe one complete natural sleep/wake cycle, then toggle the filter pump
-   while the PDA is sleeping and restore it. The natural cycle records time
+   observe one complete natural sleep/wake cycle, then toggle a switch about
+   one second into the panel's unanswered STATUS retries and again after the
+   panel starts probing the PDA address. By default the highest-numbered
+   eligible auxiliary is selected to exercise the deepest available
+   equipment-menu navigation; Filter Pump is used only when no auxiliary is
+   actionable. Use
+   `--pda-test-device ID` to select a specific switch. The natural cycle records time
    asleep, the `PDA init after wake` equipment-status refresh, the delay from
    status completion until the PDA sleeps again, total cycle duration, and
    awake/sleep duty-cycle percentages.

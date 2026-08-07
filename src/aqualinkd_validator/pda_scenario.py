@@ -52,6 +52,8 @@ STATUS_MENU_FINISHED_MARKERS = (
     LEGACY_STATUS_MENU_FINISHED,
 )
 PDA_SLEEPING = "PDA Aqualink daemon in sleep mode"
+PDA_ADDRESS_STATUS = "To 0x60 of type           Status"
+PDA_ADDRESS_PROBE = "To 0x60 of type            Probe"
 WAKE_INIT_ACTIVE = "is active (PDA init after wake)"
 WAKE_INIT_FINISHED = "(PDA init after wake) finished"
 FIRMWARE_VERSION_SCREEN = "PDA Menu Line 3 = Firmware Version"
@@ -100,6 +102,8 @@ class PdaScenarioConfig:
     restoration_timeout_seconds: float = 300.0
     init_timeout_seconds: float = 180.0
     sleep_timeout_seconds: float = 120.0
+    status_retry_command_delay_seconds: float = 1.0
+    probe_command_min_delay_seconds: float = 3.0
     test_devices: tuple[str, ...] = ()
     disabled_button_numbers: tuple[int, ...] = ()
     panel_timezone: str = "UTC"
@@ -153,6 +157,12 @@ class PdaLivePanelScenario:
                 "restoration": config.restoration_timeout_seconds,
                 "init": config.init_timeout_seconds,
                 "sleep": config.sleep_timeout_seconds,
+                "status_retry_command_delay": (
+                    config.status_retry_command_delay_seconds
+                ),
+                "probe_command_min_delay": (
+                    config.probe_command_min_delay_seconds
+                ),
             },
             "checks": [],
             "aqualinkd": None,
@@ -166,12 +176,16 @@ class PdaLivePanelScenario:
                 "mode": (
                     "not_applicable"
                     if (
-                        PdaCaseId.CONSECUTIVE_DEVICES not in self._case_ids
+                        not self._uses_selected_devices()
                     )
                     else (
                         "restricted"
                         if config.test_devices
-                        else "all_discovered_switches"
+                        else (
+                            "all_discovered_switches"
+                            if PdaCaseId.CONSECUTIVE_DEVICES in self._case_ids
+                            else "auto_last_switch"
+                        )
                     )
                 ),
                 "requested": list(config.test_devices),
@@ -341,15 +355,30 @@ class PdaLivePanelScenario:
             )
         if config.include_state_waits and config.execution_phase != "awake":
             case_ids.extend(
-                (PdaCaseId.SLEEP_CYCLE, PdaCaseId.FILTER_FROM_SLEEP)
+                (
+                    PdaCaseId.SLEEP_CYCLE,
+                    PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+                    PdaCaseId.DEVICE_AFTER_PROBE,
+                )
             )
         if config.execution_phase == "sleep":
             case_ids = [
                 PdaCaseId.INITIALIZATION,
                 PdaCaseId.SLEEP_CYCLE,
-                PdaCaseId.FILTER_FROM_SLEEP,
+                PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+                PdaCaseId.DEVICE_AFTER_PROBE,
             ]
         return tuple(case_ids)
+
+    def _uses_selected_devices(self) -> bool:
+        return any(
+            case_id in self._case_ids
+            for case_id in (
+                PdaCaseId.CONSECUTIVE_DEVICES,
+                PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+                PdaCaseId.DEVICE_AFTER_PROBE,
+            )
+        )
 
     def _case_operation(
         self,
@@ -373,8 +402,11 @@ class PdaLivePanelScenario:
                 self._test_consecutive_devices(context)
             ),
             PdaCaseId.SLEEP_CYCLE: lambda: self._test_sleep_wake_cycle(context),
-            PdaCaseId.FILTER_FROM_SLEEP: lambda: self._test_while_sleeping(
-                context
+            PdaCaseId.DEVICE_DURING_STATUS_RETRY: lambda: (
+                self._test_device_during_status_retry(context)
+            ),
+            PdaCaseId.DEVICE_AFTER_PROBE: lambda: (
+                self._test_device_after_probe(context)
             ),
         }
         return operations[case_id]
@@ -1493,12 +1525,67 @@ class PdaLivePanelScenario:
             flush=True,
         )
 
-    async def _test_while_sleeping(self, context: ScenarioContext) -> None:
-        if self._skip_unactionable_device(
-            FILTER_PUMP,
-            phase="devices.sleeping",
-        ):
-            return
+    def _sleep_test_device(self, *, phase: str) -> str | None:
+        assert self._initial_snapshot is not None
+        requested = list(dict.fromkeys(self._config.test_devices))
+        if requested:
+            identifiers = requested
+            for identifier in identifiers:
+                device = self._require_device(
+                    self._initial_snapshot,
+                    identifier,
+                )
+                if device.get("type") != "switch":
+                    raise ScenarioFailure(
+                        f"{identifier} is not a switch device"
+                    )
+        else:
+            identifiers = [
+                identifier
+                for identifier, device in self._initial_snapshot.devices.items()
+                if device.get("type") == "switch"
+            ]
+
+        identifiers = [
+            identifier
+            for identifier in identifiers
+            if not self._skip_unactionable_device(identifier, phase=phase)
+        ]
+        if not identifiers:
+            self._skip(
+                phase,
+                "No actionable switch devices were discovered",
+            )
+            return None
+
+        # Exercise the deepest configured equipment entry without depending
+        # on the API's object ordering. Even the smallest pool-only panel has
+        # auxiliary circuits; Filter Pump remains the universal fallback for
+        # configurations that deliberately disable every auxiliary.
+        identifier = max(
+            identifiers,
+            key=self._sleep_device_priority,
+        )
+        if PdaCaseId.CONSECUTIVE_DEVICES not in self._case_ids:
+            self._report["device_selection"]["resolved"] = [identifier]
+        return identifier
+
+    def _sleep_device_priority(self, identifier: str) -> tuple[int, int, str]:
+        auxiliary = _AUX_IDENTIFIER.fullmatch(identifier)
+        if auxiliary is not None:
+            return (2, int(auxiliary.group(1)), identifier)
+        if identifier == FILTER_PUMP:
+            return (0, 0, identifier)
+        button_number = self._button_number_by_identifier.get(identifier, 0)
+        return (1, button_number, identifier)
+
+    async def _wait_for_sleep(
+        self,
+        context: ScenarioContext,
+        *,
+        phase: str,
+        measurement_name: str,
+    ) -> LineEvent:
         cursor = context.monitor.cursor
         started = context.timeline.offset_ns()
         event = await context.monitor.wait_for(
@@ -1507,9 +1594,9 @@ class PdaLivePanelScenario:
             timeout_seconds=self._config.sleep_timeout_seconds,
         )
         self._append_measurement(
-            name="pda.sleep.command_ready",
+            name=measurement_name,
             category="state_wait",
-            phase="devices.sleeping",
+            phase=phase,
             target="pda_sleep",
             requested_value=True,
             start_offset_ns=started,
@@ -1517,14 +1604,110 @@ class PdaLivePanelScenario:
             log_completion_offset_ns=event.offset_ns,
             state_observed_offset_ns=None,
         )
+        return event
+
+    async def _test_device_during_status_retry(
+        self,
+        context: ScenarioContext,
+    ) -> None:
+        phase = "devices.sleep.status_retry"
+        identifier = self._sleep_test_device(phase=phase)
+        if identifier is None:
+            return
+        sleep_event = await self._wait_for_sleep(
+            context,
+            phase=phase,
+            measurement_name="pda.sleep.status_retry.command_ready",
+        )
+        delay = self._config.status_retry_command_delay_seconds
         print(
-            "[STATE ] PDA is sleeping; starting filter-pump wake test",
+            f"[ WAIT ] PDA STATUS retry phase: delaying {delay:g}s after "
+            "sleep begins",
+            flush=True,
+        )
+        await asyncio.sleep(delay)
+        events = [
+            event
+            for event in context.monitor.recent_events()
+            if event.sequence > sleep_event.sequence
+        ]
+        if any(PDA_ADDRESS_PROBE in event.text for event in events):
+            raise ScenarioFailure(
+                "PDA address probing began before the STATUS-retry command "
+                "was sent"
+            )
+        retry_count = sum(
+            PDA_ADDRESS_STATUS in event.text for event in events
+        )
+        if retry_count == 0:
+            raise ScenarioFailure(
+                "No repeated PDA STATUS packet was observed before the "
+                "STATUS-retry command"
+            )
+        print(
+            f"[STATE ] Observed {retry_count} repeated PDA STATUS packet(s); "
+            f"toggling {identifier}",
             flush=True,
         )
         await self._toggle_round_trip(
             context,
-            FILTER_PUMP,
-            phase="devices.sleeping",
+            identifier,
+            phase=phase,
+        )
+
+    async def _test_device_after_probe(
+        self,
+        context: ScenarioContext,
+    ) -> None:
+        phase = "devices.sleep.probing"
+        identifier = self._sleep_test_device(phase=phase)
+        if identifier is None:
+            return
+        sleep_event = await self._wait_for_sleep(
+            context,
+            phase=phase,
+            measurement_name="pda.sleep.probe.command_ready",
+        )
+        print(
+            "[ WAIT ] PDA probe phase: waiting for a probe to address 0x60 "
+            f"(timeout {self._config.sleep_timeout_seconds:g}s)",
+            flush=True,
+        )
+        try:
+            probe = await context.monitor.wait_for(
+                PDA_ADDRESS_PROBE,
+                after=sleep_event.sequence,
+                timeout_seconds=self._config.sleep_timeout_seconds,
+            )
+        except TimeoutError as error:
+            raise ScenarioFailure(
+                "Panel did not begin probing PDA address 0x60 after sleep"
+            ) from error
+        probe_delay = (
+            probe.offset_ns - sleep_event.offset_ns
+        ) / 1_000_000_000
+        remaining_delay = max(
+            0.0,
+            self._config.probe_command_min_delay_seconds - probe_delay,
+        )
+        if remaining_delay:
+            print(
+                f"[ WAIT ] Probe observed early; delaying "
+                f"{remaining_delay:.3f}s so the command is at least "
+                f"{self._config.probe_command_min_delay_seconds:g}s after "
+                "sleep began",
+                flush=True,
+            )
+            await asyncio.sleep(remaining_delay)
+        print(
+            f"[STATE ] PDA address probe observed {probe_delay:.3f}s after "
+            f"sleep began; toggling {identifier}",
+            flush=True,
+        )
+        await self._toggle_round_trip(
+            context,
+            identifier,
+            phase=phase,
         )
 
     async def _toggle_round_trip_unless_disabled(
