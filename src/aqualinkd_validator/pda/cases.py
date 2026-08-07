@@ -11,7 +11,8 @@ class PdaCaseId(StrEnum):
     EQUIPMENT_STATUS = "equipment-status"
     CONSECUTIVE_DEVICES = "consecutive-devices"
     SLEEP_CYCLE = "sleep-cycle"
-    FILTER_FROM_SLEEP = "filter-from-sleep"
+    DEVICE_DURING_STATUS_RETRY = "device-during-status-retry"
+    DEVICE_AFTER_PROBE = "device-after-probe"
 
 
 @dataclass(frozen=True)
@@ -52,9 +53,14 @@ CASES: dict[PdaCaseId, PdaCaseDefinition] = {
         name="Natural PDA sleep/wake duty cycle",
         mutates_panel=False,
     ),
-    PdaCaseId.FILTER_FROM_SLEEP: PdaCaseDefinition(
-        id=PdaCaseId.FILTER_FROM_SLEEP,
-        name="Filter pump while PDA is sleeping",
+    PdaCaseId.DEVICE_DURING_STATUS_RETRY: PdaCaseDefinition(
+        id=PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+        name="Device during PDA STATUS retries",
+        mutates_panel=True,
+    ),
+    PdaCaseId.DEVICE_AFTER_PROBE: PdaCaseDefinition(
+        id=PdaCaseId.DEVICE_AFTER_PROBE,
+        name="Device after PDA probing begins",
         mutates_panel=True,
     ),
 }

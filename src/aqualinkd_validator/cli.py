@@ -39,6 +39,14 @@ from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
 from .suites import SUITES, SuiteProfile, get_suite
 from .supervisor import supervise
 
+DEVICE_SELECTION_CASES = frozenset(
+    {
+        PdaCaseId.CONSECUTIVE_DEVICES,
+        PdaCaseId.DEVICE_DURING_STATUS_RETRY,
+        PdaCaseId.DEVICE_AFTER_PROBE,
+    }
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aqualinkd-validator")
@@ -140,9 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help=(
-            "Restrict consecutive-device validation in pda-live-awake or "
-            "pda-live-long to this switch ID; repeat for more than one "
-            "(default: every discovered switch)"
+            "Restrict device-focused validation to this switch ID; repeat "
+            "for more than one (default: all discovered switches for the "
+            "awake suite and the highest eligible auxiliary for the sleep "
+            "suite)"
         ),
     )
     run.add_argument(
@@ -305,11 +314,14 @@ def _run(args: argparse.Namespace) -> int:
             "--panel-read-write"
         )
     if args.pda_test_device and not any(
-        _suite_contains_case(name, PdaCaseId.CONSECUTIVE_DEVICES)
+        any(
+            _suite_contains_case(name, case_id)
+            for case_id in DEVICE_SELECTION_CASES
+        )
         for name in selected_names
     ):
         raise ConfigurationError(
-            "--pda-test-device requires a suite containing consecutive-device "
+            "--pda-test-device requires a suite containing device-focused "
             "validation"
         )
     if args.panel_timezone is None:
@@ -460,7 +472,7 @@ def _run_process(args: argparse.Namespace) -> int:
             )
         suite_test_devices = (
             args.pda_test_device
-            if PdaCaseId.CONSECUTIVE_DEVICES in suite.cases
+            if any(case_id in suite.cases for case_id in DEVICE_SELECTION_CASES)
             else []
         )
         api_base_url = (
