@@ -30,12 +30,8 @@ DEVICE_FINISHED = "(Switch PDA device on/off) finished"
 DEVICE_ACTIVE = "is active (Switch PDA device on/off)"
 POOL_HEATER_SETPOINT_FINISHED = "(Set PDA Pool Heater) finished"
 POOL_HEATER_SETPOINT_ACTIVE = "is active (Set PDA Pool Heater)"
-LEGACY_POOL_HEATER_SETPOINT_FINISHED = (
-    "(Set Pool heater setpoint) finished"
-)
-LEGACY_POOL_HEATER_SETPOINT_ACTIVE = (
-    "is active (Set Pool heater setpoint)"
-)
+LEGACY_POOL_HEATER_SETPOINT_FINISHED = "(Set Pool heater setpoint) finished"
+LEGACY_POOL_HEATER_SETPOINT_ACTIVE = "is active (Set Pool heater setpoint)"
 POOL_HEATER_SETPOINT_FINISHED_MARKERS = (
     POOL_HEATER_SETPOINT_FINISHED,
     LEGACY_POOL_HEATER_SETPOINT_FINISHED,
@@ -64,6 +60,9 @@ WAKE_INIT_FINISHED = "(PDA init after wake) finished"
 FIRMWARE_VERSION_SCREEN = "PDA Menu Line 3 = Firmware Version"
 WEB_SERVER_STARTED = "Starting web server on "
 
+_EQUIPMENT_STABLE_SECONDS = 0.5
+_EQUIPMENT_POLL_SECONDS = 0.25
+
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
 _WEB_SERVER_URL = re.compile(r"Starting web server on\s+(\S+)")
 _WEB_SERVER_PORT = re.compile(r"Starting web server on port\s+(\d+)")
@@ -77,7 +76,10 @@ _CONFIGURED_PANEL = re.compile(
 )
 _AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
 _STATUS_MESSAGE = re.compile(r"\*\*\* Pass Equiptment msg '([^']*)'")
-_FOUND_STATUS = re.compile(r"Found Status for (.+?)\s*=", re.IGNORECASE)
+_FOUND_STATUS = re.compile(
+    r"Found(?: EQ CTL)? Status for (.+?)\s*=\s*['\"]?(.+?)['\"]?\s*$",
+    re.IGNORECASE,
+)
 _SWG_PERCENT = re.compile(r"AquaPure\s*=\s*(\d+)", re.IGNORECASE)
 _SERIAL_SEND_TIME = re.compile(
     r"Time from recv to (?:blocking )?send is\s+([0-9.]+)\s+sec",
@@ -134,9 +136,7 @@ class PdaLivePanelScenario:
         *,
         api_base_url_override: str | None = None,
         api_factory: Callable[[str], PdaApi] = AqualinkHttpApi,
-        simulator_factory: Callable[[str], PdaSimulatorClient] = (
-            AquaPdaSimulator
-        ),
+        simulator_factory: Callable[[str], PdaSimulatorClient] = (AquaPdaSimulator),
     ) -> None:
         self._api = api
         self._api_base_url_override = api_base_url_override
@@ -175,14 +175,13 @@ class PdaLivePanelScenario:
                 "status_retry_command_delay": (
                     config.status_retry_command_delay_seconds
                 ),
-                "probe_command_min_delay": (
-                    config.probe_command_min_delay_seconds
-                ),
+                "probe_command_min_delay": (config.probe_command_min_delay_seconds),
             },
             "checks": [],
             "aqualinkd": None,
             "panel": None,
             "equipment_status": None,
+            "equipment_state_observations": [],
             "sleep_cycle": None,
             "simulator": None,
             "menu_walk": None,
@@ -192,9 +191,7 @@ class PdaLivePanelScenario:
             "device_selection": {
                 "mode": (
                     "not_applicable"
-                    if (
-                        not self._uses_selected_devices()
-                    )
+                    if (not self._uses_selected_devices())
                     else (
                         "restricted"
                         if config.test_devices
@@ -207,9 +204,7 @@ class PdaLivePanelScenario:
                 ),
                 "requested": list(config.test_devices),
                 "resolved": [],
-                "configured_none_buttons": list(
-                    config.disabled_button_numbers
-                ),
+                "configured_none_buttons": list(config.disabled_button_numbers),
                 "reported_panel_size": None,
                 "excluded": [],
             },
@@ -281,11 +276,7 @@ class PdaLivePanelScenario:
                 "restoration": (
                     "failed"
                     if restoration_errors
-                    else (
-                        "passed"
-                        if case.mutates_panel
-                        else "not-needed"
-                    )
+                    else ("passed" if case.mutates_panel else "not-needed")
                 ),
             }
             self._report["cases"].append(case_result)
@@ -412,21 +403,19 @@ class PdaLivePanelScenario:
                 )
             ),
             PdaCaseId.POOL_HEATER: lambda: self._test_pool_heater(context),
-            PdaCaseId.EQUIPMENT_STATUS: lambda: self._test_with_status_menu(
+            PdaCaseId.EQUIPMENT_STATUS: lambda: self._test_with_status_menu(context),
+            PdaCaseId.CONSECUTIVE_DEVICES: lambda: self._test_consecutive_devices(
                 context
-            ),
-            PdaCaseId.CONSECUTIVE_DEVICES: lambda: (
-                self._test_consecutive_devices(context)
             ),
             PdaCaseId.SLEEP_CYCLE: lambda: self._test_sleep_wake_cycle(context),
             PdaCaseId.DEVICE_DURING_STATUS_RETRY: lambda: (
                 self._test_device_during_status_retry(context)
             ),
-            PdaCaseId.DEVICE_AFTER_PROBE: lambda: (
-                self._test_device_after_probe(context)
+            PdaCaseId.DEVICE_AFTER_PROBE: lambda: self._test_device_after_probe(
+                context
             ),
-            PdaCaseId.SIMULATOR_TRANSPORT: lambda: (
-                self._test_simulator_transport(context)
+            PdaCaseId.SIMULATOR_TRANSPORT: lambda: self._test_simulator_transport(
+                context
             ),
             PdaCaseId.MENU_WALK: lambda: self._test_menu_walk(context),
         }
@@ -618,8 +607,7 @@ class PdaLivePanelScenario:
         candidates = [
             option
             for option in options
-            if option in {"MENU", "EQUIPMENT ON/OFF"}
-            or option.endswith(">")
+            if option in {"MENU", "EQUIPMENT ON/OFF"} or option.endswith(">")
         ]
         for option in candidates:
             await self._move_to_menu_option(simulator, option)
@@ -748,7 +736,15 @@ class PdaLivePanelScenario:
 
     async def _initialize(self, context: ScenarioContext) -> None:
         init_screen = await self._prepare_startup(context)
-        self._initial_snapshot = await self._wait_for_api()
+        ready_snapshot = await self._wait_for_api()
+        identifiers = self._actionable_identifiers(ready_snapshot)
+        self._initial_snapshot = await self._wait_for_stable_equipment_snapshot(
+            context,
+            identifiers,
+            phase="initialization.snapshot",
+            timeout_seconds=self._config.init_timeout_seconds,
+            initial_snapshot=ready_snapshot,
+        )
         await self._record_panel_identity_and_check_time(init_screen)
         self._record_device_constraints()
         self._require_device(self._initial_snapshot, FILTER_PUMP)
@@ -813,8 +809,7 @@ class PdaLivePanelScenario:
         wait_reason: str = "waiting in the programmer queue",
     ) -> LineEvent:
         print(
-            f"[ WAIT ] {task_name}: {wait_reason} "
-            f"(timeout {timeout_seconds:g}s)",
+            f"[ WAIT ] {task_name}: {wait_reason} (timeout {timeout_seconds:g}s)",
             flush=True,
         )
         try:
@@ -826,15 +821,11 @@ class PdaLivePanelScenario:
             )
         except TimeoutError as error:
             raise ScenarioFailure(
-                f"{task_name} did not become active within "
-                f"{timeout_seconds:g}s"
+                f"{task_name} did not become active within {timeout_seconds:g}s"
             ) from error
-        activation_seconds = (
-            active.offset_ns - requested_offset_ns
-        ) / 1_000_000_000
+        activation_seconds = (active.offset_ns - requested_offset_ns) / 1_000_000_000
         print(
-            f"[ACTIVE] {task_name} became active after "
-            f"{activation_seconds:.3f}s",
+            f"[ACTIVE] {task_name} became active after {activation_seconds:.3f}s",
             flush=True,
         )
         if task_name == "Init PDA":
@@ -867,12 +858,9 @@ class PdaLivePanelScenario:
                 f"{task_name} did not complete within {timeout_seconds:g}s "
                 "after becoming active"
             ) from error
-        programmer_seconds = (
-            completed.offset_ns - active.offset_ns
-        ) / 1_000_000_000
+        programmer_seconds = (completed.offset_ns - active.offset_ns) / 1_000_000_000
         print(
-            f"[ DONE ] {task_name} programmer completed in "
-            f"{programmer_seconds:.3f}s",
+            f"[ DONE ] {task_name} programmer completed in {programmer_seconds:.3f}s",
             flush=True,
         )
         if task_name == "Init PDA":
@@ -896,9 +884,7 @@ class PdaLivePanelScenario:
 
         async with asyncio.TaskGroup() as tasks:
             startup_task = tasks.create_task(self._wait_for_startup(context))
-            identity_task = tasks.create_task(
-                self._capture_aqualinkd_identity(context)
-            )
+            identity_task = tasks.create_task(self._capture_aqualinkd_identity(context))
             discovery_task = (
                 tasks.create_task(self._discover_api_base_url(context))
                 if self._api is None
@@ -919,8 +905,7 @@ class PdaLivePanelScenario:
             flush=True,
         )
         print(
-            "[INFO  ] Configured panel: "
-            f"{identity['configured_panel_type']}",
+            f"[INFO  ] Configured panel: {identity['configured_panel_type']}",
             flush=True,
         )
         return startup_task.result()
@@ -935,9 +920,7 @@ class PdaLivePanelScenario:
         )
         port_match = _WEB_SERVER_PORT.search(event.text)
         if port_match is not None:
-            return normalize_api_base_url(
-                f"http://127.0.0.1:{port_match.group(1)}"
-            )
+            return normalize_api_base_url(f"http://127.0.0.1:{port_match.group(1)}")
 
         match = _WEB_SERVER_URL.search(event.text)
         if match is None:
@@ -1089,8 +1072,7 @@ class PdaLivePanelScenario:
         firmware = self._parse_menu_line(firmware_event.text)
         if not panel_type:
             raise ScenarioFailure(
-                "PDA firmware-version screen did not contain a panel type "
-                "on line 1"
+                "PDA firmware-version screen did not contain a panel type on line 1"
             )
         if firmware is None or firmware[0] != 5 or not firmware[1]:
             raise ScenarioFailure(
@@ -1150,10 +1132,7 @@ class PdaLivePanelScenario:
             raise ScenarioFailure(
                 f"Unknown panel timezone: {self._config.panel_timezone}"
             ) from error
-        deadline = (
-            asyncio.get_running_loop().time()
-            + self._config.init_timeout_seconds
-        )
+        deadline = asyncio.get_running_loop().time() + self._config.init_timeout_seconds
         wait_started = time.monotonic()
         announced_wait = False
         while True:
@@ -1181,9 +1160,7 @@ class PdaLivePanelScenario:
         waited_seconds = time.monotonic() - wait_started
         final_identity = self._api_identity(status)
         if final_identity != initial_identity:
-            self._report["panel"]["api_status_after_clock_sync"] = (
-                final_identity
-            )
+            self._report["panel"]["api_status_after_clock_sync"] = final_identity
         self._report["checks"].append(
             {
                 "name": "panel.time",
@@ -1193,9 +1170,7 @@ class PdaLivePanelScenario:
                 "timezone": self._config.panel_timezone,
                 "difference_seconds": difference,
                 "waited_seconds": round(waited_seconds, 3),
-                "tolerance_seconds": (
-                    self._config.panel_time_tolerance_seconds
-                ),
+                "tolerance_seconds": (self._config.panel_time_tolerance_seconds),
             }
         )
         if not passed:
@@ -1219,10 +1194,7 @@ class PdaLivePanelScenario:
             and configured_signature[1] is not None
             and reported_signature[1] is not None
         )
-        matches = (
-            comparable
-            and configured_signature == reported_signature
-        )
+        matches = comparable and configured_signature == reported_signature
         return {
             "name": "panel.type",
             "status": "passed" if matches else "warning",
@@ -1305,6 +1277,126 @@ class PdaLivePanelScenario:
         )
 
     @staticmethod
+    def _actionable_identifiers(snapshot: DeviceSnapshot) -> tuple[str, ...]:
+        return tuple(
+            identifier
+            for identifier, device in snapshot.devices.items()
+            if device.get("type") in {"switch", "setpoint_thermo"}
+        )
+
+    async def _wait_for_stable_equipment_snapshot(
+        self,
+        context: ScenarioContext,
+        identifiers: tuple[str, ...] | list[str],
+        *,
+        phase: str,
+        timeout_seconds: float,
+        initial_snapshot: DeviceSnapshot | None = None,
+    ) -> DeviceSnapshot:
+        selected = tuple(identifiers)
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        stable_since: float | None = None
+        previous_signature: tuple[tuple[str, int, str, str], ...] | None = None
+        recorded_signature: tuple[tuple[str, int, str, str], ...] | None = None
+        snapshot = initial_snapshot
+        print(
+            f"[ WAIT ] Equipment state: waiting for {phase} to stabilize "
+            f"(timeout {timeout_seconds:g}s)",
+            flush=True,
+        )
+        while asyncio.get_running_loop().time() < deadline:
+            if snapshot is None:
+                snapshot = await self._api_client.devices()
+            states = {
+                identifier: self._device_state_details(
+                    self._require_device(snapshot, identifier)
+                )
+                for identifier in selected
+            }
+            signature = tuple(
+                (
+                    identifier,
+                    state["int_status"],
+                    state["state"],
+                    state["status"],
+                )
+                for identifier, state in states.items()
+            )
+            pending = [
+                identifier
+                for identifier, state in states.items()
+                if state["transitioning"]
+            ]
+            now = asyncio.get_running_loop().time()
+            if pending or signature != previous_signature:
+                stable_since = None if pending else now
+            elif stable_since is None:
+                stable_since = now
+
+            if signature != recorded_signature:
+                await self._record_equipment_observation(
+                    context,
+                    phase=phase,
+                    states=states,
+                    pending=pending,
+                    stable=False,
+                )
+                recorded_signature = signature
+
+            if (
+                not pending
+                and stable_since is not None
+                and now - stable_since >= _EQUIPMENT_STABLE_SECONDS
+            ):
+                await self._record_equipment_observation(
+                    context,
+                    phase=phase,
+                    states=states,
+                    pending=[],
+                    stable=True,
+                )
+                print(
+                    f"[STATE ] Equipment state stable for {phase}",
+                    flush=True,
+                )
+                return snapshot
+
+            previous_signature = signature
+            snapshot = None
+            await asyncio.sleep(_EQUIPMENT_POLL_SECONDS)
+
+        pending_text = ", ".join(pending) if pending else "state kept changing"
+        raise ScenarioFailure(
+            f"Equipment state did not stabilize for {phase} within "
+            f"{timeout_seconds:g}s ({pending_text})"
+        )
+
+    async def _record_equipment_observation(
+        self,
+        context: ScenarioContext,
+        *,
+        phase: str,
+        states: dict[str, dict[str, Any]],
+        pending: list[str],
+        stable: bool,
+    ) -> None:
+        observation = {
+            "offset_ns": context.timeline.offset_ns(),
+            "phase": phase,
+            "stable": stable,
+            "pending": pending,
+            "devices": states,
+        }
+        self._report["equipment_state_observations"].append(observation)
+        await context.timeline.write(
+            "equipment_state_observation",
+            phase=phase,
+            stable=stable,
+            pending=pending,
+            devices=states,
+        )
+
+    @staticmethod
     def _parse_menu_line(text: str) -> tuple[int, str] | None:
         match = _PDA_MENU_LINE.search(text)
         if match is None:
@@ -1350,6 +1442,13 @@ class PdaLivePanelScenario:
             )
             return
 
+        await self._wait_for_stable_equipment_snapshot(
+            context,
+            controls,
+            phase="devices.status_menu.precondition",
+            timeout_seconds=self._config.status_timeout_seconds,
+        )
+
         print(
             f"[STATE ] Equipment status setup: enabling "
             f"{len(controls)} configured controls",
@@ -1361,6 +1460,30 @@ class PdaLivePanelScenario:
                 identifier,
                 True,
                 phase="devices.status_menu.setup",
+                state_timeout_seconds=self._config.status_timeout_seconds,
+            )
+
+        setup_snapshot = await self._wait_for_stable_equipment_snapshot(
+            context,
+            controls,
+            phase="devices.status_menu.setup_complete",
+            timeout_seconds=self._config.status_timeout_seconds,
+        )
+        setup_states = {
+            identifier: self._device_state_details(
+                self._require_device(setup_snapshot, identifier)
+            )
+            for identifier in controls
+        }
+        setup_failures = [
+            identifier
+            for identifier, state in setup_states.items()
+            if not state["enabled"]
+        ]
+        if setup_failures:
+            raise ScenarioFailure(
+                "Equipment status setup did not remain enabled after "
+                "transitions settled: " + ", ".join(setup_failures)
             )
 
         cursor = context.monitor.cursor
@@ -1405,16 +1528,17 @@ class PdaLivePanelScenario:
         )
 
         events = self._status_loop_events(context, started, reconciled)
-        verification = await self._verify_status_loop(controls, events)
+        verification = await self._verify_status_loop(
+            context,
+            controls,
+            events,
+            setup_states=setup_states,
+        )
         self._report["equipment_status"] = verification
         swg_suffix = (
             f"; SWG {verification['swg']['percent']}%"
             if verification["swg"]["percent"] is not None
-            else (
-                "; SWG status observed"
-                if verification["swg"]["present"]
-                else ""
-            )
+            else ("; SWG status observed" if verification["swg"]["present"] else "")
         )
         print(
             f"[STATE ] Equipment status verified "
@@ -1457,12 +1581,16 @@ class PdaLivePanelScenario:
 
     async def _verify_status_loop(
         self,
+        context: ScenarioContext,
         controls: list[str],
         events: list[LineEvent],
+        *,
+        setup_states: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         assert self._initial_snapshot is not None
         status_messages: list[str] = []
         found_names: set[str] = set()
+        found_status: dict[str, str] = {}
         heater_ids: set[str] = set()
         swg_percent: int | None = None
         for event in events:
@@ -1471,7 +1599,9 @@ class PdaLivePanelScenario:
                 status_messages.append(message.group(1).strip())
             found = _FOUND_STATUS.search(event.text)
             if found is not None:
-                found_names.add(self._normalize_status_name(found.group(1)))
+                normalized = self._normalize_status_name(found.group(1))
+                found_names.add(normalized)
+                found_status[normalized] = found.group(2).strip()
             lowered = event.text.casefold()
             if "pool hearter is enabled" in lowered:
                 heater_ids.add("Pool_Heater")
@@ -1491,13 +1621,16 @@ class PdaLivePanelScenario:
             else:
                 missing.append(identifier)
 
-        snapshot = await self._api_client.devices()
+        snapshot = await self._wait_for_stable_equipment_snapshot(
+            context,
+            controls,
+            phase="devices.status_menu.verification",
+            timeout_seconds=self._config.status_timeout_seconds,
+        )
         incorrect_states = [
             identifier
             for identifier in controls
-            if not self._device_enabled(
-                self._require_device(snapshot, identifier)
-            )
+            if not self._device_enabled(self._require_device(snapshot, identifier))
         ]
         swg_devices = [
             device
@@ -1505,27 +1638,105 @@ class PdaLivePanelScenario:
             if device.get("type") == "setpoint_swg"
         ]
         swg_present = bool(swg_devices)
-        swg_observed = any(
+        swg_observed = (
             any(
-                marker in message.casefold()
-                for marker in ("aquapure", "salt", "boost")
+                any(
+                    marker in message.casefold()
+                    for marker in ("aquapure", "salt", "boost")
+                )
+                for message in status_messages
             )
-            for message in status_messages
-        ) or swg_percent is not None
+            or swg_percent is not None
+        )
         swg_api_percent: int | None = None
         if swg_devices:
             with contextlib.suppress(KeyError, TypeError, ValueError):
                 swg_api_percent = round(float(swg_devices[0]["spvalue"]))
 
+        heater_states: dict[str, dict[str, Any]] = {}
+        for identifier in controls:
+            device = self._require_device(snapshot, identifier)
+            if device.get("type") != "setpoint_thermo":
+                continue
+            details = self._device_state_details(device)
+            candidates = {
+                self._normalize_status_name(identifier),
+                self._normalize_status_name(str(device.get("name", ""))),
+            }
+            if identifier == POOL_HEATER:
+                candidates.update({"poolheat", "poolheater"})
+            elif identifier == "Spa_Heater":
+                candidates.update({"spaheat", "spaheater"})
+            pda_lines = [
+                message
+                for message in status_messages
+                if any(
+                    self._normalize_status_name(message).startswith(candidate)
+                    for candidate in candidates
+                    if candidate
+                )
+            ]
+            pda_lines.extend(
+                status
+                for name, status in found_status.items()
+                if name in candidates and status not in pda_lines
+            )
+            normalized_lines = [
+                self._normalize_status_name(message) for message in pda_lines
+            ]
+            pda_enabled: bool | None = None
+            pda_active: bool | None = None
+            for line in normalized_lines:
+                if line.endswith("off"):
+                    pda_enabled = False
+                    pda_active = False
+                elif line.endswith(("ena", "enabled")):
+                    pda_enabled = True
+                    pda_active = False
+                elif line.endswith("on") or line in candidates:
+                    pda_enabled = True
+                    pda_active = True
+            heater_states[identifier] = {
+                **details,
+                "pda_status_lines": pda_lines,
+                "pda_enabled": pda_enabled,
+                "pda_active": pda_active,
+                "pda_enabled_marker": identifier in heater_ids,
+                "found_status": found_status.get(
+                    self._normalize_status_name(str(device.get("name", "")))
+                ),
+            }
+
+        heater_enabled_mismatches = [
+            identifier
+            for identifier, state in heater_states.items()
+            if state["pda_enabled"] is not None
+            and state["pda_enabled"] != state["enabled"]
+        ]
+        heater_active_mismatches = [
+            identifier
+            for identifier, state in heater_states.items()
+            if state["pda_active"] is not None
+            and state["pda_active"] != state["active"]
+        ]
+
         failures: list[str] = []
         if missing:
-            failures.append(
-                "missing status entries for " + ", ".join(missing)
-            )
+            failures.append("missing status entries for " + ", ".join(missing))
         if incorrect_states:
             failures.append(
                 "API marked expected-on devices off after status processing: "
                 + ", ".join(incorrect_states)
+            )
+        if heater_enabled_mismatches:
+            failures.append(
+                "PDA heater enabled status disagreed with the API: "
+                + ", ".join(heater_enabled_mismatches)
+            )
+        if heater_active_mismatches:
+            failures.append(
+                "PDA heater active status disagreed with the API: "
+                + ", ".join(heater_active_mismatches)
             )
         if swg_present and not swg_observed:
             failures.append("SWG is present but no SWG status was captured")
@@ -1540,11 +1751,15 @@ class PdaLivePanelScenario:
             )
 
         verification = {
+            "setup_states": setup_states or {},
             "expected_devices": controls,
             "verified_devices": verified,
             "missing_devices": missing,
             "incorrect_api_states": incorrect_states,
             "status_messages": status_messages,
+            "heater_states": heater_states,
+            "heater_enabled_mismatches": heater_enabled_mismatches,
+            "heater_active_mismatches": heater_active_mismatches,
             "swg": {
                 "present": swg_present,
                 "observed": swg_observed,
@@ -1552,6 +1767,28 @@ class PdaLivePanelScenario:
                 "api_percent": swg_api_percent,
             },
         }
+        for identifier, state in heater_states.items():
+            pda_enabled_state = (
+                "enabled"
+                if state["pda_enabled"] is True
+                else "disabled"
+                if state["pda_enabled"] is False
+                else "not reported"
+            )
+            pda_active_state = (
+                "active"
+                if state["pda_active"] is True
+                else "inactive"
+                if state["pda_active"] is False
+                else "not reported"
+            )
+            print(
+                f"[STATE ] {identifier}: "
+                f"{'enabled' if state['enabled'] else 'disabled'}, "
+                f"{'actively heating' if state['active'] else 'not actively heating'}, "
+                f"PDA {pda_enabled_state}/{pda_active_state}",
+                flush=True,
+            )
         if failures:
             self._report["equipment_status"] = verification
             raise ScenarioFailure("; ".join(failures))
@@ -1560,9 +1797,7 @@ class PdaLivePanelScenario:
     @staticmethod
     def _normalize_status_name(value: str) -> str:
         return "".join(
-            character
-            for character in value.casefold()
-            if character.isalnum()
+            character for character in value.casefold() if character.isalnum()
         )
 
     async def _test_consecutive_devices(
@@ -1579,14 +1814,11 @@ class PdaLivePanelScenario:
                     identifier,
                 )
                 if device.get("type") != "switch":
-                    raise ScenarioFailure(
-                        f"{identifier} is not a switch device"
-                    )
+                    raise ScenarioFailure(f"{identifier} is not a switch device")
         else:
             identifiers = [
                 identifier
-                for identifier, device
-                in self._initial_snapshot.devices.items()
+                for identifier, device in self._initial_snapshot.devices.items()
                 if device.get("type") == "switch"
             ]
 
@@ -1751,9 +1983,7 @@ class PdaLivePanelScenario:
 
         asleep_ns = wake_active.offset_ns - event.offset_ns
         status_refresh_ns = wake_finished.offset_ns - wake_active.offset_ns
-        return_to_sleep_ns = (
-            returned_to_sleep.offset_ns - wake_finished.offset_ns
-        )
+        return_to_sleep_ns = returned_to_sleep.offset_ns - wake_finished.offset_ns
         awake_ns = returned_to_sleep.offset_ns - wake_active.offset_ns
         cycle_ns = returned_to_sleep.offset_ns - event.offset_ns
         awake_percent = 100 * awake_ns / cycle_ns
@@ -1844,9 +2074,7 @@ class PdaLivePanelScenario:
                     identifier,
                 )
                 if device.get("type") != "switch":
-                    raise ScenarioFailure(
-                        f"{identifier} is not a switch device"
-                    )
+                    raise ScenarioFailure(f"{identifier} is not a switch device")
         else:
             identifiers = [
                 identifier
@@ -1929,8 +2157,7 @@ class PdaLivePanelScenario:
         )
         delay = self._config.status_retry_command_delay_seconds
         print(
-            f"[ WAIT ] PDA STATUS retry phase: delaying {delay:g}s after "
-            "sleep begins",
+            f"[ WAIT ] PDA STATUS retry phase: delaying {delay:g}s after sleep begins",
             flush=True,
         )
         await asyncio.sleep(delay)
@@ -1941,12 +2168,9 @@ class PdaLivePanelScenario:
         ]
         if any(PDA_ADDRESS_PROBE in event.text for event in events):
             raise ScenarioFailure(
-                "PDA address probing began before the STATUS-retry command "
-                "was sent"
+                "PDA address probing began before the STATUS-retry command was sent"
             )
-        retry_count = sum(
-            PDA_ADDRESS_STATUS in event.text for event in events
-        )
+        retry_count = sum(PDA_ADDRESS_STATUS in event.text for event in events)
         if retry_count == 0:
             raise ScenarioFailure(
                 "No repeated PDA STATUS packet was observed before the "
@@ -1991,9 +2215,7 @@ class PdaLivePanelScenario:
             raise ScenarioFailure(
                 "Panel did not begin probing PDA address 0x60 after sleep"
             ) from error
-        probe_delay = (
-            probe.offset_ns - sleep_event.offset_ns
-        ) / 1_000_000_000
+        probe_delay = (probe.offset_ns - sleep_event.offset_ns) / 1_000_000_000
         remaining_delay = max(
             0.0,
             self._config.probe_command_min_delay_seconds - probe_delay,
@@ -2074,7 +2296,7 @@ class PdaLivePanelScenario:
     def _button_number(self, identifier: str) -> int | None:
         if identifier == FILTER_PUMP:
             return 1
-        if identifier == "Spa_Mode":
+        if self._is_spa_mode(identifier):
             return 2 if self._reported_panel_combo else None
         auxiliary = _AUX_IDENTIFIER.fullmatch(identifier)
         if auxiliary is None:
@@ -2113,9 +2335,30 @@ class PdaLivePanelScenario:
         self._remember_device(identifier)
         if not phase.startswith("restoration."):
             self._restoration_requests.pop(identifier, None)
-        if await self._current_device_enabled(identifier) == enabled:
+        current_snapshot = await self._api_client.devices()
+        current_device = self._require_device(current_snapshot, identifier)
+        if self._device_transition_pending(current_device):
+            current_snapshot = await self._wait_for_stable_equipment_snapshot(
+                context,
+                [identifier],
+                phase=f"{phase}.{identifier}.precondition",
+                # A water-mode change can leave the filter in a panel-managed
+                # cooldown for several minutes.  Do not send a second toggle
+                # while that transition is pending.
+                timeout_seconds=self._config.restoration_timeout_seconds,
+                initial_snapshot=current_snapshot,
+            )
+            current_device = self._require_device(
+                current_snapshot,
+                identifier,
+            )
+        requested_state = self._requested_device_state_label(
+            current_device,
+            enabled,
+        )
+        if self._device_enabled(current_device) == enabled:
             self._skip(
-                f"{phase}.{identifier}.{'on' if enabled else 'off'}",
+                f"{phase}.{identifier}.{requested_state}",
                 "Device is already in the requested state",
             )
             return
@@ -2147,7 +2390,6 @@ class PdaLivePanelScenario:
             active=active,
             timeout_seconds=self._config.action_timeout_seconds,
         )
-        requested_state = "on" if enabled else "off"
         state_timeout = (
             state_timeout_seconds
             if state_timeout_seconds is not None
@@ -2173,7 +2415,7 @@ class PdaLivePanelScenario:
             )
         except Exception:
             self._append_measurement(
-                name=f"{phase}.{identifier}.{'on' if enabled else 'off'}",
+                name=f"{phase}.{identifier}.{requested_state}",
                 category="device",
                 phase=phase,
                 target=identifier,
@@ -2186,9 +2428,7 @@ class PdaLivePanelScenario:
                 status="failed",
             )
             raise
-        state_seconds = (
-            observed - completed.offset_ns
-        ) / 1_000_000_000
+        state_seconds = (observed - completed.offset_ns) / 1_000_000_000
         print(
             f"[STATE ] {identifier} became {requested_state} "
             f"{state_seconds:.3f}s after programmer completion",
@@ -2196,7 +2436,7 @@ class PdaLivePanelScenario:
         )
 
         self._append_measurement(
-            name=f"{phase}.{identifier}.{'on' if enabled else 'off'}",
+            name=f"{phase}.{identifier}.{requested_state}",
             category="device",
             phase=phase,
             target=identifier,
@@ -2239,11 +2479,7 @@ class PdaLivePanelScenario:
         )
         await self._api_client.set_setpoint(identifier, value)
         acknowledged = context.timeline.offset_ns()
-        task_name = (
-            "Set PDA Pool Heater"
-            if identifier == POOL_HEATER
-            else identifier
-        )
+        task_name = "Set PDA Pool Heater" if identifier == POOL_HEATER else identifier
         active = await self._wait_for_task_active(
             context,
             task_name=task_name,
@@ -2291,9 +2527,7 @@ class PdaLivePanelScenario:
                 status="failed",
             )
             raise
-        state_seconds = (
-            observed - completed.offset_ns
-        ) / 1_000_000_000
+        state_seconds = (observed - completed.offset_ns) / 1_000_000_000
         print(
             f"[STATE ] {identifier} reached setpoint {value} "
             f"{state_seconds:.3f}s after programmer completion",
@@ -2326,12 +2560,15 @@ class PdaLivePanelScenario:
         while asyncio.get_running_loop().time() < deadline:
             snapshot = await self._api_client.devices()
             device = self._require_device(snapshot, identifier)
-            if self._device_enabled(device) == enabled:
+            if (
+                not self._device_transition_pending(device)
+                and self._device_enabled(device) == enabled
+            ):
                 return context.timeline.offset_ns()
             await asyncio.sleep(0.25)
+        requested_state = self._requested_device_state_label(device, enabled)
         raise ScenarioFailure(
-            f"{identifier} did not become {'on' if enabled else 'off'} "
-            f"within {timeout:g}s"
+            f"{identifier} did not become {requested_state} within {timeout:g}s"
         )
 
     async def _wait_for_setpoint(
@@ -2357,8 +2594,7 @@ class PdaLivePanelScenario:
                 return context.timeline.offset_ns()
             await asyncio.sleep(0.25)
         raise ScenarioFailure(
-            f"{identifier} setpoint did not become {expected} within "
-            f"{timeout:g}s"
+            f"{identifier} setpoint did not become {expected} within {timeout:g}s"
         )
 
     async def _current_device_enabled(self, identifier: str) -> bool:
@@ -2465,7 +2701,7 @@ class PdaLivePanelScenario:
                 0
                 if heater
                 else 2
-                if identifier == "Spa_Mode"
+                if self._is_spa_mode(identifier)
                 else 3
                 if identifier == FILTER_PUMP
                 else 1
@@ -2478,12 +2714,16 @@ class PdaLivePanelScenario:
             0
             if identifier == FILTER_PUMP
             else 1
-            if identifier == "Spa_Mode"
+            if self._is_spa_mode(identifier)
             else 3
             if heater
             else 2
         )
         return (1, rank, identifier)
+
+    @staticmethod
+    def _is_spa_mode(identifier: str) -> bool:
+        return identifier in {"Spa", "Spa_Mode"}
 
     async def _restore_device_state(
         self,
@@ -2493,19 +2733,39 @@ class PdaLivePanelScenario:
     ) -> None:
         snapshot = await self._api_client.devices()
         device = self._require_device(snapshot, identifier)
+        requested = self._restoration_requests.get(identifier)
+        if self._device_transition_pending(device):
+            requested_state = self._requested_device_state_label(
+                device,
+                expected,
+            )
+            print(
+                f"[ WAIT ] {identifier}: equipment transition is already "
+                "pending; not sending another toggle "
+                f"(timeout {self._config.restoration_timeout_seconds:g}s)",
+                flush=True,
+            )
+            snapshot = await self._wait_for_stable_equipment_snapshot(
+                context,
+                [identifier],
+                phase=f"restoration.{identifier}.pending_transition",
+                timeout_seconds=self._config.restoration_timeout_seconds,
+                initial_snapshot=snapshot,
+            )
+            device = self._require_device(snapshot, identifier)
+            if self._device_enabled(device) == expected:
+                print(
+                    f"[STATE ] {identifier} completed the pending "
+                    f"{requested_state} transition",
+                    flush=True,
+                )
+                return
+
         if self._device_enabled(device) == expected:
             return
 
-        requested = self._restoration_requests.get(identifier)
-        transition_pending = (
-            not expected and self._device_off_transition_pending(device)
-        )
-        if transition_pending or requested == expected:
-            reason = (
-                "off transition is already pending"
-                if transition_pending
-                else "a restoration request was already sent"
-            )
+        if requested == expected:
+            reason = "a restoration request was already sent"
             print(
                 f"[ WAIT ] {identifier}: {reason}; not sending another "
                 f"toggle (timeout "
@@ -2520,7 +2780,8 @@ class PdaLivePanelScenario:
             )
             print(
                 f"[STATE ] {identifier} completed the pending "
-                f"{'on' if expected else 'off'} transition",
+                f"{self._requested_device_state_label(device, expected)} "
+                "transition",
                 flush=True,
             )
             return
@@ -2589,10 +2850,7 @@ class PdaLivePanelScenario:
             ),
             "programmer_duration_ms": (
                 round(
-                    (
-                        log_completion_offset_ns - task_active_offset_ns
-                    )
-                    / 1_000_000,
+                    (log_completion_offset_ns - task_active_offset_ns) / 1_000_000,
                     3,
                 )
                 if (
@@ -2603,10 +2861,7 @@ class PdaLivePanelScenario:
             ),
             "state_convergence_ms": (
                 round(
-                    (
-                        state_observed_offset_ns - log_completion_offset_ns
-                    )
-                    / 1_000_000,
+                    (state_observed_offset_ns - log_completion_offset_ns) / 1_000_000,
                     3,
                 )
                 if (
@@ -2658,9 +2913,7 @@ class PdaLivePanelScenario:
     @classmethod
     def _format_exception(cls, error: BaseException) -> str:
         if isinstance(error, BaseExceptionGroup):
-            details = [
-                cls._format_exception(nested) for nested in error.exceptions
-            ]
+            details = [cls._format_exception(nested) for nested in error.exceptions]
             if len(details) == 1:
                 return details[0]
             return "; ".join(details)
@@ -2685,7 +2938,7 @@ class PdaLivePanelScenario:
             ) from error
 
     @staticmethod
-    def _device_enabled(device: dict[str, Any]) -> bool:
+    def _device_int_status(device: dict[str, Any]) -> int:
         value = device.get("int_status")
         if not isinstance(value, (int, str)):
             raise ScenarioFailure(
@@ -2693,21 +2946,52 @@ class PdaLivePanelScenario:
                 f"int_status {value!r}"
             )
         try:
-            return int(value) != 0
+            return int(value)
         except (TypeError, ValueError) as error:
             raise ScenarioFailure(
                 f"Device {device.get('id', '<unknown>')} has invalid "
                 f"int_status {value!r}"
             ) from error
 
-    @staticmethod
-    def _device_off_transition_pending(device: dict[str, Any]) -> bool:
+    @classmethod
+    def _device_enabled(cls, device: dict[str, Any]) -> bool:
+        return cls._device_int_status(device) != 0
+
+    @classmethod
+    def _device_active(cls, device: dict[str, Any]) -> bool:
+        return cls._device_int_status(device) == 1
+
+    @classmethod
+    def _device_transition_pending(cls, device: dict[str, Any]) -> bool:
         state = str(device.get("state", "")).strip().casefold()
         status = str(device.get("status", "")).strip().casefold()
-        try:
-            int_status = int(device.get("int_status", -1))
-        except (TypeError, ValueError):
-            int_status = -1
-        return state == "off" and (
-            int_status == 2 or status in {"flash", "flashing", "pending"}
+        int_status = cls._device_int_status(device)
+        return (
+            int_status in {2, 4}
+            or "***" in state
+            or "***" in status
+            or status in {"flash", "flashing", "pending", "unknown"}
         )
+
+    @classmethod
+    def _device_state_details(
+        cls,
+        device: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "int_status": cls._device_int_status(device),
+            "state": str(device.get("state", "")).strip().casefold(),
+            "status": str(device.get("status", "")).strip().casefold(),
+            "enabled": cls._device_enabled(device),
+            "active": cls._device_active(device),
+            "transitioning": cls._device_transition_pending(device),
+        }
+
+    @staticmethod
+    def _requested_device_state_label(
+        device: dict[str, Any],
+        enabled: bool,
+    ) -> str:
+        if device.get("type") == "setpoint_thermo":
+            return "enabled" if enabled else "disabled"
+        return "on" if enabled else "off"

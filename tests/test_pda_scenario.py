@@ -62,24 +62,32 @@ class FakeApi:
                 "name": "Filter Pump",
                 "type": "switch",
                 "int_status": "0",
+                "state": "off",
+                "status": "off",
             },
             "Aux_1": {
                 "id": "Aux_1",
                 "name": "Cleaner",
                 "type": "switch",
                 "int_status": "0",
+                "state": "off",
+                "status": "off",
             },
             "Aux_2": {
                 "id": "Aux_2",
                 "name": "NONE",
                 "type": "switch",
                 "int_status": "0",
+                "state": "off",
+                "status": "off",
             },
             "Aux_8": {
                 "id": "Aux_8",
                 "name": "Waterfall",
                 "type": "switch",
                 "int_status": "0",
+                "state": "off",
+                "status": "off",
             },
             "Air_Temp": {
                 "id": "Air_Temp",
@@ -91,6 +99,8 @@ class FakeApi:
                 "name": "Pool Heater",
                 "type": "setpoint_thermo",
                 "int_status": "3",
+                "state": "off",
+                "status": "enabled",
                 "spvalue": "80",
             },
             "SWG": {
@@ -125,8 +135,11 @@ class FakeApi:
         }
 
     async def set_device(self, identifier: str, enabled: bool) -> None:
-        self._devices[identifier]["int_status"] = (
-            "3" if identifier == POOL_HEATER and enabled else str(int(enabled))
+        heater_enabled = identifier == POOL_HEATER and enabled
+        self._devices[identifier].update(
+            int_status="3" if heater_enabled else str(int(enabled)),
+            state="on" if enabled and not heater_enabled else "off",
+            status=("enabled" if heater_enabled else "on" if enabled else "off"),
         )
         await self._publish(DEVICE_ACTIVE)
         await self._publish(DEVICE_FINISHED)
@@ -352,6 +365,72 @@ class PdaScenarioTests(unittest.TestCase):
     def test_cleanup_retry_waits_without_resending_toggle(self) -> None:
         asyncio.run(self._run_cleanup_retry())
 
+    def test_flashing_device_does_not_satisfy_requested_on_state(self) -> None:
+        asyncio.run(self._run_flashing_device_state_wait())
+
+    def test_heater_enabled_state_is_distinct_from_active_heating(self) -> None:
+        enabled = {
+            "id": POOL_HEATER,
+            "type": "setpoint_thermo",
+            "int_status": "3",
+            "state": "off",
+            "status": "enabled",
+        }
+        active = {**enabled, "int_status": "1", "state": "on", "status": "on"}
+
+        self.assertTrue(PdaLivePanelScenario._device_enabled(enabled))
+        self.assertFalse(PdaLivePanelScenario._device_active(enabled))
+        self.assertTrue(PdaLivePanelScenario._device_enabled(active))
+        self.assertTrue(PdaLivePanelScenario._device_active(active))
+        self.assertEqual(
+            PdaLivePanelScenario._requested_device_state_label(enabled, True),
+            "enabled",
+        )
+
+    async def _run_flashing_device_state_wait(self) -> None:
+        devices = {
+            "Filter_Pump": {
+                "id": "Filter_Pump",
+                "type": "switch",
+                "int_status": "2",
+                "state": "off",
+                "status": "flash",
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory)
+            timeline = Timeline(
+                artifact_dir / "timeline.jsonl",
+                time.monotonic_ns(),
+            )
+            context = ScenarioContext(
+                artifact_dir=artifact_dir,
+                monitor=OutputMonitor(),
+                timeline=timeline,
+            )
+            api = CleanupApi(
+                context,
+                devices,
+                pending_polls={"Filter_Pump": 1},
+            )
+            scenario = PdaLivePanelScenario(
+                api,
+                PdaScenarioConfig(state_timeout_seconds=0.4),
+            )
+            try:
+                with self.assertRaisesRegex(
+                    ScenarioFailure,
+                    "did not become on",
+                ):
+                    await scenario._wait_for_device_state(
+                        context,
+                        "Filter_Pump",
+                        True,
+                        timeout_seconds=0.4,
+                    )
+            finally:
+                timeline.close()
+
     async def _run_dependency_aware_cleanup(self) -> None:
         identifiers = (POOL_HEATER, "Aux_1", "Spa_Mode", "Filter_Pump")
         original = {
@@ -491,7 +570,7 @@ class PdaScenarioTests(unittest.TestCase):
             )
             scenario = PdaLivePanelScenario(
                 api,
-                PdaScenarioConfig(restoration_timeout_seconds=0.3),
+                PdaScenarioConfig(restoration_timeout_seconds=1.0),
             )
             scenario._initial_snapshot = DeviceSnapshot(
                 temp_units="f",
@@ -590,8 +669,7 @@ class PdaScenarioTests(unittest.TestCase):
             await monitor.publish(
                 0,
                 "stdout",
-                "Notice: NetService:Starting web server on "
-                "http://0.0.0.0:8080",
+                "Notice: NetService:Starting web server on http://0.0.0.0:8080",
             )
             try:
                 discovered = await scenario._discover_api_base_url(context)
@@ -627,8 +705,8 @@ class PdaScenarioTests(unittest.TestCase):
                     execution_phase=execution_phase,
                     disabled_button_numbers=disabled_button_numbers,
                     action_timeout_seconds=0.5,
-                    status_timeout_seconds=0.5,
-                    init_timeout_seconds=0.5,
+                    status_timeout_seconds=1.0,
+                    init_timeout_seconds=1.0,
                     sleep_timeout_seconds=0.5,
                     status_retry_command_delay_seconds=0.01,
                     probe_command_min_delay_seconds=0.04,
@@ -694,9 +772,7 @@ class PdaScenarioTests(unittest.TestCase):
                         "button": 3,
                         "identifier": "Aux_1",
                         "name": "Cleaner",
-                        "reasons": [
-                            "button_03_label is configured as NONE"
-                        ],
+                        "reasons": ["button_03_label is configured as NONE"],
                     }
                 )
             excluded.extend(
@@ -711,9 +787,7 @@ class PdaScenarioTests(unittest.TestCase):
                         "button": 10,
                         "identifier": "Aux_8",
                         "name": "Waterfall",
-                        "reasons": [
-                            "Aux_8 is beyond reported panel size 8"
-                        ],
+                        "reasons": ["Aux_8 is beyond reported panel size 8"],
                     },
                 ]
             )
@@ -721,14 +795,8 @@ class PdaScenarioTests(unittest.TestCase):
                 {
                     "mode": "auto_last_switch",
                     "requested": [],
-                    "resolved": [
-                        "Filter_Pump"
-                        if disabled_button_numbers
-                        else "Aux_1"
-                    ],
-                    "configured_none_buttons": list(
-                        disabled_button_numbers
-                    ),
+                    "resolved": ["Filter_Pump" if disabled_button_numbers else "Aux_1"],
+                    "configured_none_buttons": list(disabled_button_numbers),
                     "reported_panel_size": 8,
                     "excluded": excluded,
                 }
@@ -741,9 +809,7 @@ class PdaScenarioTests(unittest.TestCase):
                         if disabled_button_numbers
                         else ["Filter_Pump", "Aux_1"]
                     ),
-                    "configured_none_buttons": list(
-                        disabled_button_numbers
-                    ),
+                    "configured_none_buttons": list(disabled_button_numbers),
                     "reported_panel_size": 8,
                     "excluded": excluded,
                 }
@@ -755,8 +821,7 @@ class PdaScenarioTests(unittest.TestCase):
             )
             self.assertEqual(report["checks"][0]["status"], "passed")
             categories = {
-                measurement["category"]
-                for measurement in report["measurements"]
+                measurement["category"] for measurement in report["measurements"]
             }
             expected_categories = {
                 "device",
@@ -769,8 +834,7 @@ class PdaScenarioTests(unittest.TestCase):
                 expected_categories.add("sleep_cycle")
             self.assertEqual(categories, expected_categories)
             measurement_names = {
-                measurement["name"]
-                for measurement in report["measurements"]
+                measurement["name"] for measurement in report["measurements"]
             }
             if execution_phase == "awake":
                 self.assertNotIn("pda.sleep.enter", measurement_names)
@@ -804,8 +868,7 @@ class PdaScenarioTests(unittest.TestCase):
                     places=2,
                 )
                 self.assertAlmostEqual(
-                    sleep_cycle["awake_percent"]
-                    + sleep_cycle["sleep_percent"],
+                    sleep_cycle["awake_percent"] + sleep_cycle["sleep_percent"],
                     100.0,
                     places=2,
                 )
@@ -843,6 +906,23 @@ class PdaScenarioTests(unittest.TestCase):
                         "api_percent": 35,
                     },
                 )
+                heater = report["equipment_status"]["heater_states"][POOL_HEATER]
+                self.assertTrue(heater["enabled"])
+                self.assertFalse(heater["active"])
+                self.assertTrue(heater["pda_enabled"])
+                self.assertFalse(heater["pda_active"])
+                self.assertTrue(heater["pda_status_lines"])
+                self.assertEqual(
+                    report["equipment_status"]["heater_enabled_mismatches"],
+                    [],
+                )
+                self.assertEqual(
+                    report["equipment_status"]["heater_active_mismatches"],
+                    [],
+                )
+                self.assertTrue(
+                    report["equipment_status"]["setup_states"][POOL_HEATER]["enabled"]
+                )
 
     async def _run_fast_scenario(self, *, timestamped: bool) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -875,7 +955,7 @@ class PdaScenarioTests(unittest.TestCase):
                     suite_name="pda-live-fast",
                     include_state_waits=False,
                     action_timeout_seconds=0.5,
-                    init_timeout_seconds=0.5,
+                    init_timeout_seconds=1.0,
                     panel_timezone="UTC",
                 ),
                 api_factory=api_factory,
@@ -883,20 +963,17 @@ class PdaScenarioTests(unittest.TestCase):
             await monitor.publish(
                 0,
                 "stderr",
-                f"{log_prefix}Notice: AqualinkD: Aqualink Daemon "
-                "v2.3.7 (rev dbfcb39)",
+                f"{log_prefix}Notice: AqualinkD: Aqualink Daemon v2.3.7 (rev dbfcb39)",
             )
             await monitor.publish(
                 100_000_000,
                 "stdout",
-                f"{log_prefix}Notice: AqualinkD: Panel set to "
-                "PDA-8 Combo Pool/Spa",
+                f"{log_prefix}Notice: AqualinkD: Panel set to PDA-8 Combo Pool/Spa",
             )
             await monitor.publish(
                 200_000_000,
                 "stdout",
-                f"{log_prefix}Notice: NetService:Starting web server "
-                "on port 8080",
+                f"{log_prefix}Notice: NetService:Starting web server on port 8080",
             )
             await monitor.publish(
                 500_000_000,
@@ -990,9 +1067,7 @@ class PdaScenarioTests(unittest.TestCase):
                 },
             )
             panel_type_check = next(
-                check
-                for check in report["checks"]
-                if check["name"] == "panel.type"
+                check for check in report["checks"] if check["name"] == "panel.type"
             )
             self.assertEqual(panel_type_check["status"], "warning")
             self.assertEqual(
@@ -1014,9 +1089,7 @@ class PdaScenarioTests(unittest.TestCase):
                             "button": 10,
                             "identifier": "Aux_8",
                             "name": "Waterfall",
-                            "reasons": [
-                                "Aux_8 is beyond reported panel size 6"
-                            ],
+                            "reasons": ["Aux_8 is beyond reported panel size 6"],
                         },
                     ],
                 },
@@ -1042,14 +1115,10 @@ class PdaScenarioTests(unittest.TestCase):
             self.assertIsNotNone(filter_on["programmer_duration_ms"])
             self.assertIsNotNone(filter_on["state_convergence_ms"])
             categories = {
-                measurement["category"]
-                for measurement in report["measurements"]
+                measurement["category"] for measurement in report["measurements"]
             }
             self.assertNotIn("state_wait", categories)
-            phases = {
-                measurement["phase"]
-                for measurement in report["measurements"]
-            }
+            phases = {measurement["phase"] for measurement in report["measurements"]}
             self.assertNotIn("devices.status_menu", phases)
             self.assertNotIn("devices.sleeping", phases)
 
@@ -1070,7 +1139,7 @@ class PdaScenarioTests(unittest.TestCase):
                 FakeApi(context, panel_time_offset_minutes=10),
                 PdaScenarioConfig(
                     action_timeout_seconds=0.5,
-                    init_timeout_seconds=0.5,
+                    init_timeout_seconds=1.0,
                     panel_timezone="UTC",
                     panel_time_tolerance_seconds=120.0,
                 ),
@@ -1116,9 +1185,7 @@ class PdaScenarioTests(unittest.TestCase):
                 (artifact_dir / "scenario.json").read_text(encoding="utf-8")
             )
             clock_check = next(
-                check
-                for check in report["checks"]
-                if check["name"] == "panel.time"
+                check for check in report["checks"] if check["name"] == "panel.time"
             )
             self.assertEqual(clock_check["status"], "failed")
             self.assertIn("Panel time differs", report["error"])
@@ -1144,13 +1211,20 @@ class PdaScenarioTests(unittest.TestCase):
             )
             snapshot = await api.devices()
             for device in snapshot.devices.values():
-                if device.get("type") == "switch" and int(
-                    device.get("int_status", 0)
-                ) != 0:
+                if (
+                    device.get("type") in {"switch", "setpoint_thermo"}
+                    and int(device.get("int_status", 0)) != 0
+                ):
+                    int_status = int(device.get("int_status", 0))
+                    if device.get("type") == "setpoint_thermo":
+                        status = "" if int_status == 1 else " ENA"
+                    else:
+                        status = " ON"
                     await context.monitor.publish(
                         context.timeline.offset_ns(),
                         "stdout",
-                        f"Found Status for {device['name']} = status line",
+                        f"Found Status for {device['name']} = "
+                        f"'{device['name']}{status}'",
                     )
             await context.monitor.publish(
                 context.timeline.offset_ns(),
