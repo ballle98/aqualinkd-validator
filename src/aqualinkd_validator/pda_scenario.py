@@ -5,14 +5,16 @@ import contextlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import normalize_api_base_url
-from .http_api import ApiError, AqualinkHttpApi, DeviceSnapshot
+from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
+from .http_api import ApiError, AqualinkHttpApi
+from .interfaces import AqualinkApi
 from .pda.cases import CASES, PdaCaseDefinition, PdaCaseId
 from .pda_simulator import (
     AquaPdaSimulator,
@@ -88,19 +90,6 @@ _SERIAL_SEND_TIME = re.compile(
 _TestResult = TypeVar("_TestResult")
 
 
-class PdaApi(Protocol):
-    @property
-    def base_url(self) -> str: ...
-
-    async def devices(self) -> DeviceSnapshot: ...
-
-    async def status(self) -> dict[str, Any]: ...
-
-    async def set_device(self, identifier: str, enabled: bool) -> None: ...
-
-    async def set_setpoint(self, identifier: str, value: int) -> None: ...
-
-
 @dataclass(frozen=True)
 class PdaScenarioConfig:
     suite_name: str = "pda-live-fast"
@@ -131,11 +120,11 @@ class ScenarioFailure(RuntimeError):
 class PdaLivePanelScenario:
     def __init__(
         self,
-        api: PdaApi | None,
+        api: AqualinkApi | None,
         config: PdaScenarioConfig,
         *,
         api_base_url_override: str | None = None,
-        api_factory: Callable[[str], PdaApi] = AqualinkHttpApi,
+        api_factory: Callable[[str], AqualinkApi] = AqualinkHttpApi,
         simulator_factory: Callable[[str], PdaSimulatorClient] = (AquaPdaSimulator),
     ) -> None:
         self._api = api
@@ -215,7 +204,7 @@ class PdaLivePanelScenario:
                 "errors": [],
             },
         }
-        self._initial_snapshot: DeviceSnapshot | None = None
+        self._initial_snapshot: EquipmentSnapshot | None = None
         self._button_number_by_identifier: dict[str, int] = {}
         self._excluded_device_ids: set[str] = set()
         self._reported_panel_size: int | None = None
@@ -994,7 +983,7 @@ class PdaLivePanelScenario:
         self._report["api_endpoint_source"] = source
 
     @property
-    def _api_client(self) -> PdaApi:
+    def _api_client(self) -> AqualinkApi:
         if self._api is None:
             raise ScenarioFailure("AqualinkD HTTP API endpoint is not configured")
         return self._api
@@ -1260,7 +1249,7 @@ class PdaLivePanelScenario:
         difference = min(difference, 24 * 3600 - difference)
         return panel_time.strip(), now, difference
 
-    async def _wait_for_api(self) -> DeviceSnapshot:
+    async def _wait_for_api(self) -> EquipmentSnapshot:
         deadline = asyncio.get_running_loop().time() + (
             self._config.action_timeout_seconds
         )
@@ -1277,7 +1266,7 @@ class PdaLivePanelScenario:
         )
 
     @staticmethod
-    def _actionable_identifiers(snapshot: DeviceSnapshot) -> tuple[str, ...]:
+    def _actionable_identifiers(snapshot: EquipmentSnapshot) -> tuple[str, ...]:
         return tuple(
             identifier
             for identifier, device in snapshot.devices.items()
@@ -1291,8 +1280,8 @@ class PdaLivePanelScenario:
         *,
         phase: str,
         timeout_seconds: float,
-        initial_snapshot: DeviceSnapshot | None = None,
-    ) -> DeviceSnapshot:
+        initial_snapshot: EquipmentSnapshot | None = None,
+    ) -> EquipmentSnapshot:
         selected = tuple(identifiers)
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         stable_since: float | None = None
@@ -1878,12 +1867,14 @@ class PdaLivePanelScenario:
     async def _test_pool_heater_setpoint(
         self,
         context: ScenarioContext,
-        heater: dict[str, Any],
+        heater: DeviceState,
     ) -> None:
         assert self._initial_snapshot is not None
         try:
-            original = round(float(heater["spvalue"]))
-        except (KeyError, TypeError, ValueError):
+            original = heater.setpoint
+        except EquipmentStateError:
+            original = None
+        if original is None:
             self._skip(
                 "heater.setpoint",
                 "Pool_Heater has no numeric spvalue",
@@ -2927,9 +2918,9 @@ class PdaLivePanelScenario:
 
     @staticmethod
     def _require_device(
-        snapshot: DeviceSnapshot,
+        snapshot: EquipmentSnapshot,
         identifier: str,
-    ) -> dict[str, Any]:
+    ) -> DeviceState:
         try:
             return snapshot.devices[identifier]
         except KeyError as error:
@@ -2938,60 +2929,62 @@ class PdaLivePanelScenario:
             ) from error
 
     @staticmethod
-    def _device_int_status(device: dict[str, Any]) -> int:
-        value = device.get("int_status")
-        if not isinstance(value, (int, str)):
-            raise ScenarioFailure(
-                f"Device {device.get('id', '<unknown>')} has invalid "
-                f"int_status {value!r}"
-            )
+    def _device_state(
+        device: DeviceState | Mapping[str, Any],
+    ) -> DeviceState:
+        return device if isinstance(device, DeviceState) else DeviceState(device)
+
+    @classmethod
+    def _device_int_status(
+        cls,
+        device: DeviceState | Mapping[str, Any],
+    ) -> int:
         try:
-            return int(value)
-        except (TypeError, ValueError) as error:
-            raise ScenarioFailure(
-                f"Device {device.get('id', '<unknown>')} has invalid "
-                f"int_status {value!r}"
-            ) from error
+            return cls._device_state(device).int_status
+        except EquipmentStateError as error:
+            raise ScenarioFailure(str(error)) from error
 
     @classmethod
-    def _device_enabled(cls, device: dict[str, Any]) -> bool:
-        return cls._device_int_status(device) != 0
+    def _device_enabled(
+        cls,
+        device: DeviceState | Mapping[str, Any],
+    ) -> bool:
+        return cls._device_state(device).enabled
 
     @classmethod
-    def _device_active(cls, device: dict[str, Any]) -> bool:
-        return cls._device_int_status(device) == 1
+    def _device_active(
+        cls,
+        device: DeviceState | Mapping[str, Any],
+    ) -> bool:
+        return cls._device_state(device).active
 
     @classmethod
-    def _device_transition_pending(cls, device: dict[str, Any]) -> bool:
-        state = str(device.get("state", "")).strip().casefold()
-        status = str(device.get("status", "")).strip().casefold()
-        int_status = cls._device_int_status(device)
-        return (
-            int_status in {2, 4}
-            or "***" in state
-            or "***" in status
-            or status in {"flash", "flashing", "pending", "unknown"}
-        )
+    def _device_transition_pending(
+        cls,
+        device: DeviceState | Mapping[str, Any],
+    ) -> bool:
+        return cls._device_state(device).transitioning
 
     @classmethod
     def _device_state_details(
         cls,
-        device: dict[str, Any],
+        device: DeviceState | Mapping[str, Any],
     ) -> dict[str, Any]:
+        state = cls._device_state(device)
         return {
-            "int_status": cls._device_int_status(device),
-            "state": str(device.get("state", "")).strip().casefold(),
-            "status": str(device.get("status", "")).strip().casefold(),
-            "enabled": cls._device_enabled(device),
-            "active": cls._device_active(device),
-            "transitioning": cls._device_transition_pending(device),
+            "int_status": state.int_status,
+            "state": state.state,
+            "status": state.status,
+            "enabled": state.enabled,
+            "active": state.active,
+            "transitioning": state.transitioning,
         }
 
     @staticmethod
     def _requested_device_state_label(
-        device: dict[str, Any],
+        device: DeviceState | Mapping[str, Any],
         enabled: bool,
     ) -> str:
-        if device.get("type") == "setpoint_thermo":
-            return "enabled" if enabled else "disabled"
-        return "on" if enabled else "off"
+        return PdaLivePanelScenario._device_state(device).requested_state_label(
+            enabled
+        )

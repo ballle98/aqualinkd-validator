@@ -3,21 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
+
+from .domain import EquipmentSnapshot
 
 
 class ApiError(RuntimeError):
     """Raised when AqualinkD's HTTP API cannot satisfy a request."""
-
-
-@dataclass(frozen=True)
-class DeviceSnapshot:
-    temp_units: str
-    devices: dict[str, dict[str, Any]]
-
-
 class AqualinkHttpApi:
     def __init__(self, base_url: str, timeout_seconds: float = 5.0) -> None:
         self._base_url = base_url.rstrip("/")
@@ -33,7 +26,7 @@ class AqualinkHttpApi:
     def base_url(self) -> str:
         return self._base_url
 
-    async def devices(self) -> DeviceSnapshot:
+    async def devices(self) -> EquipmentSnapshot:
         payload = await self._request_json("/api/devices")
         devices = payload.get("devices")
         if not isinstance(devices, list):
@@ -46,7 +39,7 @@ class AqualinkHttpApi:
             if isinstance(identifier, str):
                 result[identifier] = device
         temp_units = payload.get("temp_units")
-        return DeviceSnapshot(
+        return EquipmentSnapshot(
             temp_units=temp_units if isinstance(temp_units, str) else "u",
             devices=result,
         )

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from aqualinkd_validator.http_api import DeviceSnapshot
+from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.pda_scenario import (
     PdaLivePanelScenario,
     PdaScenarioConfig,
@@ -32,8 +32,8 @@ def packet(command: int, *data: int) -> dict[str, Any]:
 class FakeApi:
     base_url = "http://127.0.0.1:8080"
 
-    async def devices(self) -> DeviceSnapshot:
-        return DeviceSnapshot(temp_units="f", devices={})
+    async def devices(self) -> EquipmentSnapshot:
+        return EquipmentSnapshot(temp_units="f", devices={})
 
     async def status(self) -> dict[str, Any]:
         return {}

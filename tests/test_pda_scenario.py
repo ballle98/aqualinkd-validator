@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from aqualinkd_validator.http_api import DeviceSnapshot
+from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.pda.cases import PdaCaseId
 from aqualinkd_validator.pda_scenario import (
     DEVICE_ACTIVE,
@@ -116,8 +116,8 @@ class FakeApi:
     def base_url(self) -> str:
         return self._base_url
 
-    async def devices(self) -> DeviceSnapshot:
-        return DeviceSnapshot(
+    async def devices(self) -> EquipmentSnapshot:
+        return EquipmentSnapshot(
             temp_units="f",
             devices=copy.deepcopy(self._devices),
         )
@@ -182,7 +182,7 @@ class CleanupApi:
     def base_url(self) -> str:
         return "http://127.0.0.1:8080"
 
-    async def devices(self) -> DeviceSnapshot:
+    async def devices(self) -> EquipmentSnapshot:
         for identifier, remaining in tuple(self._pending_polls.items()):
             if self._devices[identifier].get("int_status") != "2":
                 continue
@@ -195,7 +195,7 @@ class CleanupApi:
                 del self._pending_polls[identifier]
             else:
                 self._pending_polls[identifier] = remaining - 1
-        return DeviceSnapshot(
+        return EquipmentSnapshot(
             temp_units="f",
             devices=copy.deepcopy(self._devices),
         )
@@ -250,7 +250,7 @@ class PdaScenarioTests(unittest.TestCase):
         )
         scenario._reported_panel_size = 6
         scenario._reported_panel_combo = True
-        scenario._initial_snapshot = DeviceSnapshot(
+        scenario._initial_snapshot = EquipmentSnapshot(
             temp_units="f",
             devices={
                 "Filter_Pump": {"type": "switch", "name": "Filter Pump"},
@@ -292,7 +292,7 @@ class PdaScenarioTests(unittest.TestCase):
         scenario = PdaLivePanelScenario(None, PdaScenarioConfig())
         scenario._reported_panel_size = 4
         scenario._reported_panel_combo = False
-        scenario._initial_snapshot = DeviceSnapshot(
+        scenario._initial_snapshot = EquipmentSnapshot(
             temp_units="f",
             devices={
                 "Aux_1": {"type": "switch", "name": "Aux 1"},
@@ -470,7 +470,7 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=2.0),
             )
-            scenario._initial_snapshot = DeviceSnapshot(
+            scenario._initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
@@ -523,7 +523,7 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=2.0),
             )
-            scenario._initial_snapshot = DeviceSnapshot(
+            scenario._initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
@@ -572,7 +572,7 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=1.0),
             )
-            scenario._initial_snapshot = DeviceSnapshot(
+            scenario._initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
@@ -617,7 +617,7 @@ class PdaScenarioTests(unittest.TestCase):
                 del operation
                 observed.append(name)
                 if name == "PDA initialization, identity, and clock":
-                    scenario._initial_snapshot = DeviceSnapshot(
+                    scenario._initial_snapshot = EquipmentSnapshot(
                         temp_units="f",
                         devices={},
                     )
