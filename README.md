@@ -16,6 +16,11 @@ reproduced and checked consistently.
 > and legacy importers remain planned under
 > [issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1).
 
+Developer setup, test-extension rules, safety expectations, and the planned
+declarative testcase format are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+The wiki contains the
+[high-level design](https://github.com/ballle98/aqualinkd-validator/wiki/High-Level-Design).
+
 ## Installation and first test
 
 ### Prerequisites
@@ -224,9 +229,9 @@ one composite suite:
 | `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
 | `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and switch round trips during STATUS retries and after probing begins |
 | `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
-| `pda-live-simulator` | AquaPDA transport regression on a live panel | Opens the same AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
-| `pda-live-simulator-menu-walk` | Extensive AqualinkD PDA-simulator navigation against a live panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
-| `pda-powercenter-simulator-menu-walk` | Extensive AqualinkD validation against the Windows power-center simulator | Performs the same PDA-simulator menu traversal with the simulated power center as AqualinkD's southbound panel |
+| `pda-live-simulator` | AquaPDA interface transport regression on a physical panel | Opens the same northbound AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
+| `pda-live-simulator-menu-walk` | Extensive AquaPDA interface-emulator navigation against a physical panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
+| `pda-powercenter-simulator-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
 
 Multiple positional suites are serialized. For example,
 `run --panel-read-write pda-live-fast pda-live-long` completes the fast suite,
@@ -268,8 +273,8 @@ keeps the WebSocket connected while checking the supervised `-vv` log for
 failures, and any logged receive-to-send time over 10 ms. Packet counts and
 timing samples are retained in `scenario.json`.
 
-To extensively exercise AqualinkD's built-in PDA simulator against a live
-panel, run the read-only menu walk:
+To extensively exercise AqualinkD's AquaPDA interface emulator against a
+physical panel, run the read-only menu walk:
 
 ```bash
 .venv/bin/aqualinkd-validator run \
@@ -277,8 +282,8 @@ panel, run the read-only menu walk:
   pda-live-simulator-menu-walk
 ```
 
-For the corresponding southbound simulator test, connect AqualinkD's serial
-port to the Windows **power-center simulator**, then run:
+For the corresponding southbound panel-emulation test, connect AqualinkD's
+serial port to the Jandy **Power Center emulator**, then run:
 
 ```bash
 .venv/bin/aqualinkd-validator run \
@@ -287,15 +292,15 @@ port to the Windows **power-center simulator**, then run:
   pda-powercenter-simulator-menu-walk
 ```
 
-The AquaPDA WebSocket is the northbound key/display interface; the Windows
-power-panel simulator remains the southbound panel. The crawler reconstructs
+The AquaPDA WebSocket is the northbound key/display interface; the Jandy Power
+Center emulator remains the southbound panel. The crawler reconstructs
 Clear, Long Message, Highlight, and Shift Lines packets, enumerates paged
 highlight choices, walks the paged `EQUIPMENT ON/OFF` list, enters structural
 submenu rows ending in `>`, and returns with Back. It records each path and
 screen in `scenario.json`. Leaf actions
 such as equipment toggles, SAVE, START, and setpoint changes are deliberately
-not selected, so action-oriented simulator cases can add explicit assertions
-without making the structural crawl unsafe on a real panel.
+not selected, so action-oriented interface-emulator cases can add explicit
+assertions without making the structural crawl unsafe on a real panel.
 
 The container console reports each phase as it runs, for example:
 
@@ -387,7 +392,7 @@ phase-selection option is needed.
 
 Freeze-protection mutation and service-mode entry are deliberately excluded
 from both live-panel suites. They affect safety or maintenance behavior and
-belong in future panel-free simulator/replay suites where no physical
+belong in future RS485 panel-emulator or capture-replay suites where no physical
 equipment is connected. Read-only observation of those states may be added to
 live suites without changing this policy.
 
@@ -700,20 +705,31 @@ authorization. The validator reads the serial device from the selected
 AqualinkD configuration and reports it before starting the daemon; an explicit
 override must match that configuration.
 
-### Jandy simulator mode
+### Jandy Power Center emulator mode
 
-The implemented Jandy simulator mode supervises AqualinkD while it is connected
-to one of Jandy's legacy Windows power-panel simulators through an externally
-managed virtual or physical serial link. The
+The implemented `jandy-simulator` compatibility mode supervises AqualinkD while
+it is connected to Jandy's legacy Alwin32 Power Center emulator through an
+externally managed virtual or physical serial link. The
 `pda-powercenter-simulator-menu-walk` suite uses AqualinkD's AquaPDA WebSocket
 to drive PDA keys and reconstruct the screen while the Windows application
 supplies the controller-facing serial conversation. The separate
-`pda-live-simulator-menu-walk` suite uses that same AqualinkD PDA-simulator
-interface with a physical panel on the southbound serial connection.
+`pda-live-simulator-menu-walk` suite uses that same AqualinkD AquaPDA
+interface-emulation protocol with a physical panel on the southbound serial
+connection.
 
-This mode is distinct from AqualinkD's browser-based AllButton, OneTouch, and
-PDA interface simulators. The validator implements the AquaPDA browser
-protocol directly, but it does not replace the power-panel simulator.
+This mode is distinct from AqualinkD's northbound browser-based AllButton,
+OneTouch, and AquaPDA interface emulators. The validator implements the
+AquaPDA browser protocol directly, but it does not replace the southbound
+Power Center emulator.
+
+### Emulator terminology
+
+The word *simulator* is otherwise too ambiguous for this project. Documentation
+uses **Jandy Power Center emulator** for Alwin32 `Pwrcntr.exe`, **AqualinkD
+interface emulator** for the AquaPDA, AllButton, and OneTouch browser/WebSocket
+interfaces, and **RS485 panel emulator** for the planned Python component that
+will replay captures or model a panel through a PTY. Existing CLI, suite, and
+module names containing `simulator` remain compatibility identifiers.
 
 ### Panel-free mode
 
@@ -755,7 +771,7 @@ The main components are expected to be:
 | Config builder | Produce an isolated temporary configuration with a PTY and unused HTTP port |
 | HTTP client | Perform actions and poll `/api/status` or `/api/devices` |
 | Serial transport | Create PTYs and read or write raw RS485 traffic |
-| Panel driver | Replay captures and implement stateful panel behavior |
+| RS485 panel emulator | Replay captures and implement stateful panel behavior |
 | Scenario runner | Execute declarative steps with monotonic deadlines |
 | Assertions | Check HTTP state, logs, serial packets, timing, and process status |
 | Capture pipeline | Import legacy captures and write PCAPNG, JSONL, and provenance metadata |
@@ -764,8 +780,8 @@ The main components are expected to be:
 The canonical supported runtime will be a container with a pinned Python
 version and locked dependencies. It should run panel-free tests without broad
 host privileges and write artifacts to a mounted directory. Live-panel and
-Jandy simulator modes must map only explicitly selected serial devices rather
-than requiring an unrestricted privileged container.
+Jandy Power Center emulator modes must map only explicitly selected serial
+devices rather than requiring an unrestricted privileged container.
 
 A local Python virtual environment may be documented as a development
 convenience, but it is not the reproducibility boundary: it isolates Python
@@ -910,10 +926,11 @@ loop and pauses normal packet processing until the monitor exits. The
 validator must therefore not invoke it during an operational or
 timing-sensitive test.
 
-The browser-based PDA and other interface simulators can remain active during
-an operational capture. Their traffic uses AqualinkD's normal serial path and
-will appear alongside the daemon's other packet activity. In panel-free mode,
-simulator traffic also crosses the PTY and is captured automatically.
+The browser-based PDA and other AqualinkD interface emulators can remain active
+during an operational capture. Their traffic uses AqualinkD's normal serial
+path and will appear alongside the daemon's other packet activity. In
+panel-free mode, interface-emulator traffic also crosses the PTY and is
+captured automatically.
 
 The current AqualinkD log paths are fixed and their files are truncated when a
 new logger starts. The validator should initially serialize tests that collect
@@ -955,7 +972,7 @@ the log paths configurable per run.
    exchange plus one HTTP action and expected serial response.
 10. Add failure artifacts, including snapshots of any enabled AqualinkD
     protocol logs, and JUnit output suitable for CI.
-11. Add an operational Jandy simulator scenario.
+11. Add an operational Jandy Power Center emulator scenario.
 12. Add a Wireshark Lua dissector and legacy capture importers.
 13. Add the first timing-sensitive PDA sleep/wake and menu scenario.
 
@@ -966,18 +983,19 @@ first protocol priority; the same capture infrastructure should also support
 development for unavailable devices such as Jandy RS485 lights and Chem
 readers.
 
-## Relationship to AqualinkD tests and simulators
+## Relationship to AqualinkD tests and emulators
 
 This project is intended to complement:
 
 - C unit tests for pure functions, parsers, checksums, and packet processing;
-- AqualinkD's browser-based AllButton, OneTouch, and PDA simulators;
-- Jandy's legacy Windows panel simulators; and
+- AqualinkD's browser-based AllButton, OneTouch, and AquaPDA interface emulators;
+- Jandy's legacy Windows Power Center emulator; and
 - manual testing with real control panels.
 
-The existing simulators emulate user interfaces that communicate with a
-physical controller. Panel-free validator mode instead emulates enough of the
-controller-facing serial conversation to run AqualinkD itself. The repository
+The AqualinkD interface emulators represent user interfaces that communicate
+through AqualinkD with a physical controller. Panel-free validator mode will
+instead emulate enough of the controller-facing serial conversation to run
+AqualinkD itself. The repository
 history around AqualinkD's retired file-backed serial support should be
 reviewed for framing and replay lessons before implementing legacy importers.
 
