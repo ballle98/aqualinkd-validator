@@ -14,6 +14,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .config import normalize_api_base_url
 from .http_api import ApiError, AqualinkHttpApi, DeviceSnapshot
 from .pda.cases import CASES, PdaCaseDefinition, PdaCaseId
+from .pda_simulator import (
+    AquaPdaSimulator,
+    PdaSimulatorClient,
+    SimulatorProtocolError,
+)
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 
 FILTER_PUMP = "Filter_Pump"
@@ -74,6 +79,10 @@ _AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
 _STATUS_MESSAGE = re.compile(r"\*\*\* Pass Equiptment msg '([^']*)'")
 _FOUND_STATUS = re.compile(r"Found Status for (.+?)\s*=", re.IGNORECASE)
 _SWG_PERCENT = re.compile(r"AquaPure\s*=\s*(\d+)", re.IGNORECASE)
+_SERIAL_SEND_TIME = re.compile(
+    r"Time from recv to (?:blocking )?send is\s+([0-9.]+)\s+sec",
+    re.IGNORECASE,
+)
 _TestResult = TypeVar("_TestResult")
 
 
@@ -109,6 +118,8 @@ class PdaScenarioConfig:
     panel_timezone: str = "UTC"
     panel_time_tolerance_seconds: float = 120.0
     case_ids: tuple[PdaCaseId, ...] = ()
+    simulator_packet_count: int = 20
+    simulator_timeout_seconds: float = 20.0
 
 
 class ScenarioFailure(RuntimeError):
@@ -123,10 +134,14 @@ class PdaLivePanelScenario:
         *,
         api_base_url_override: str | None = None,
         api_factory: Callable[[str], PdaApi] = AqualinkHttpApi,
+        simulator_factory: Callable[[str], PdaSimulatorClient] = (
+            AquaPdaSimulator
+        ),
     ) -> None:
         self._api = api
         self._api_base_url_override = api_base_url_override
         self._api_factory = api_factory
+        self._simulator_factory = simulator_factory
         self._config = config
         self._case_ids = self._resolve_case_ids(config)
         endpoint_source = (
@@ -169,6 +184,8 @@ class PdaLivePanelScenario:
             "panel": None,
             "equipment_status": None,
             "sleep_cycle": None,
+            "simulator": None,
+            "menu_walk": None,
             "cases": [],
             "measurements": [],
             "skipped": [],
@@ -408,8 +425,299 @@ class PdaLivePanelScenario:
             PdaCaseId.DEVICE_AFTER_PROBE: lambda: (
                 self._test_device_after_probe(context)
             ),
+            PdaCaseId.SIMULATOR_TRANSPORT: lambda: (
+                self._test_simulator_transport(context)
+            ),
+            PdaCaseId.MENU_WALK: lambda: self._test_menu_walk(context),
         }
         return operations[case_id]
+
+    async def _test_simulator_transport(
+        self,
+        context: ScenarioContext,
+    ) -> None:
+        api = self._api_client
+        simulator = self._simulator_factory(api.base_url)
+        log_cursor = context.monitor.cursor
+        packet_start = 0
+        try:
+            print(
+                "[ WAIT ] Activating AquaPDA WebSocket simulator and "
+                "observing RS485 traffic",
+                flush=True,
+            )
+            await simulator.connect()
+            packet_start = simulator.packet_count
+            await simulator.wait_for_packets(
+                self._config.simulator_packet_count,
+                after=packet_start,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            before_back = simulator.packet_count
+            await simulator.send_key("back")
+            await simulator.wait_for_packets(
+                2,
+                after=before_back,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+        finally:
+            await simulator.close()
+
+        events = [
+            event
+            for event in context.monitor.recent_events()
+            if event.sequence > log_cursor
+        ]
+        corruption = [
+            event.text
+            for event in events
+            if (
+                "Serial read bad Jandy checksum" in event.text
+                or "BAD PACKET" in event.text
+            )
+        ]
+        navigation_failures = [
+            event.text
+            for event in events
+            if any(
+                marker in event.text
+                for marker in (
+                    "waitForPDAnextMenu - received STATUS instead of CLEAR",
+                    "can't goto PM_EQUIPTMENT_CONTROL menu",
+                    "PDA Wake Init :- can't find menu",
+                )
+            )
+        ]
+        send_times = [
+            float(match.group(1))
+            for event in events
+            if (match := _SERIAL_SEND_TIME.search(event.text)) is not None
+        ]
+        slow_send_times = [value for value in send_times if value > 0.010]
+        packet_count = simulator.packet_count - packet_start
+        self._report["simulator"] = {
+            "packets_observed": packet_count,
+            "bad_packets": corruption,
+            "navigation_failures": navigation_failures,
+            "send_time_samples_seconds": send_times,
+            "maximum_send_time_seconds": max(send_times, default=None),
+            "send_time_limit_seconds": 0.010,
+            "slow_send_times_seconds": slow_send_times,
+        }
+        print(
+            f"[STATE ] AquaPDA simulator delivered {packet_count} packets; "
+            f"BAD PACKET count {len(corruption)}",
+            flush=True,
+        )
+        if corruption:
+            raise ScenarioFailure(
+                "AquaPDA simulator caused bad-checksum/BAD PACKET traffic "
+                f"({len(corruption)} log entries); see ballle98/AqualinkD#94 "
+                "and ballle98/AqualinkD#95"
+            )
+        if navigation_failures:
+            raise ScenarioFailure(
+                "AquaPDA simulator caused PDA navigation failures: "
+                + "; ".join(navigation_failures)
+            )
+        if slow_send_times:
+            raise ScenarioFailure(
+                "AquaPDA ACK path exceeded the 10ms transport budget: "
+                + ", ".join(f"{value:.3f}s" for value in slow_send_times)
+            )
+
+    async def _test_menu_walk(self, context: ScenarioContext) -> None:
+        api = self._api_client
+        simulator = self._simulator_factory(api.base_url)
+        visited: list[dict[str, Any]] = []
+        try:
+            await simulator.connect()
+            await simulator.wait_for_packets(
+                6,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await simulator.wait_for_screen_settle(
+                after=0,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await self._return_simulator_to_home(simulator)
+            await self._walk_read_only_menus(
+                simulator,
+                path=("HOME",),
+                visited=visited,
+                depth=0,
+            )
+        finally:
+            await simulator.close()
+        self._report["menu_walk"] = {
+            "screens_visited": len(visited),
+            "screens": visited,
+        }
+        print(
+            f"[STATE ] PDA menu walk visited {len(visited)} screens",
+            flush=True,
+        )
+        if len(visited) < 2:
+            raise ScenarioFailure("PDA menu walk did not reach the main menu")
+
+    async def _return_simulator_to_home(
+        self,
+        simulator: PdaSimulatorClient,
+    ) -> None:
+        for _ in range(8):
+            visible = {line.strip() for line in simulator.screen.lines}
+            if {"MENU", "EQUIPMENT ON/OFF"}.issubset(visible):
+                print(
+                    "[STATE ] PDA simulator returned to the home screen",
+                    flush=True,
+                )
+                return
+            before_packets = simulator.packet_count
+            before_updates = simulator.screen_update_count
+            previous_screen = tuple(simulator.screen.lines)
+            await simulator.send_key("back")
+            await simulator.wait_for_screen_change(
+                previous_screen,
+                after=before_packets,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await simulator.wait_for_screen_settle(
+                after=before_updates,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+                idle_seconds=0.5,
+            )
+        raise ScenarioFailure(
+            "PDA menu walk could not identify the home screen containing "
+            "MENU and EQUIPMENT ON/OFF"
+        )
+
+    async def _walk_read_only_menus(
+        self,
+        simulator: PdaSimulatorClient,
+        *,
+        path: tuple[str, ...],
+        visited: list[dict[str, Any]],
+        depth: int,
+    ) -> None:
+        if depth > 8 or len(visited) >= 100:
+            raise ScenarioFailure("PDA menu walk exceeded its traversal bound")
+        options = await self._enumerate_menu_options(simulator)
+        display_path = " / ".join(path)
+        print(
+            f"[ WALK ] {display_path}: {len(options)} selectable item(s)",
+            flush=True,
+        )
+        visited.append(
+            {
+                "path": list(path),
+                "title": simulator.screen.title,
+                "lines": [line.rstrip() for line in simulator.screen.lines],
+                "options": options,
+            }
+        )
+        candidates = [
+            option
+            for option in options
+            if option in {"MENU", "EQUIPMENT ON/OFF"}
+            or option.endswith(">")
+        ]
+        for option in candidates:
+            await self._move_to_menu_option(simulator, option)
+            before_packets = simulator.packet_count
+            before_updates = simulator.screen_update_count
+            previous_screen = tuple(simulator.screen.lines)
+            await simulator.send_key("select")
+            await simulator.wait_for_screen_change(
+                previous_screen,
+                after=before_packets,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await simulator.wait_for_screen_settle(
+                after=before_updates,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+                idle_seconds=0.5,
+            )
+            await self._walk_read_only_menus(
+                simulator,
+                path=(*path, option.rstrip(" >")),
+                visited=visited,
+                depth=depth + 1,
+            )
+            before_packets = simulator.packet_count
+            before_updates = simulator.screen_update_count
+            previous_screen = tuple(simulator.screen.lines)
+            await simulator.send_key("back")
+            await simulator.wait_for_screen_change(
+                previous_screen,
+                after=before_packets,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await simulator.wait_for_screen_settle(
+                after=before_updates,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+                idle_seconds=0.5,
+            )
+
+    async def _enumerate_menu_options(
+        self,
+        simulator: PdaSimulatorClient,
+    ) -> list[str]:
+        first = simulator.screen.highlighted_text
+        if not first:
+            return []
+        options = [first]
+        for _ in range(31):
+            before_packets = simulator.packet_count
+            before_updates = simulator.screen_update_count
+            previous = simulator.screen.highlighted_text
+            await simulator.send_key("down")
+            try:
+                await simulator.wait_for_highlight_change(
+                    previous,
+                    after=before_packets,
+                    timeout_seconds=min(
+                        2.0,
+                        self._config.simulator_timeout_seconds,
+                    ),
+                )
+            except SimulatorProtocolError as error:
+                if "highlight did not change" not in str(error):
+                    raise
+                break
+            await simulator.wait_for_screen_settle(
+                after=before_updates,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+                idle_seconds=0.5,
+            )
+            current = simulator.screen.highlighted_text
+            if not current or current in options:
+                break
+            options.append(current)
+        return options
+
+    async def _move_to_menu_option(
+        self,
+        simulator: PdaSimulatorClient,
+        target: str,
+    ) -> None:
+        for _ in range(32):
+            current = simulator.screen.highlighted_text
+            if current == target:
+                return
+            before_packets = simulator.packet_count
+            before_updates = simulator.screen_update_count
+            await simulator.send_key("down")
+            await simulator.wait_for_highlight_change(
+                current,
+                after=before_packets,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+            )
+            await simulator.wait_for_screen_settle(
+                after=before_updates,
+                timeout_seconds=self._config.simulator_timeout_seconds,
+                idle_seconds=0.5,
+            )
+        raise ScenarioFailure(f"PDA menu item disappeared during walk: {target}")
 
     async def _restore_after_case(
         self,

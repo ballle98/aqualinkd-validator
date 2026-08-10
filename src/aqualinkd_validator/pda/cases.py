@@ -13,6 +13,8 @@ class PdaCaseId(StrEnum):
     SLEEP_CYCLE = "sleep-cycle"
     DEVICE_DURING_STATUS_RETRY = "device-during-status-retry"
     DEVICE_AFTER_PROBE = "device-after-probe"
+    SIMULATOR_TRANSPORT = "simulator-transport"
+    MENU_WALK = "menu-walk"
 
 
 @dataclass(frozen=True)
@@ -62,5 +64,15 @@ CASES: dict[PdaCaseId, PdaCaseDefinition] = {
         id=PdaCaseId.DEVICE_AFTER_PROBE,
         name="Device after PDA probing begins",
         mutates_panel=True,
+    ),
+    PdaCaseId.SIMULATOR_TRANSPORT: PdaCaseDefinition(
+        id=PdaCaseId.SIMULATOR_TRANSPORT,
+        name="AquaPDA simulator transport integrity",
+        mutates_panel=False,
+    ),
+    PdaCaseId.MENU_WALK: PdaCaseDefinition(
+        id=PdaCaseId.MENU_WALK,
+        name="PDA read-only menu walk",
+        mutates_panel=False,
     ),
 }

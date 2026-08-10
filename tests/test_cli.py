@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aqualinkd_validator.cli import (
+    _run,
     _run_composite_suite,
     _run_process_suite,
     build_aqualinkd_command,
@@ -24,6 +25,27 @@ from aqualinkd_validator.config import (
 
 
 class CliTests(unittest.TestCase):
+    def test_read_only_simulator_suites_do_not_require_panel_write(self) -> None:
+        invocations = (
+            ["run", "--panel", "pda-live-simulator"],
+            ["run", "--panel", "pda-live-simulator-menu-walk"],
+            [
+                "run",
+                "--mode",
+                "jandy-simulator",
+                "--panel",
+                "pda-powercenter-simulator-menu-walk",
+            ],
+        )
+        for invocation in invocations:
+            with self.subTest(invocation=invocation):
+                args = build_parser().parse_args(invocation)
+                with patch(
+                    "aqualinkd_validator.cli._run_one",
+                    return_value=0,
+                ):
+                    self.assertEqual(_run(args), 0)
+
     def test_long_suite_runs_awake_then_sleep_with_derived_configs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

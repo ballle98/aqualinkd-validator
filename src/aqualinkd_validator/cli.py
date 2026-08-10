@@ -309,10 +309,13 @@ def _run(args: argparse.Namespace) -> int:
             "--panel-read-write because it opens a real or externally "
             "managed serial bus"
         )
-    if selected_names and not args.allow_equipment_control:
+    mutating_suites = [
+        name for name in selected_names if _suite_mutates_panel(name)
+    ]
+    if mutating_suites and not args.allow_equipment_control:
         raise ConfigurationError(
-            "Selected live-panel suites change physical equipment and require "
-            "--panel-read-write"
+            "Selected suites change equipment and require --panel-read-write: "
+            + ", ".join(mutating_suites)
         )
     if args.pda_test_device and not any(
         any(
@@ -436,6 +439,14 @@ def _suite_contains_case(name: str, case_id: PdaCaseId) -> bool:
     if case_id in suite.cases:
         return True
     return any(_suite_contains_case(member, case_id) for member in suite.members)
+
+
+def _suite_mutates_panel(name: str) -> bool:
+    suite = get_suite(name)
+    assert suite is not None
+    return suite.mutates_panel or any(
+        _suite_mutates_panel(member) for member in suite.members
+    )
 
 
 def _run_process(args: argparse.Namespace) -> int:
