@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import normalize_api_base_url
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
+from .engine import RestorationSession
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
 from .pda.cases import CASES, PdaCaseDefinition, PdaCaseId
@@ -205,13 +206,11 @@ class PdaLivePanelScenario:
             },
         }
         self._initial_snapshot: EquipmentSnapshot | None = None
+        self._restoration = RestorationSession()
         self._button_number_by_identifier: dict[str, int] = {}
         self._excluded_device_ids: set[str] = set()
         self._reported_panel_size: int | None = None
         self._reported_panel_combo: bool | None = None
-        self._touched_devices: set[str] = set()
-        self._touched_setpoints: set[str] = set()
-        self._restoration_requests: dict[str, bool] = {}
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         suite_started = time.monotonic()
@@ -232,8 +231,7 @@ class PdaLivePanelScenario:
         case_failures: list[str] = []
         for case_id in self._case_ids:
             case = CASES[case_id]
-            self._touched_devices.clear()
-            self._touched_setpoints.clear()
+            self._restoration.begin_case()
             case_started = time.monotonic()
             case_error: BaseException | None = None
             try:
@@ -293,7 +291,7 @@ class PdaLivePanelScenario:
             self._report["failed_cases"] = case_failures
 
         final_restoration_errors: list[str] = []
-        if self._touched_devices or self._touched_setpoints:
+        if self._restoration.has_pending_mutations:
             final_restoration_errors = await self._restore_with_progress(
                 context,
                 "Restore original equipment state",
@@ -734,6 +732,7 @@ class PdaLivePanelScenario:
             timeout_seconds=self._config.init_timeout_seconds,
             initial_snapshot=ready_snapshot,
         )
+        self._restoration.capture_initial(self._initial_snapshot)
         await self._record_panel_identity_and_check_time(init_screen)
         self._record_device_constraints()
         self._require_device(self._initial_snapshot, FILTER_PUMP)
@@ -2325,7 +2324,7 @@ class PdaLivePanelScenario:
     ) -> None:
         self._remember_device(identifier)
         if not phase.startswith("restoration."):
-            self._restoration_requests.pop(identifier, None)
+            self._restoration.forget_requested_state(identifier)
         current_snapshot = await self._api_client.devices()
         current_device = self._require_device(current_snapshot, identifier)
         if self._device_transition_pending(current_device):
@@ -2458,7 +2457,7 @@ class PdaLivePanelScenario:
         completion_marker: str | tuple[str, ...],
         category: str,
     ) -> None:
-        self._touched_setpoints.add(identifier)
+        self._restoration.touch_setpoint(identifier)
         cursor = context.monitor.cursor
         started = context.timeline.offset_ns()
         await context.timeline.write(
@@ -2593,15 +2592,10 @@ class PdaLivePanelScenario:
         return self._device_enabled(self._require_device(snapshot, identifier))
 
     def _initial_device_enabled(self, identifier: str) -> bool:
-        assert self._initial_snapshot is not None
-        return self._device_enabled(
-            self._require_device(self._initial_snapshot, identifier)
-        )
+        return self._restoration.initial_device_enabled(identifier)
 
     def _remember_device(self, identifier: str) -> None:
-        assert self._initial_snapshot is not None
-        self._require_device(self._initial_snapshot, identifier)
-        self._touched_devices.add(identifier)
+        self._restoration.touch_device(identifier)
 
     async def _restore_original_state(
         self,
@@ -2610,107 +2604,43 @@ class PdaLivePanelScenario:
         restoration = self._report["restoration"]
         if self._initial_snapshot is None:
             return []
+        if self._restoration.initial_snapshot is not self._initial_snapshot:
+            self._restoration.capture_initial(self._initial_snapshot)
         restoration["attempted"] = True
-        errors: list[str] = []
-
-        for identifier in sorted(self._touched_setpoints):
-            device = self._initial_snapshot.devices.get(identifier)
-            if device is None:
-                errors.append(f"{identifier} setpoint: original device missing")
-                continue
-            try:
-                original = round(float(device["spvalue"]))
-                snapshot = await self._api_client.devices()
-                current = self._require_device(snapshot, identifier)
-                current_value = round(float(current["spvalue"]))
-                if current_value != original:
-                    if identifier != POOL_HEATER:
-                        raise ScenarioFailure(
-                            f"No restoration programmer markers for {identifier}"
-                        )
-                    await self._set_setpoint(
-                        context,
-                        identifier,
-                        original,
-                        phase="restoration.setpoint",
-                        active_marker=POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
-                        completion_marker=POOL_HEATER_SETPOINT_FINISHED_MARKERS,
-                        category="restoration",
-                    )
-                restoration["actions"].append(
-                    {
-                        "target": identifier,
-                        "property": "setpoint",
-                        "value": original,
-                        "status": "restored",
-                    }
+        async def restore_setpoint(identifier: str, original: int) -> None:
+            if identifier != POOL_HEATER:
+                raise ScenarioFailure(
+                    f"No restoration programmer markers for {identifier}"
                 )
-            except Exception as error:
-                errors.append(f"{identifier} setpoint: {error}")
-
-        identifiers = sorted(
-            self._touched_devices,
-            key=self._restoration_order,
-        )
-        for identifier in identifiers:
-            try:
-                expected = self._initial_device_enabled(identifier)
-                await self._restore_device_state(
-                    context,
-                    identifier,
-                    expected,
-                )
-                restoration["actions"].append(
-                    {
-                        "target": identifier,
-                        "property": "state",
-                        "value": expected,
-                        "status": "restored",
-                    }
-                )
-            except Exception as error:
-                errors.append(f"{identifier} state: {error}")
-
-        restoration["errors"].extend(errors)
-        restoration["status"] = "failed" if errors else "passed"
-        if not errors:
-            self._touched_devices.clear()
-            self._touched_setpoints.clear()
-        return errors
-
-    def _restoration_order(self, identifier: str) -> tuple[int, int, str]:
-        expected = self._initial_device_enabled(identifier)
-        heater = identifier in {
-            POOL_HEATER,
-            "Spa_Heater",
-            "Solar_Heater",
-        }
-        if not expected:
-            # Remove heat demand before changing water mode, then leave the
-            # filter pump until last so panel-controlled cooldown can finish.
-            rank = (
-                0
-                if heater
-                else 2
-                if self._is_spa_mode(identifier)
-                else 3
-                if identifier == FILTER_PUMP
-                else 1
+            await self._set_setpoint(
+                context,
+                identifier,
+                original,
+                phase="restoration.setpoint",
+                active_marker=POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
+                completion_marker=POOL_HEATER_SETPOINT_FINISHED_MARKERS,
+                category="restoration",
             )
-            return (0, rank, identifier)
 
-        # When the original state was on, restore dependencies in the reverse
-        # direction: circulation and water mode before heaters.
-        rank = (
-            0
-            if identifier == FILTER_PUMP
-            else 1
-            if self._is_spa_mode(identifier)
-            else 3
-            if heater
-            else 2
+        result = await self._restoration.restore(
+            read_snapshot=self._api_client.devices,
+            restore_setpoint=restore_setpoint,
+            restore_device=lambda identifier, expected: (
+                self._restore_device_state(context, identifier, expected)
+            ),
         )
-        return (1, rank, identifier)
+        restoration["actions"].extend(
+            {
+                "target": action.target,
+                "property": action.property,
+                "value": action.value,
+                "status": action.status,
+            }
+            for action in result.actions
+        )
+        restoration["errors"].extend(result.errors)
+        restoration["status"] = "passed" if result.passed else "failed"
+        return list(result.errors)
 
     @staticmethod
     def _is_spa_mode(identifier: str) -> bool:
@@ -2724,7 +2654,7 @@ class PdaLivePanelScenario:
     ) -> None:
         snapshot = await self._api_client.devices()
         device = self._require_device(snapshot, identifier)
-        requested = self._restoration_requests.get(identifier)
+        requested = self._restoration.requested_state(identifier)
         if self._device_transition_pending(device):
             requested_state = self._requested_device_state_label(
                 device,
@@ -2777,7 +2707,7 @@ class PdaLivePanelScenario:
             )
             return
 
-        self._restoration_requests[identifier] = expected
+        self._restoration.mark_requested_state(identifier, expected)
         await self._set_device(
             context,
             identifier,

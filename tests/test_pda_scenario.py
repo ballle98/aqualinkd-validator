@@ -474,7 +474,9 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._touched_devices.update(identifiers)
+            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            for identifier in identifiers:
+                scenario._restoration.touch_device(identifier)
             try:
                 errors = await scenario._restore_original_state(context)
             finally:
@@ -527,7 +529,8 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._touched_devices.add("Filter_Pump")
+            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            scenario._restoration.touch_device("Filter_Pump")
             try:
                 errors = await scenario._restore_original_state(context)
             finally:
@@ -576,7 +579,8 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._touched_devices.add("Spa_Mode")
+            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            scenario._restoration.touch_device("Spa_Mode")
             first_errors = await scenario._restore_original_state(context)
             api._pending_polls["Spa_Mode"] = 1
             try:
