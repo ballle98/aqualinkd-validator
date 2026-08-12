@@ -11,12 +11,20 @@ from aqualinkd_validator.testcases import (
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
-    TestcaseDefinition,
-    TestcaseExecutionFailure,
-    TestcaseExecutor,
-    TestcaseRequirements,
     WaitForStableEquipmentStep,
     WaitForStep,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseDefinition as DeclarativeCase,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseExecutionFailure as ExecutionFailure,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseExecutor as DeclarativeExecutor,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseRequirements as CaseRequirements,
 )
 
 
@@ -79,7 +87,7 @@ class TestcaseExecutorTests(unittest.TestCase):
 
     async def _execute_success(self) -> None:
         keywords = RecordingKeywords()
-        result = await TestcaseExecutor(keywords).execute(testcase())
+        result = await DeclarativeExecutor(keywords).execute(make_testcase())
 
         self.assertEqual(
             keywords.calls,
@@ -94,10 +102,10 @@ class TestcaseExecutorTests(unittest.TestCase):
     async def _execute_failure(self) -> None:
         keywords = RecordingKeywords(fail_keyword="assert_device")
         with self.assertRaisesRegex(
-            TestcaseExecutionFailure,
+            ExecutionFailure,
             r"pda\.filter\.steps\[2\]\.assert_device: simulated timeout",
         ):
-            await TestcaseExecutor(keywords).execute(testcase())
+            await DeclarativeExecutor(keywords).execute(make_testcase())
         self.assertEqual(
             keywords.calls,
             ["wait_for", "set_device", "assert_device", "restore_original_state"],
@@ -117,7 +125,7 @@ class TestcaseExecutorTests(unittest.TestCase):
                 raise TimeoutError("restore timeout")
 
         with self.assertRaises(BaseExceptionGroup) as caught:
-            await TestcaseExecutor(TwoFailures()).execute(testcase())
+            await DeclarativeExecutor(TwoFailures()).execute(make_testcase())
         self.assertEqual(len(caught.exception.exceptions), 2)
         self.assertIn("failed and cleanup also failed", str(caught.exception))
 
@@ -139,7 +147,9 @@ class TestcaseExecutorTests(unittest.TestCase):
                 restored.set()
 
         keywords = CancellableKeywords()
-        task = asyncio.create_task(TestcaseExecutor(keywords).execute(testcase()))
+        task = asyncio.create_task(
+            DeclarativeExecutor(keywords).execute(make_testcase())
+        )
         await started.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -148,14 +158,14 @@ class TestcaseExecutorTests(unittest.TestCase):
         self.assertEqual(keywords.calls, ["wait_for", "restore_original_state"])
 
 
-def testcase() -> TestcaseDefinition:
-    return TestcaseDefinition(
+def make_testcase() -> DeclarativeCase:
+    return DeclarativeCase(
         schema=1,
         identifier="pda.filter",
         description="Filter action",
         mode="physical-panel",
         access="read-write",
-        requirements=TestcaseRequirements(protocol="pda"),
+        requirements=CaseRequirements(protocol="pda"),
         steps=(
             WaitForStep("pda.initialized", 180),
             SetDeviceStep("Filter_Pump", "on", 130, 90, 10),

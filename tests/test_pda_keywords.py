@@ -18,9 +18,11 @@ from aqualinkd_validator.testcases import (
     AssertNoLogStep,
     ExerciseHeaterStep,
     SetSetpointStep,
-    TestcaseExecutor,
     WaitForStep,
     load_testcase,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseExecutor as DeclarativeExecutor,
 )
 
 
@@ -117,7 +119,7 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
             Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
 
-        result = await TestcaseExecutor(fixture.keywords).execute(testcase)
+        result = await DeclarativeExecutor(fixture.keywords).execute(testcase)
 
         self.assertEqual(result.identifier, "pda.filter-after-init")
         self.assertEqual(fixture.initialize_count, 1)
@@ -184,10 +186,10 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
     async def _specialized_operations(self) -> None:
         fixture = KeywordFixture(initialized=True)
         root = Path(__file__).parents[1] / "testcases" / "pda"
-        await TestcaseExecutor(fixture.keywords).execute(
+        await DeclarativeExecutor(fixture.keywords).execute(
             load_testcase(root / "equipment-status.yaml")
         )
-        await TestcaseExecutor(fixture.keywords).execute(
+        await DeclarativeExecutor(fixture.keywords).execute(
             load_testcase(root / "consecutive-devices.yaml")
         )
         self.assertEqual(fixture.status_verifications, 1)
@@ -201,7 +203,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
             "status-retry-command.yaml",
             "probe-transition-command.yaml",
         ):
-            await TestcaseExecutor(fixture.keywords).execute(load_testcase(root / name))
+            await DeclarativeExecutor(fixture.keywords).execute(
+                load_testcase(root / name)
+            )
         self.assertEqual(fixture.sleep_observations, 1)
         self.assertEqual(fixture.status_retry_exercises, 1)
         self.assertEqual(fixture.probe_transition_exercises, 1)

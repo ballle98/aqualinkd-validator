@@ -15,11 +15,13 @@ from aqualinkd_validator.testcases import (
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
-    TestcaseValidationError,
     VerifyEquipmentStatusStep,
     WaitForStep,
     load_testcase,
     load_testcase_suite,
+)
+from aqualinkd_validator.testcases import (
+    TestcaseValidationError as ValidationError,
 )
 
 
@@ -156,7 +158,7 @@ testcases: [mutating.yaml]
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                TestcaseValidationError,
+                ValidationError,
                 "requires read-write suite access",
             ):
                 load_testcase_suite(suite)
@@ -263,11 +265,11 @@ steps: []
         )
         self.assertIn("duplicate YAML key 'id'", str(error))
 
-    def _load_error(self, contents: str) -> TestcaseValidationError:
+    def _load_error(self, contents: str) -> ValidationError:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "testcase.yaml"
             path.write_text(contents, encoding="utf-8")
-            with self.assertRaises(TestcaseValidationError) as caught:
+            with self.assertRaises(ValidationError) as caught:
                 load_testcase(path)
             return caught.exception
 
