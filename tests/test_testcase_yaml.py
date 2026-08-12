@@ -29,6 +29,19 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertEqual(result.exception.code, 0)
         self.assertIn("pda.filter-after-init, 3 step(s)", output.getvalue())
 
+    def test_cli_validates_complete_suite_without_starting_aqualinkd(self) -> None:
+        path = (
+            Path(__file__).parents[1]
+            / "testcases"
+            / "suites"
+            / "pda-live-fast.yaml"
+        )
+        output = StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit) as result:
+            main(["validate-testcase", str(path)])
+        self.assertEqual(result.exception.code, 0)
+        self.assertIn("pda-live-fast, 3 testcase(s)", output.getvalue())
+
     def test_loads_versioned_testcase_into_typed_steps(self) -> None:
         testcase = load_testcase(
             Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"

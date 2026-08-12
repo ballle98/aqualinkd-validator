@@ -137,6 +137,7 @@ class PdaLivePanelScenario:
         api_factory: Callable[[str], AqualinkApi] = AqualinkHttpApi,
         simulator_factory: Callable[[str], PdaSimulatorClient] = (AquaPdaSimulator),
         testcase: TestcaseDefinition | None = None,
+        testcases: tuple[TestcaseDefinition, ...] = (),
     ) -> None:
         self._api = api
         self._api_base_url_override = api_base_url_override
@@ -144,6 +145,9 @@ class PdaLivePanelScenario:
         self._simulator_factory = simulator_factory
         self._config = config
         self._testcase = testcase
+        if testcase is not None and testcases:
+            raise ValueError("specify testcase or testcases, not both")
+        self._testcases = testcases or ((testcase,) if testcase is not None else ())
         self._programmer = PdaProgrammerObserver()
         self._case_ids = self._resolve_case_ids(config)
         endpoint_source = (
@@ -225,8 +229,22 @@ class PdaLivePanelScenario:
         self._reported_panel_combo: bool | None = None
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
-        if self._testcase is not None:
-            return await self._run_declarative_testcase(context, self._testcase)
+        if self._testcases:
+            outcome = ScenarioOutcome(
+                status="passed",
+                reason="scenario_completed",
+            )
+            for testcase in self._testcases:
+                outcome = await self._run_declarative_testcase(context, testcase)
+                if outcome.status != "passed":
+                    break
+            if len(self._testcases) > 1:
+                self._report["testcases"] = [
+                    testcase.identifier for testcase in self._testcases
+                ]
+                self._report.pop("testcase", None)
+                self._write_report(context)
+            return outcome
         suite_started = time.monotonic()
         display_name = self._config.suite_name
         print(
@@ -369,7 +387,7 @@ class PdaLivePanelScenario:
             execution = await TestcaseExecutor(
                 self._testcase_keywords(context, testcase.identifier)
             ).execute(testcase)
-            self._report["testcase_execution"] = {
+            execution_report = {
                 "id": execution.identifier,
                 "duration_ms": round(execution.duration_seconds * 1000, 3),
                 "steps": [
@@ -382,6 +400,10 @@ class PdaLivePanelScenario:
                     for step in execution.steps
                 ],
             }
+            self._report.setdefault("testcase_executions", []).append(
+                execution_report
+            )
+            self._report["testcase_execution"] = execution_report
         except asyncio.CancelledError as caught:
             error = caught
             cancelled = True

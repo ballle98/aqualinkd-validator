@@ -271,6 +271,28 @@ class CliTests(unittest.TestCase):
             self.assertEqual(_run(args), 0)
         self.assertEqual(observed, ["pda.filter-after-init"])
 
+    def test_run_accepts_yaml_suite_as_positional_target(self) -> None:
+        suite = (
+            Path(__file__).parents[1]
+            / "testcases"
+            / "suites"
+            / "pda-live-fast.yaml"
+        )
+        args = build_parser().parse_args(
+            ["run", "--panel-read-write", str(suite)]
+        )
+        observed: list[str] = []
+
+        def record_target(target_args: argparse.Namespace) -> int:
+            observed.append(target_args.testcase_suite.identifier)
+            self.assertIsNone(target_args.suite)
+            self.assertIsNone(target_args.testcase)
+            return 0
+
+        with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
+            self.assertEqual(_run(args), 0)
+        self.assertEqual(observed, ["pda-live-fast"])
+
     def test_mutating_yaml_testcase_requires_panel_write(self) -> None:
         testcase = (
             Path(__file__).parents[1]

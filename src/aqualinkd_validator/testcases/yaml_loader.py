@@ -88,6 +88,17 @@ _UniqueKeyLoader.add_constructor(
 )
 
 StepParser: TypeAlias = Callable[[Mapping[str, object], str], TestcaseStep]
+TestcaseDocument: TypeAlias = TestcaseDefinition | TestcaseSuiteDefinition
+
+
+def load_testcase_document(path: Path) -> TestcaseDocument:
+    """Load either a testcase or suite document based on its declared kind."""
+
+    raw = _load_yaml(path)
+    document = _mapping(raw, str(path))
+    if document.get("kind") == "suite":
+        return _parse_testcase_suite(document, path=path)
+    return parse_testcase(document, source=str(path))
 
 
 def load_testcase(path: Path) -> TestcaseDefinition:
@@ -101,8 +112,15 @@ def load_testcase_suite(path: Path) -> TestcaseSuiteDefinition:
     """Load a suite and validate its complete referenced testcase graph."""
 
     raw = _load_yaml(path)
+    return _parse_testcase_suite(_mapping(raw, str(path)), path=path)
+
+
+def _parse_testcase_suite(
+    document: Mapping[str, object],
+    *,
+    path: Path,
+) -> TestcaseSuiteDefinition:
     source = str(path)
-    document = _mapping(raw, source)
     _keys(
         document,
         source,

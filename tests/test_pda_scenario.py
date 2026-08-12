@@ -40,7 +40,7 @@ from aqualinkd_validator.supervisor import (
     ScenarioContext,
     Timeline,
 )
-from aqualinkd_validator.testcases import load_testcase
+from aqualinkd_validator.testcases import load_testcase, load_testcase_suite
 
 
 class FakeApi:
@@ -245,6 +245,9 @@ class PdaScenarioTests(unittest.TestCase):
 
     def test_declarative_filter_discovers_api_before_creating_actions(self) -> None:
         asyncio.run(self._run_declarative_filter_test(discover_api=True))
+
+    def test_declarative_suite_reuses_one_initialized_runtime(self) -> None:
+        asyncio.run(self._run_declarative_filter_test(as_suite=True))
 
     def test_switch_selection_uses_api_name_and_reported_panel_size(self) -> None:
         scenario = PdaLivePanelScenario(
@@ -692,6 +695,7 @@ class PdaScenarioTests(unittest.TestCase):
         self,
         *,
         discover_api: bool = False,
+        as_suite: bool = False,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact_dir = Path(directory)
@@ -708,15 +712,26 @@ class PdaScenarioTests(unittest.TestCase):
                 / "pda"
                 / "filter-after-init.yaml"
             )
+            suite = load_testcase_suite(
+                Path(__file__).parents[1]
+                / "testcases"
+                / "suites"
+                / "pda-live-fast.yaml"
+            )
             scenario = PdaLivePanelScenario(
                 None if discover_api else api,
                 PdaScenarioConfig(
-                    suite_name=testcase.identifier,
+                    suite_name=suite.identifier if as_suite else testcase.identifier,
                     init_timeout_seconds=1,
                     panel_timezone="UTC",
                 ),
                 api_factory=lambda base_url: api,
-                testcase=testcase,
+                testcase=None if as_suite else testcase,
+                testcases=(
+                    tuple(member.testcase for member in suite.members[:2])
+                    if as_suite
+                    else ()
+                ),
             )
             startup_lines = [
                 (100_000_000, "AqualinkD: Starting Aqualink Daemon v3.1.1 !"),
@@ -746,7 +761,15 @@ class PdaScenarioTests(unittest.TestCase):
                 (artifact_dir / "scenario.json").read_text(encoding="utf-8")
             )
             self.assertEqual(outcome.status, "passed")
-            self.assertEqual(report["testcase"], "pda.filter-after-init")
+            if as_suite:
+                self.assertEqual(
+                    report["testcases"],
+                    ["pda.initialization", "pda.filter-after-init"],
+                )
+                self.assertEqual(len(report["testcase_executions"]), 2)
+                self.assertEqual(len(report["cases"]), 2)
+            else:
+                self.assertEqual(report["testcase"], "pda.filter-after-init")
             self.assertEqual(
                 report["api_endpoint_source"],
                 "aqualinkd_startup_log" if discover_api else "injected",

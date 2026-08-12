@@ -27,6 +27,7 @@ from .model import (
 from .yaml_loader import (
     TestcaseValidationError,
     load_testcase,
+    load_testcase_document,
     load_testcase_suite,
 )
 
@@ -53,5 +54,6 @@ __all__ = [
     "WaitForStableEquipmentStep",
     "WaitForStep",
     "load_testcase",
+    "load_testcase_document",
     "load_testcase_suite",
 ]
