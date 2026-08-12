@@ -43,6 +43,7 @@ source modules are:
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
+| `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `pda/cases.py` | Stable case identifiers, names, and mutation policy |
 | `pda/suites.py` | Declarative ordering of cases and configuration overrides |
 | `pda_scenario.py` | Current PDA case coordination, protocol log correlation, state validation, and timing |
@@ -97,9 +98,10 @@ configuration overrides.
 
 ## Declarative testcases
 
-The contributor-facing format is versioned YAML. Schema-v1 loading and complete
-preflight validation are implemented; execution is the next integration step,
-so current executable cases remain Python. Python continues to own
+The contributor-facing format is versioned YAML. Schema-v1 loading, complete
+preflight validation, and protocol-independent keyword sequencing are
+implemented. A PDA keyword adapter is the next integration step, so current
+executable cases remain Python. Python continues to own
 transport, process supervision, monotonic timing, typed state interpretation,
 and restoration. YAML should describe test intent by composing a small set of
 reviewable keywords.

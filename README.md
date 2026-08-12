@@ -970,8 +970,9 @@ the log paths configurable per run.
 7. Write the versioned capture bundle, including serial PCAPNG, the combined
    JSONL timeline, and a provenance/fidelity manifest.
 8. Define and validate the YAML scenario schema. **Implemented:** the schema-v1
-   typed model, strict loader, example, and hardware-free validation command;
-   execution is the next integration step.
+   typed model, strict loader, protocol-independent keyword executor, example,
+   and hardware-free validation command; PDA keyword binding is the next
+   integration step.
 9. Complete the bounded panel-free feasibility test: a minimal probe/ACK
    exchange plus one HTTP action and expected serial response.
 10. Add failure artifacts, including snapshots of any enabled AqualinkD

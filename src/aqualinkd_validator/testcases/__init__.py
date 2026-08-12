@@ -1,5 +1,12 @@
 """Versioned, declarative testcase definitions."""
 
+from .executor import (
+    StepExecution,
+    TestcaseExecution,
+    TestcaseExecutionFailure,
+    TestcaseExecutor,
+    TestcaseKeywords,
+)
 from .model import (
     AssertDeviceStep,
     AssertLogStep,
@@ -8,6 +15,7 @@ from .model import (
     SetDeviceStep,
     SetSetpointStep,
     TestcaseDefinition,
+    TestcaseRequirements,
     TestcaseStep,
     WaitForStableEquipmentStep,
     WaitForStep,
@@ -21,7 +29,13 @@ __all__ = [
     "RestoreOriginalStateStep",
     "SetDeviceStep",
     "SetSetpointStep",
+    "StepExecution",
     "TestcaseDefinition",
+    "TestcaseExecution",
+    "TestcaseExecutionFailure",
+    "TestcaseExecutor",
+    "TestcaseKeywords",
+    "TestcaseRequirements",
     "TestcaseStep",
     "TestcaseValidationError",
     "WaitForStableEquipmentStep",
