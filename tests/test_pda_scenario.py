@@ -40,6 +40,7 @@ from aqualinkd_validator.supervisor import (
     ScenarioContext,
     Timeline,
 )
+from aqualinkd_validator.testcases import load_testcase
 
 
 class FakeApi:
@@ -239,6 +240,12 @@ class CleanupApi:
 
 
 class PdaScenarioTests(unittest.TestCase):
+    def test_declarative_filter_test_uses_scenario_lifecycle(self) -> None:
+        asyncio.run(self._run_declarative_filter_test())
+
+    def test_declarative_filter_discovers_api_before_creating_actions(self) -> None:
+        asyncio.run(self._run_declarative_filter_test(discover_api=True))
+
     def test_switch_selection_uses_api_name_and_reported_panel_size(self) -> None:
         scenario = PdaLivePanelScenario(
             None,
@@ -680,6 +687,83 @@ class PdaScenarioTests(unittest.TestCase):
             finally:
                 timeline.close()
             self.assertEqual(discovered, "http://127.0.0.1:8080")
+
+    async def _run_declarative_filter_test(
+        self,
+        *,
+        discover_api: bool = False,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory)
+            timeline = Timeline(
+                artifact_dir / "timeline.jsonl",
+                time.monotonic_ns(),
+            )
+            monitor = OutputMonitor()
+            context = ScenarioContext(artifact_dir, monitor, timeline)
+            api = FakeApi(context)
+            testcase = load_testcase(
+                Path(__file__).parents[1]
+                / "testcases"
+                / "pda"
+                / "filter-after-init.yaml"
+            )
+            scenario = PdaLivePanelScenario(
+                None if discover_api else api,
+                PdaScenarioConfig(
+                    suite_name=testcase.identifier,
+                    init_timeout_seconds=1,
+                    panel_timezone="UTC",
+                ),
+                api_factory=lambda base_url: api,
+                testcase=testcase,
+            )
+            startup_lines = [
+                (100_000_000, "AqualinkD: Starting Aqualink Daemon v3.1.1 !"),
+                (200_000_000, "AqualinkD: panel type = PDA-8 Combo (Pool & Spa)"),
+                (500_000_000, INIT_ACTIVE),
+                (600_000_000, "PDA Menu Line 1 = PDA-PS8 Combo"),
+                (700_000_000, "PDA Menu Line 3 = Firmware Version"),
+                (800_000_000, "PDA Menu Line 5 = PDA: 7.1.0"),
+                (2_000_000_000, INIT_FINISHED),
+            ]
+            if discover_api:
+                startup_lines.insert(
+                    0,
+                    (
+                        50_000_000,
+                        "NetService:Starting web server on http://0.0.0.0:8080",
+                    ),
+                )
+            for offset, line in startup_lines:
+                await monitor.publish(offset, "stdout", line)
+            try:
+                outcome = await scenario.run(context)
+            finally:
+                timeline.close()
+
+            report = json.loads(
+                (artifact_dir / "scenario.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(outcome.status, "passed")
+            self.assertEqual(report["testcase"], "pda.filter-after-init")
+            self.assertEqual(
+                report["api_endpoint_source"],
+                "aqualinkd_startup_log" if discover_api else "injected",
+            )
+            self.assertEqual(report["restoration"]["status"], "passed")
+            self.assertEqual(
+                [step["keyword"] for step in report["testcase_execution"]["steps"]],
+                [
+                    "wait_for",
+                    "set_device",
+                    "assert_device",
+                    "restore_original_state",
+                ],
+            )
+            self.assertFalse(
+                (await api.devices()).devices["Filter_Pump"].enabled
+            )
 
     async def _run_scenario(
         self,

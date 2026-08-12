@@ -29,7 +29,9 @@ from .pda_simulator import (
     SimulatorProtocolError,
 )
 from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
+from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
+from .testcases import TestcaseDefinition, TestcaseExecutor
 
 FILTER_PUMP = "Filter_Pump"
 POOL_HEATER = "Pool_Heater"
@@ -134,12 +136,14 @@ class PdaLivePanelScenario:
         api_base_url_override: str | None = None,
         api_factory: Callable[[str], AqualinkApi] = AqualinkHttpApi,
         simulator_factory: Callable[[str], PdaSimulatorClient] = (AquaPdaSimulator),
+        testcase: TestcaseDefinition | None = None,
     ) -> None:
         self._api = api
         self._api_base_url_override = api_base_url_override
         self._api_factory = api_factory
         self._simulator_factory = simulator_factory
         self._config = config
+        self._testcase = testcase
         self._programmer = PdaProgrammerObserver()
         self._case_ids = self._resolve_case_ids(config)
         endpoint_source = (
@@ -221,6 +225,8 @@ class PdaLivePanelScenario:
         self._reported_panel_combo: bool | None = None
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
+        if self._testcase is not None:
+            return await self._run_declarative_testcase(context, self._testcase)
         suite_started = time.monotonic()
         display_name = self._config.suite_name
         print(
@@ -339,6 +345,149 @@ class PdaLivePanelScenario:
         if cancelled:
             raise asyncio.CancelledError
         return ScenarioOutcome(status=status, reason=reason)
+
+    async def _run_declarative_testcase(
+        self,
+        context: ScenarioContext,
+        testcase: TestcaseDefinition,
+    ) -> ScenarioOutcome:
+        started = time.monotonic()
+        print(f"\n=== Starting {testcase.identifier} ===", flush=True)
+        await context.timeline.write(
+            "scenario_started",
+            suite=self._config.suite_name,
+            testcase=testcase.identifier,
+            api_base_url=self._report["api_base_url"],
+            api_endpoint_source=self._report["api_endpoint_source"],
+        )
+        status = "passed"
+        reason = "scenario_completed"
+        cancelled = False
+        error: BaseException | None = None
+        case_started = time.monotonic()
+        try:
+            execution = await TestcaseExecutor(
+                self._testcase_keywords(context, testcase.identifier)
+            ).execute(testcase)
+            self._report["testcase_execution"] = {
+                "id": execution.identifier,
+                "duration_ms": round(execution.duration_seconds * 1000, 3),
+                "steps": [
+                    {
+                        "section": step.section,
+                        "index": step.index,
+                        "keyword": step.keyword,
+                        "duration_ms": round(step.duration_seconds * 1000, 3),
+                    }
+                    for step in execution.steps
+                ],
+            }
+        except asyncio.CancelledError as caught:
+            error = caught
+            cancelled = True
+            status = "failed"
+            reason = "scenario_cancelled"
+        except BaseException as caught:
+            error = caught
+            status = "failed"
+            reason = "testcase_failed"
+
+        final_restoration_errors: list[str] = []
+        if self._restoration.has_pending_mutations:
+            final_restoration_errors = await self._restore_with_progress(
+                context,
+                "Final safety restoration",
+            )
+        if final_restoration_errors:
+            status = "failed"
+            reason = "restoration_failed"
+            self._report["error"] = "; ".join(final_restoration_errors)
+        elif error is not None:
+            self._report["error"] = self._format_exception(error)
+
+        self._report["cases"].append(
+            {
+                "id": testcase.identifier,
+                "name": testcase.description,
+                "status": status,
+                "duration_ms": round((time.monotonic() - case_started) * 1000, 3),
+                "error": self._format_exception(error) if error else None,
+                "restoration": self._report["restoration"]["status"],
+            }
+        )
+        self._report["safe_to_continue"] = bool(
+            self._initial_snapshot is not None
+            and not cancelled
+            and reason != "restoration_failed"
+        )
+        self._report["status"] = status
+        self._report["reason"] = reason
+        self._report["testcase"] = testcase.identifier
+        self._write_report(context)
+        await context.timeline.write(
+            "scenario_finished",
+            suite=self._config.suite_name,
+            testcase=testcase.identifier,
+            status=status,
+            reason=reason,
+        )
+        self._progress_finished(
+            testcase.identifier,
+            started,
+            passed=status == "passed",
+            detail=None if status == "passed" else reason,
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        return ScenarioOutcome(status=status, reason=reason)
+
+    def _testcase_keywords(
+        self,
+        context: ScenarioContext,
+        testcase_id: str,
+    ) -> PdaTestcaseKeywords:
+        async def wait_for_stable(
+            identifiers: tuple[str, ...],
+            timeout_seconds: float,
+        ) -> EquipmentSnapshot:
+            initial = await self._api_client.devices()
+            return await self._wait_for_stable_equipment_snapshot(
+                context,
+                identifiers,
+                phase=f"testcase.{testcase_id}.stable",
+                timeout_seconds=timeout_seconds,
+                initial_snapshot=initial,
+            )
+
+        async def restore(timeout_seconds: float) -> None:
+            del timeout_seconds
+            errors = await self._restore_original_state(context)
+            if errors:
+                raise ScenarioFailure("; ".join(errors))
+
+        return PdaTestcaseKeywords(
+            events=context.monitor,
+            actions=lambda: self._equipment_actions(context),
+            restoration=self._restoration,
+            markers=PdaKeywordMarkers(
+                device=ProgrammerMarkers(
+                    "Switch PDA device on/off",
+                    DEVICE_ACTIVE,
+                    DEVICE_FINISHED,
+                ),
+                setpoints={
+                    POOL_HEATER: ProgrammerMarkers(
+                        "Set PDA Pool Heater",
+                        POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
+                        POOL_HEATER_SETPOINT_FINISHED_MARKERS,
+                    )
+                },
+            ),
+            initialize=lambda: self._initialize(context),
+            wait_for_stable=wait_for_stable,
+            restore=restore,
+            phase_prefix=f"testcase.{testcase_id}",
+        )
 
     @staticmethod
     def _resolve_case_ids(config: PdaScenarioConfig) -> tuple[PdaCaseId, ...]:

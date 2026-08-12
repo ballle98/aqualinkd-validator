@@ -12,8 +12,8 @@ reproduced and checked consistently.
 > implemented. The live
 > suites supervise AqualinkD, perform HTTP actions,
 > validate PDA state and timing, restore changed equipment state, and retain
-> diagnostic and performance artifacts. Versioned YAML testcase loading and
-> preflight validation are available; YAML execution, isolated PTY
+> diagnostic and performance artifacts. Versioned YAML testcase loading,
+> preflight validation, and PDA live-panel execution are available; isolated PTY
 > panel emulation, PCAPNG serial capture, operational RS485-log collection,
 > and legacy importers remain planned under
 > [issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1).
@@ -179,7 +179,7 @@ when results must survive a reboot.
 
 On a Pi Zero or another resource-constrained system, run the validator
 directly to avoid the container image and Docker daemon. The package has no
-third-party runtime dependencies:
+native runtime dependencies; pip installs the pinned YAML parser:
 
 ```sh
 git clone https://github.com/ballle98/aqualinkd-validator.git
@@ -241,6 +241,22 @@ stops its supervised AqualinkD process, and writes its artifacts before
 starting a new AqualinkD process for the long suite. Independently supplied
 positional suites stop at the first failure, and suites never compete for the
 serial bus.
+
+YAML testcase paths use the same positional run-target mechanism and can be
+mixed or serialized without Python registration. The included first testcase
+performs the filter-pump portion of the fast suite:
+
+```bash
+.venv/bin/aqualinkd-validator run --panel-read-write \
+  testcases/pda/filter-after-init.yaml
+```
+
+The complete YAML file is validated before AqualinkD starts. Its declared
+`read-only` or `read-write` access is enforced against `--panel` or `--panelw`,
+and PDA testcases automatically enable AqualinkD serial debug logging with
+`-vv`. A mutating testcase must declare `restore_original_state` in `finally`;
+the runtime also makes a final safety-restoration attempt after failure or
+cancellation.
 
 `pda-live-long` itself uses two serialized AqualinkD processes because the
 equipment-status and sleep cases require opposite `pda_sleep_mode` settings.
@@ -970,9 +986,8 @@ the log paths configurable per run.
 7. Write the versioned capture bundle, including serial PCAPNG, the combined
    JSONL timeline, and a provenance/fidelity manifest.
 8. Define and validate the YAML scenario schema. **Implemented:** the schema-v1
-   typed model, strict loader, protocol-independent keyword executor, example,
-   and hardware-free validation command; PDA keyword binding is the next
-   integration step.
+   typed model, strict loader, protocol-independent keyword executor, PDA
+   live-panel binding, example, and hardware-free validation command.
 9. Complete the bounded panel-free feasibility test: a minimal probe/ACK
    exchange plus one HTTP action and expected serial response.
 10. Add failure artifacts, including snapshots of any enabled AqualinkD

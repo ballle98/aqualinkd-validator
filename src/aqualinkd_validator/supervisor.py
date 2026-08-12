@@ -8,6 +8,7 @@ import re
 import signal
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TextIO
@@ -118,6 +119,32 @@ class OutputMonitor:
             raise TimeoutError(
                 f"timed out after {timeout_seconds:g}s waiting for any log "
                 f"marker: {', '.join(predicates)}"
+            ) from error
+
+    async def wait_for_match(
+        self,
+        predicate: Callable[[LineEvent], bool],
+        *,
+        description: str,
+        after: int = 0,
+        timeout_seconds: float,
+    ) -> LineEvent:
+        async def wait() -> LineEvent:
+            cursor = after
+            while True:
+                async with self._condition:
+                    for event in self._events:
+                        if event.sequence > cursor and predicate(event):
+                            return event
+                    cursor = max(cursor, self._sequence)
+                    await self._condition.wait()
+
+        try:
+            return await asyncio.wait_for(wait(), timeout_seconds)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"timed out after {timeout_seconds:g}s waiting for log "
+                f"match: {description}"
             ) from error
 
 

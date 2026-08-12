@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from ..supervisor import LineEvent
@@ -23,6 +24,15 @@ class OrderedLogEvents(Protocol):
         self,
         predicates: tuple[str, ...],
         *,
+        after: int = 0,
+        timeout_seconds: float,
+    ) -> LineEvent: ...
+
+    async def wait_for_match(
+        self,
+        predicate: Callable[[LineEvent], bool],
+        *,
+        description: str,
         after: int = 0,
         timeout_seconds: float,
     ) -> LineEvent: ...

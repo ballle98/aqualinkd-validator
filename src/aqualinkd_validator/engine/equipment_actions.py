@@ -72,6 +72,8 @@ class EquipmentActions:
         *,
         phase: str,
         markers: ProgrammerMarkers,
+        activation_timeout_seconds: float | None = None,
+        completion_timeout_seconds: float | None = None,
         convergence_timeout_seconds: float | None = None,
     ) -> None:
         self._restoration.touch_device(identifier)
@@ -114,7 +116,11 @@ class EquipmentActions:
             marker=markers.active,
             after=cursor,
             requested_offset_ns=started,
-            timeout_seconds=self._timeouts.activation_seconds,
+            timeout_seconds=(
+                activation_timeout_seconds
+                if activation_timeout_seconds is not None
+                else self._timeouts.activation_seconds
+            ),
         )
         completed = await self._programmer.wait_for_completion(
             self._events,
@@ -122,7 +128,11 @@ class EquipmentActions:
             task_name=markers.task_name,
             marker=markers.completed,
             active=active,
-            timeout_seconds=self._timeouts.completion_seconds,
+            timeout_seconds=(
+                completion_timeout_seconds
+                if completion_timeout_seconds is not None
+                else self._timeouts.completion_seconds
+            ),
         )
         convergence_timeout = (
             convergence_timeout_seconds
@@ -145,7 +155,7 @@ class EquipmentActions:
                     enabled,
                     timeout_seconds=convergence_timeout,
                 ),
-                timeout_seconds=self._timeouts.convergence_seconds,
+                timeout_seconds=convergence_timeout,
             )
         finally:
             self._record_action_measurement(
@@ -183,6 +193,9 @@ class EquipmentActions:
         phase: str,
         category: str,
         markers: ProgrammerMarkers,
+        activation_timeout_seconds: float | None = None,
+        completion_timeout_seconds: float | None = None,
+        convergence_timeout_seconds: float | None = None,
     ) -> None:
         self._restoration.touch_setpoint(identifier)
         cursor = self._events.cursor
@@ -203,7 +216,11 @@ class EquipmentActions:
             marker=markers.active,
             after=cursor,
             requested_offset_ns=started,
-            timeout_seconds=self._timeouts.activation_seconds,
+            timeout_seconds=(
+                activation_timeout_seconds
+                if activation_timeout_seconds is not None
+                else self._timeouts.activation_seconds
+            ),
         )
         completed = await self._programmer.wait_for_completion(
             self._events,
@@ -211,11 +228,20 @@ class EquipmentActions:
             task_name=markers.task_name,
             marker=markers.completed,
             active=active,
-            timeout_seconds=self._timeouts.completion_seconds,
+            timeout_seconds=(
+                completion_timeout_seconds
+                if completion_timeout_seconds is not None
+                else self._timeouts.completion_seconds
+            ),
+        )
+        convergence_timeout = (
+            convergence_timeout_seconds
+            if convergence_timeout_seconds is not None
+            else self._timeouts.convergence_seconds
         )
         print(
             f"[ WAIT ] {identifier}: waiting for API setpoint {value} "
-            f"(timeout {self._timeouts.convergence_seconds:g}s)",
+            f"(timeout {convergence_timeout:g}s)",
             flush=True,
         )
         observed: int | None = None
@@ -224,8 +250,12 @@ class EquipmentActions:
                 self._events,
                 task_name=markers.task_name,
                 after=active.sequence,
-                state_wait=self._wait_for_setpoint(identifier, value),
-                timeout_seconds=self._timeouts.convergence_seconds,
+                state_wait=self._wait_for_setpoint(
+                    identifier,
+                    value,
+                    timeout_seconds=convergence_timeout,
+                ),
+                timeout_seconds=convergence_timeout,
             )
         finally:
             self._record_action_measurement(
@@ -285,8 +315,14 @@ class EquipmentActions:
             f"{timeout_seconds:g}s"
         )
 
-    async def _wait_for_setpoint(self, identifier: str, expected: int) -> int:
-        timeout = self._timeouts.convergence_seconds
+    async def _wait_for_setpoint(
+        self,
+        identifier: str,
+        expected: int,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        timeout = timeout_seconds
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             device = self._require_device(await self._api.devices(), identifier)

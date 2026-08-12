@@ -248,7 +248,41 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(context.exception.code, 2)
-        self.assertIn("unknown suite 'not-a-suite'", stderr.getvalue())
+        self.assertIn("unknown run target 'not-a-suite'", stderr.getvalue())
+
+    def test_run_accepts_yaml_testcase_as_positional_target(self) -> None:
+        testcase = (
+            Path(__file__).parents[1]
+            / "testcases"
+            / "pda"
+            / "filter-after-init.yaml"
+        )
+        args = build_parser().parse_args(
+            ["run", "--panel-read-write", str(testcase)]
+        )
+        observed: list[str] = []
+
+        def record_target(target_args: argparse.Namespace) -> int:
+            observed.append(target_args.testcase.identifier)
+            self.assertIsNone(target_args.suite)
+            return 0
+
+        with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
+            self.assertEqual(_run(args), 0)
+        self.assertEqual(observed, ["pda.filter-after-init"])
+
+    def test_mutating_yaml_testcase_requires_panel_write(self) -> None:
+        testcase = (
+            Path(__file__).parents[1]
+            / "testcases"
+            / "pda"
+            / "filter-after-init.yaml"
+        )
+        args = build_parser().parse_args(
+            ["run", "--panel-read-only", str(testcase)]
+        )
+        with self.assertRaisesRegex(ConfigurationError, "--panel-read-write"):
+            _run(args)
 
     def test_pda_suites_add_serial_debug_argument(self) -> None:
         for suite in (
@@ -272,6 +306,14 @@ class CliTests(unittest.TestCase):
                         "-vv",
                     ],
                 )
+
+        testcase_command = build_aqualinkd_command(
+            Path("/opt/aqualinkd"),
+            Path("/etc/aqualinkd.conf"),
+            None,
+            pda_testcase=True,
+        )
+        self.assertEqual(testcase_command[-1], "-vv")
 
     def test_pda_live_panel_suite_rejects_simulator_mode(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

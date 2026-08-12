@@ -43,6 +43,7 @@ source modules are:
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
+| `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `pda/cases.py` | Stable case identifiers, names, and mutation policy |
 | `pda/suites.py` | Declarative ordering of cases and configuration overrides |
@@ -99,9 +100,9 @@ configuration overrides.
 ## Declarative testcases
 
 The contributor-facing format is versioned YAML. Schema-v1 loading, complete
-preflight validation, and protocol-independent keyword sequencing are
-implemented. A PDA keyword adapter is the next integration step, so current
-executable cases remain Python. Python continues to own
+preflight validation, protocol-independent keyword sequencing, and the PDA
+live-panel keyword adapter are implemented. Existing Python cases remain useful
+for complex protocol exploration. Python continues to own
 transport, process supervision, monotonic timing, typed state interpretation,
 and restoration. YAML should describe test intent by composing a small set of
 reviewable keywords.
@@ -155,6 +156,19 @@ Validate one or more files without starting AqualinkD or touching hardware:
 .venv/bin/aqualinkd-validator validate-testcase \
   testcases/pda/filter-after-init.yaml
 ```
+
+Run validated PDA testcases serially by giving their paths in place of suite
+names. The access declaration is enforced against the panel authorization:
+
+```console
+sudo .venv/bin/aqualinkd-validator run --panel-read-write \
+  testcases/pda/filter-after-init.yaml
+```
+
+The loader validates every selected file before AqualinkD starts. Each YAML
+timeout is passed to the corresponding typed PDA operation. The executor always
+runs `finally`, and the scenario lifecycle retains an additional safety
+restoration pass after failure or cancellation.
 
 This design lets a contributor clone the repository and edit a testcase
 without understanding `asyncio`, while keeping hazardous operations and cleanup

@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from typing import Protocol
+
+from ...domain import EquipmentSnapshot
+from ...engine.equipment_actions import ProgrammerMarkers
+from ...engine.restoration import RestorationSession
+from ...interfaces import OrderedLogEvents
+from ...testcases.model import (
+    AssertDeviceStep,
+    AssertLogStep,
+    AssertNoLogStep,
+    RestoreOriginalStateStep,
+    SetDeviceStep,
+    SetSetpointStep,
+    WaitForStableEquipmentStep,
+    WaitForStep,
+)
+
+InitializePda = Callable[[], Awaitable[None]]
+StableEquipmentWaiter = Callable[
+    [tuple[str, ...], float], Awaitable[EquipmentSnapshot]
+]
+RestoreEquipment = Callable[[float], Awaitable[None]]
+
+
+class PdaEquipmentActions(Protocol):
+    async def set_device(
+        self,
+        identifier: str,
+        enabled: bool,
+        *,
+        phase: str,
+        markers: ProgrammerMarkers,
+        activation_timeout_seconds: float | None = None,
+        completion_timeout_seconds: float | None = None,
+        convergence_timeout_seconds: float | None = None,
+    ) -> None: ...
+
+    async def set_setpoint(
+        self,
+        identifier: str,
+        value: int,
+        *,
+        phase: str,
+        category: str,
+        markers: ProgrammerMarkers,
+        activation_timeout_seconds: float | None = None,
+        completion_timeout_seconds: float | None = None,
+        convergence_timeout_seconds: float | None = None,
+    ) -> None: ...
+
+    async def wait_for_device_state(
+        self,
+        identifier: str,
+        enabled: bool,
+        *,
+        timeout_seconds: float,
+    ) -> int: ...
+
+
+EquipmentActionsFactory = Callable[[], PdaEquipmentActions]
+
+
+class PdaKeywordFailure(RuntimeError):
+    """Raised when a declarative PDA keyword cannot be satisfied safely."""
+
+
+@dataclass(frozen=True)
+class PdaKeywordMarkers:
+    device: ProgrammerMarkers
+    setpoints: Mapping[str, ProgrammerMarkers]
+
+
+class PdaTestcaseKeywords:
+    """Binds schema-v1 testcase keywords to PDA runtime services."""
+
+    def __init__(
+        self,
+        *,
+        events: OrderedLogEvents,
+        actions: EquipmentActionsFactory,
+        restoration: RestorationSession,
+        markers: PdaKeywordMarkers,
+        initialize: InitializePda,
+        wait_for_stable: StableEquipmentWaiter,
+        restore: RestoreEquipment,
+        phase_prefix: str = "testcase",
+    ) -> None:
+        self._events = events
+        self._actions = actions
+        self._restoration = restoration
+        self._markers = markers
+        self._initialize = initialize
+        self._wait_for_stable = wait_for_stable
+        self._restore = restore
+        self._phase_prefix = phase_prefix
+        self._initialized = restoration.initial_snapshot is not None
+        self._requested_states: dict[str, bool] = {}
+        self._log_cursor = events.cursor
+
+    async def wait_for(self, step: WaitForStep) -> None:
+        if step.condition != "pda.initialized":
+            raise PdaKeywordFailure(
+                f"unsupported PDA condition {step.condition!r}"
+            )
+        if self._initialized:
+            return
+        try:
+            async with asyncio.timeout(step.timeout_seconds):
+                await self._initialize()
+        except TimeoutError as error:
+            raise PdaKeywordFailure(
+                f"PDA initialization did not complete within "
+                f"{step.timeout_seconds:g}s"
+            ) from error
+        if self._restoration.initial_snapshot is None:
+            raise PdaKeywordFailure(
+                "PDA initialization did not capture initial equipment state"
+            )
+        self._initialized = True
+
+    async def set_device(self, step: SetDeviceStep) -> None:
+        self._require_initialized()
+        enabled = self._resolve_device_state(step.identifier, step.state)
+        await self._actions().set_device(
+            step.identifier,
+            enabled,
+            phase=f"{self._phase_prefix}.set_device",
+            markers=self._markers.device,
+            activation_timeout_seconds=step.activation_timeout_seconds,
+            completion_timeout_seconds=step.completion_timeout_seconds,
+            convergence_timeout_seconds=step.convergence_timeout_seconds,
+        )
+        self._requested_states[step.identifier] = enabled
+
+    async def set_setpoint(self, step: SetSetpointStep) -> None:
+        self._require_initialized()
+        try:
+            markers = self._markers.setpoints[step.identifier]
+        except KeyError as error:
+            raise PdaKeywordFailure(
+                f"no PDA setpoint programmer markers for {step.identifier}"
+            ) from error
+        value = (
+            self._initial_setpoint(step.identifier)
+            if step.value == "original"
+            else step.value
+        )
+        await self._actions().set_setpoint(
+            step.identifier,
+            value,
+            phase=f"{self._phase_prefix}.set_setpoint.{step.identifier}",
+            category="testcase_setpoint",
+            markers=markers,
+            activation_timeout_seconds=step.activation_timeout_seconds,
+            completion_timeout_seconds=step.completion_timeout_seconds,
+            convergence_timeout_seconds=step.convergence_timeout_seconds,
+        )
+
+    async def assert_device(self, step: AssertDeviceStep) -> None:
+        self._require_initialized()
+        enabled = self._resolve_device_state(step.identifier, step.state)
+        await self._actions().wait_for_device_state(
+            step.identifier,
+            enabled,
+            timeout_seconds=step.timeout_seconds,
+        )
+
+    async def assert_log(self, step: AssertLogStep) -> None:
+        event = await self._events.wait_for(
+            step.contains,
+            after=self._log_cursor,
+            timeout_seconds=step.timeout_seconds,
+        )
+        self._log_cursor = event.sequence
+
+    async def assert_no_log(self, step: AssertNoLogStep) -> None:
+        def matches(event: object) -> bool:
+            text = getattr(event, "text", "")
+            if not isinstance(text, str):
+                return False
+            if step.contains is not None and step.contains not in text:
+                return False
+            if step.level is None:
+                return True
+            return f"{step.level}:" in text.casefold()
+
+        description = " and ".join(
+            item
+            for item in (
+                f"contains {step.contains!r}" if step.contains else None,
+                f"level {step.level}" if step.level else None,
+            )
+            if item is not None
+        )
+        try:
+            event = await self._events.wait_for_match(
+                matches,
+                description=description,
+                after=self._log_cursor,
+                timeout_seconds=step.duration_seconds,
+            )
+        except TimeoutError:
+            self._log_cursor = self._events.cursor
+            return
+        self._log_cursor = event.sequence
+        raise PdaKeywordFailure(
+            f"unexpected log matching {description}: {event.text.strip()}"
+        )
+
+    async def wait_for_stable_equipment(
+        self,
+        step: WaitForStableEquipmentStep,
+    ) -> None:
+        self._require_initialized()
+        await self._wait_for_stable(step.identifiers, step.timeout_seconds)
+
+    async def restore_original_state(
+        self,
+        step: RestoreOriginalStateStep,
+    ) -> None:
+        self._require_initialized()
+        try:
+            async with asyncio.timeout(step.timeout_seconds):
+                await self._restore(step.timeout_seconds)
+        except TimeoutError as error:
+            raise PdaKeywordFailure(
+                f"equipment restoration did not complete within "
+                f"{step.timeout_seconds:g}s"
+            ) from error
+
+    def _resolve_device_state(self, identifier: str, state: str) -> bool:
+        original = self._restoration.initial_device_enabled(identifier)
+        if state == "on":
+            return True
+        if state == "off":
+            return False
+        if state == "original":
+            return original
+        if state == "opposite-of-original":
+            return not original
+        if state == "requested":
+            try:
+                return self._requested_states[identifier]
+            except KeyError as error:
+                raise PdaKeywordFailure(
+                    f"no requested state has been recorded for {identifier}"
+                ) from error
+        raise PdaKeywordFailure(f"unsupported device state {state!r}")
+
+    def _initial_setpoint(self, identifier: str) -> int:
+        snapshot = self._restoration.initial_snapshot
+        if snapshot is None:
+            raise PdaKeywordFailure("initial equipment state is unavailable")
+        try:
+            value = snapshot.devices[identifier].setpoint
+        except KeyError as error:
+            raise PdaKeywordFailure(
+                f"initial equipment state has no {identifier}"
+            ) from error
+        if value is None:
+            raise PdaKeywordFailure(
+                f"initial equipment state has no setpoint for {identifier}"
+            )
+        return value
+
+    def _require_initialized(self) -> None:
+        if not self._initialized or self._restoration.initial_snapshot is None:
+            raise PdaKeywordFailure(
+                "pda.initialized must be awaited before equipment keywords"
+            )
