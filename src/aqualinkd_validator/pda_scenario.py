@@ -22,6 +22,7 @@ from .pda_simulator import (
     PdaSimulatorClient,
     SimulatorProtocolError,
 )
+from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 
 FILTER_PUMP = "Filter_Pump"
@@ -133,6 +134,7 @@ class PdaLivePanelScenario:
         self._api_factory = api_factory
         self._simulator_factory = simulator_factory
         self._config = config
+        self._programmer = PdaProgrammerObserver()
         self._case_ids = self._resolve_case_ids(config)
         endpoint_source = (
             "injected"
@@ -796,34 +798,19 @@ class PdaLivePanelScenario:
         timeout_seconds: float,
         wait_reason: str = "waiting in the programmer queue",
     ) -> LineEvent:
-        print(
-            f"[ WAIT ] {task_name}: {wait_reason} (timeout {timeout_seconds:g}s)",
-            flush=True,
-        )
         try:
-            active = await self._wait_for_marker(
-                context,
-                marker,
+            return await self._programmer.wait_for_active(
+                context.monitor,
+                context.timeline,
+                task_name=task_name,
+                marker=marker,
                 after=after,
+                requested_offset_ns=requested_offset_ns,
                 timeout_seconds=timeout_seconds,
+                wait_reason=wait_reason,
             )
-        except TimeoutError as error:
-            raise ScenarioFailure(
-                f"{task_name} did not become active within {timeout_seconds:g}s"
-            ) from error
-        activation_seconds = (active.offset_ns - requested_offset_ns) / 1_000_000_000
-        print(
-            f"[ACTIVE] {task_name} became active after {activation_seconds:.3f}s",
-            flush=True,
-        )
-        if task_name == "Init PDA":
-            print("[STATE ] Init PDA started", flush=True)
-        await context.timeline.write(
-            "scenario_programmer_active",
-            task=task_name,
-            activation_seconds=round(activation_seconds, 6),
-        )
-        return active
+        except PdaProgrammerFailure as error:
+            raise ScenarioFailure(str(error)) from error
 
     async def _wait_for_task_completion(
         self,
@@ -835,30 +822,16 @@ class PdaLivePanelScenario:
         timeout_seconds: float,
     ) -> LineEvent:
         try:
-            completed = await self._wait_for_marker(
-                context,
-                marker,
-                after=active.sequence,
+            return await self._programmer.wait_for_completion(
+                context.monitor,
+                context.timeline,
+                task_name=task_name,
+                marker=marker,
+                active=active,
                 timeout_seconds=timeout_seconds,
             )
-        except TimeoutError as error:
-            raise ScenarioFailure(
-                f"{task_name} did not complete within {timeout_seconds:g}s "
-                "after becoming active"
-            ) from error
-        programmer_seconds = (completed.offset_ns - active.offset_ns) / 1_000_000_000
-        print(
-            f"[ DONE ] {task_name} programmer completed in {programmer_seconds:.3f}s",
-            flush=True,
-        )
-        if task_name == "Init PDA":
-            print("[STATE ] Init PDA complete", flush=True)
-        await context.timeline.write(
-            "scenario_programmer_finished",
-            task=task_name,
-            programmer_seconds=round(programmer_seconds, 6),
-        )
-        return completed
+        except PdaProgrammerFailure as error:
+            raise ScenarioFailure(str(error)) from error
 
     async def _prepare_startup(
         self,
@@ -2802,30 +2775,16 @@ class PdaLivePanelScenario:
         after: int,
         state_wait: Coroutine[Any, Any, int],
     ) -> int:
-        state_task: asyncio.Task[int] = asyncio.create_task(state_wait)
-        error_task: asyncio.Task[LineEvent] = asyncio.create_task(
-            context.monitor.wait_for(
-                f"PDA Device programmer '{task_name}' didn't find",
+        try:
+            return await self._programmer.wait_for_state_or_error(
+                context.monitor,
+                task_name=task_name,
                 after=after,
+                state_wait=state_wait,
                 timeout_seconds=self._config.state_timeout_seconds,
             )
-        )
-        done, _ = await asyncio.wait(
-            {state_task, error_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if error_task in done:
-            try:
-                error_event = error_task.result()
-            except TimeoutError:
-                return await state_task
-            state_task.cancel()
-            await asyncio.gather(state_task, return_exceptions=True)
-            raise ScenarioFailure(error_event.text.strip())
-
-        error_task.cancel()
-        await asyncio.gather(error_task, return_exceptions=True)
-        return state_task.result()
+        except PdaProgrammerFailure as error:
+            raise ScenarioFailure(str(error)) from error
 
     def _skip(self, name: str, reason: str) -> None:
         self._report["skipped"].append({"name": name, "reason": reason})
