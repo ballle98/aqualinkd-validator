@@ -293,6 +293,22 @@ class CliTests(unittest.TestCase):
             self.assertEqual(_run(args), 0)
         self.assertEqual(observed, ["pda-live-fast"])
 
+    def test_named_fast_suite_resolves_to_declarative_suite(self) -> None:
+        args = build_parser().parse_args(
+            ["run", "--panel-read-write", "pda-live-fast"]
+        )
+        observed: list[str] = []
+
+        def record_target(target_args: argparse.Namespace) -> int:
+            observed.append(target_args.testcase_suite.identifier)
+            self.assertIsNone(target_args.suite)
+            self.assertIsNone(target_args.testcase)
+            return 0
+
+        with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
+            self.assertEqual(_run(args), 0)
+        self.assertEqual(observed, ["pda-live-fast"])
+
     def test_mutating_yaml_testcase_requires_panel_write(self) -> None:
         testcase = (
             Path(__file__).parents[1]
@@ -308,7 +324,6 @@ class CliTests(unittest.TestCase):
 
     def test_pda_suites_add_serial_debug_argument(self) -> None:
         for suite in (
-            "pda-live-fast",
             "pda-live-awake",
             "pda-live-sleep",
         ):
@@ -436,10 +451,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(observed, ["America/Chicago"])
 
     def test_multiple_positional_suites_run_sequentially(self) -> None:
-        observed: list[tuple[str | None, str]] = []
+        observed: list[tuple[str | None, str | None, str]] = []
 
         def record_suite(args: argparse.Namespace) -> int:
-            observed.append((args.suite, args.label))
+            observed.append(
+                (
+                    args.suite,
+                    (
+                        args.testcase_suite.identifier
+                        if args.testcase_suite is not None
+                        else None
+                    ),
+                    args.label,
+                )
+            )
             return 0
 
         with (
@@ -461,8 +486,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             observed,
             [
-                ("pda-live-fast", "live-panel-pda-live-fast"),
-                ("pda-live-long", "live-panel-pda-live-long"),
+                (None, "pda-live-fast", "live-panel-pda-live-fast"),
+                ("pda-live-long", None, "live-panel-pda-live-long"),
             ],
         )
 
@@ -470,7 +495,11 @@ class CliTests(unittest.TestCase):
         observed: list[str | None] = []
 
         def fail_suite(args: argparse.Namespace) -> int:
-            observed.append(args.suite)
+            observed.append(
+                args.testcase_suite.identifier
+                if args.testcase_suite is not None
+                else args.suite
+            )
             return 1
 
         with (

@@ -230,6 +230,12 @@ class PdaLivePanelScenario:
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         if self._testcases:
+            suite_started = time.monotonic()
+            if len(self._testcases) > 1:
+                print(
+                    f"\n=== Starting {self._config.suite_name} ===",
+                    flush=True,
+                )
             outcome = ScenarioOutcome(
                 status="passed",
                 reason="scenario_completed",
@@ -244,6 +250,14 @@ class PdaLivePanelScenario:
                 ]
                 self._report.pop("testcase", None)
                 self._write_report(context)
+                self._progress_finished(
+                    self._config.suite_name,
+                    suite_started,
+                    passed=outcome.status == "passed",
+                    detail=(
+                        None if outcome.status == "passed" else outcome.reason
+                    ),
+                )
             return outcome
         suite_started = time.monotonic()
         display_name = self._config.suite_name

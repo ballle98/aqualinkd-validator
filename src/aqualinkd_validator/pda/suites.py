@@ -41,13 +41,6 @@ FAST_CASES = (
 )
 
 SUITES: dict[str, PdaSuiteDefinition] = {
-    "pda-live-fast": PdaSuiteDefinition(
-        name="pda-live-fast",
-        description="Fast PDA regression tests against a live RS485 panel",
-        cases=FAST_CASES,
-        config_overrides=(("pda_sleep_mode", "no"),),
-        execution_role="awake",
-    ),
     "pda-live-awake": PdaSuiteDefinition(
         name="pda-live-awake",
         description=(

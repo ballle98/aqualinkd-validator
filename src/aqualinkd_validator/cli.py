@@ -51,6 +51,12 @@ DEVICE_SELECTION_CASES = frozenset(
         PdaCaseId.DEVICE_AFTER_PROBE,
     }
 )
+_BUILTIN_DECLARATIVE_SUITES = {
+    "pda-live-fast": (
+        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-fast.yaml"
+    ),
+}
+_RUN_SUITE_NAMES = tuple((*_BUILTIN_DECLARATIVE_SUITES, *SUITES))
 
 
 @dataclass(frozen=True)
@@ -116,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--label", default="live-panel")
     run.add_argument(
         "--suite",
-        choices=tuple(SUITES),
+        choices=_RUN_SUITE_NAMES,
         action="append",
         dest="legacy_suites",
         help=argparse.SUPPRESS,
@@ -336,7 +342,11 @@ def _run(args: argparse.Namespace) -> int:
         document_path = (
             Path(selected_name).expanduser().resolve()
             if selected_name is not None and _is_testcase_target(selected_name)
-            else None
+            else (
+                _BUILTIN_DECLARATIVE_SUITES.get(selected_name)
+                if selected_name is not None
+                else None
+            )
         )
         document = load_testcase_document(document_path) if document_path else None
         testcase = document if isinstance(document, TestcaseDefinition) else None
@@ -1052,8 +1062,8 @@ def _positive_float(value: str) -> float:
 
 
 def _suite_name(value: str) -> str:
-    if value not in SUITES:
-        choices = ", ".join(SUITES)
+    if value not in _RUN_SUITE_NAMES:
+        choices = ", ".join(_RUN_SUITE_NAMES)
         raise argparse.ArgumentTypeError(
             f"unknown suite {value!r}; choose from: {choices}"
         )
@@ -1061,9 +1071,9 @@ def _suite_name(value: str) -> str:
 
 
 def _run_target(value: str) -> str:
-    if value in SUITES or _is_testcase_target(value):
+    if value in _RUN_SUITE_NAMES or _is_testcase_target(value):
         return value
-    choices = ", ".join(SUITES)
+    choices = ", ".join(_RUN_SUITE_NAMES)
     raise argparse.ArgumentTypeError(
         f"unknown run target {value!r}; choose a suite ({choices}) or a .yaml file"
     )
