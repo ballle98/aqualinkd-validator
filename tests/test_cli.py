@@ -12,7 +12,6 @@ from unittest.mock import patch
 from aqualinkd_validator.cli import (
     _run,
     _run_composite_suite,
-    _run_process_suite,
     build_aqualinkd_command,
     build_parser,
     main,
@@ -76,7 +75,7 @@ class CliTests(unittest.TestCase):
                 phase_args.last_run_safe_to_continue = True
                 observed.append(
                     (
-                        phase_args.suite,
+                        phase_args.testcase_suite.identifier,
                         phase_args.label,
                         read_config_value(
                             phase_args.config,
@@ -139,9 +138,10 @@ class CliTests(unittest.TestCase):
             observed: list[str] = []
 
             def fail_awake(phase_args: argparse.Namespace) -> int:
-                observed.append(phase_args.suite)
+                member_name = phase_args.testcase_suite.identifier
+                observed.append(member_name)
                 phase_args.last_run_safe_to_continue = True
-                return 1 if phase_args.suite == "pda-live-awake" else 0
+                return 1 if member_name == "pda-live-awake" else 0
 
             with patch(
                 "aqualinkd_validator.cli._run_process",
@@ -174,7 +174,7 @@ class CliTests(unittest.TestCase):
             observed: list[str] = []
 
             def fail_unsafely(phase_args: argparse.Namespace) -> int:
-                observed.append(phase_args.suite)
+                observed.append(phase_args.testcase_suite.identifier)
                 phase_args.last_run_safe_to_continue = False
                 return 1
 
@@ -202,14 +202,13 @@ class CliTests(unittest.TestCase):
                     "pda-live-sleep",
                 ]
             )
-            args.suite = "pda-live-sleep"
             observed: list[tuple[str, str | None]] = []
 
             def record_phase(phase_args: argparse.Namespace) -> int:
                 phase_args.last_run_safe_to_continue = True
                 observed.append(
                     (
-                        phase_args.suite,
+                        phase_args.testcase_suite.identifier,
                         read_config_value(
                             phase_args.config,
                             "pda_sleep_mode",
@@ -222,7 +221,7 @@ class CliTests(unittest.TestCase):
                 "aqualinkd_validator.cli._run_process",
                 side_effect=record_phase,
             ):
-                self.assertEqual(_run_process_suite(args), 0)
+                self.assertEqual(_run(args), 0)
 
             self.assertEqual(observed, [("pda-live-sleep", "yes")])
             self.assertEqual(read_config_value(config, "pda_sleep_mode"), "no")
@@ -353,27 +352,6 @@ class CliTests(unittest.TestCase):
             _run(args)
 
     def test_pda_suites_add_serial_debug_argument(self) -> None:
-        for suite in (
-            "pda-live-awake",
-            "pda-live-sleep",
-        ):
-            with self.subTest(suite=suite):
-                command = build_aqualinkd_command(
-                    Path("/opt/aqualinkd"),
-                    Path("/etc/aqualinkd.conf"),
-                    suite,
-                )
-                self.assertEqual(
-                    command,
-                    [
-                        "/opt/aqualinkd",
-                        "-d",
-                        "-c",
-                        "/etc/aqualinkd.conf",
-                        "-vv",
-                    ],
-                )
-
         testcase_command = build_aqualinkd_command(
             Path("/opt/aqualinkd"),
             Path("/etc/aqualinkd.conf"),

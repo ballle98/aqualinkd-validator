@@ -34,38 +34,7 @@ class PdaSuiteDefinition:
         return dict(self.config_overrides)
 
 
-FAST_CASES = (
-    PdaCaseId.INITIALIZATION,
-    PdaCaseId.FILTER_AFTER_INIT,
-    PdaCaseId.POOL_HEATER,
-)
-
 SUITES: dict[str, PdaSuiteDefinition] = {
-    "pda-live-awake": PdaSuiteDefinition(
-        name="pda-live-awake",
-        description=("PDA live-panel tests requiring sleep mode to remain disabled"),
-        cases=(
-            *FAST_CASES,
-            PdaCaseId.EQUIPMENT_STATUS,
-            PdaCaseId.CONSECUTIVE_DEVICES,
-        ),
-        config_overrides=(("pda_sleep_mode", "no"),),
-        execution_role="awake",
-        artifact_suffix="awake",
-    ),
-    "pda-live-sleep": PdaSuiteDefinition(
-        name="pda-live-sleep",
-        description="Natural and command-driven PDA sleep/wake validation",
-        cases=(
-            PdaCaseId.INITIALIZATION,
-            PdaCaseId.SLEEP_CYCLE,
-            PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-            PdaCaseId.DEVICE_AFTER_PROBE,
-        ),
-        config_overrides=(("pda_sleep_mode", "yes"),),
-        execution_role="sleep",
-        artifact_suffix="sleep",
-    ),
     "pda-live-long": PdaSuiteDefinition(
         name="pda-live-long",
         description="Composite awake and sleep PDA live-panel validation",

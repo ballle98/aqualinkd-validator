@@ -531,14 +531,32 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
     safe_to_continue = True
     original_label = args.label
     for member_name in composite.members:
-        member = get_suite(member_name)
-        assert member is not None
         member_args = copy.copy(args)
-        member_args.suite = member.name
-        suffix = member.artifact_suffix or member.name
+        declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(member_name)
+        if declarative_path is not None:
+            member_document = load_testcase_document(declarative_path)
+            if not isinstance(member_document, TestcaseSuiteDefinition):
+                raise ConfigurationError(
+                    f"Composite member is not a suite: {member_name}"
+                )
+            member_args.suite = None
+            member_args.testcase = None
+            member_args.testcase_suite = member_document
+            member_args.testcase_suite_path = declarative_path
+            suffix = member_name.removeprefix("pda-live-")
+        else:
+            member = get_suite(member_name)
+            if member is None:
+                raise ConfigurationError(
+                    f"Unknown composite member: {member_name}"
+                )
+            member_args.suite = member.name
+            member_args.testcase = None
+            member_args.testcase_suite = None
+            suffix = member.artifact_suffix or member.name
         member_args.label = f"{original_label}-{suffix}"
         print(
-            f"\n=== {composite.name} member: {member.name} ===",
+            f"\n=== {composite.name} member: {member_name} ===",
             flush=True,
         )
         exit_code = _run_one(member_args)
@@ -554,14 +572,14 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
         overall_exit_code = exit_code
         if not member_safe:
             print(
-                f"[ STOP ] {member.name} did not restore a verified safe "
+                f"[ STOP ] {member_name} did not restore a verified safe "
                 "state; remaining composite members will not run",
                 flush=True,
             )
             args.last_run_safe_to_continue = False
             return exit_code
         print(
-            f"[ CONT ] {member.name} failed assertions but restored the "
+            f"[ CONT ] {member_name} failed assertions but restored the "
             "panel; continuing composite validation",
             flush=True,
         )
@@ -601,6 +619,11 @@ def _run_process_suite(args: argparse.Namespace) -> int:
 
 
 def _suite_contains_case(name: str, case_id: PdaCaseId) -> bool:
+    declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(name)
+    if declarative_path is not None:
+        document = load_testcase_document(declarative_path)
+        assert isinstance(document, TestcaseSuiteDefinition)
+        return case_id in DEVICE_SELECTION_CASES and document.uses_selected_devices
     suite = get_suite(name)
     assert suite is not None
     if case_id in suite.cases:
@@ -609,6 +632,11 @@ def _suite_contains_case(name: str, case_id: PdaCaseId) -> bool:
 
 
 def _suite_mutates_panel(name: str) -> bool:
+    declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(name)
+    if declarative_path is not None:
+        document = load_testcase_document(declarative_path)
+        assert isinstance(document, TestcaseSuiteDefinition)
+        return document.mutates_panel
     suite = get_suite(name)
     assert suite is not None
     return suite.mutates_panel or any(
