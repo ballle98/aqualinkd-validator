@@ -15,6 +15,9 @@ from ...testcases.model import (
     AssertNoLogStep,
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
+    ExerciseProbeTransitionStep,
+    ExerciseStatusRetryStep,
+    ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -93,6 +96,9 @@ class PdaTestcaseKeywords:
         restore: RestoreEquipment,
         verify_status: ComplexPdaOperation | None = None,
         exercise_devices: ComplexPdaOperation | None = None,
+        observe_sleep: ComplexPdaOperation | None = None,
+        exercise_status_retry: ComplexPdaOperation | None = None,
+        exercise_probe_transition: ComplexPdaOperation | None = None,
         record_skip: SkipRecorder = lambda name, reason: None,
         phase_prefix: str = "testcase",
     ) -> None:
@@ -105,6 +111,9 @@ class PdaTestcaseKeywords:
         self._restore = restore
         self._verify_status = verify_status
         self._exercise_devices = exercise_devices
+        self._observe_sleep = observe_sleep
+        self._exercise_status_retry = exercise_status_retry
+        self._exercise_probe_transition = exercise_probe_transition
         self._record_skip = record_skip
         self._phase_prefix = phase_prefix
         self._initialized = restoration.initial_snapshot is not None
@@ -317,6 +326,29 @@ class PdaTestcaseKeywords:
             raise PdaKeywordFailure("discovered-device exercise is unavailable")
         async with asyncio.timeout(step.timeout_seconds):
             await self._exercise_devices()
+
+    async def observe_sleep_cycle(self, step: ObserveSleepCycleStep) -> None:
+        self._require_initialized()
+        if self._observe_sleep is None:
+            raise PdaKeywordFailure("sleep-cycle observation is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._observe_sleep()
+
+    async def exercise_status_retry(self, step: ExerciseStatusRetryStep) -> None:
+        self._require_initialized()
+        if self._exercise_status_retry is None:
+            raise PdaKeywordFailure("STATUS-retry exercise is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._exercise_status_retry()
+
+    async def exercise_probe_transition(
+        self, step: ExerciseProbeTransitionStep
+    ) -> None:
+        self._require_initialized()
+        if self._exercise_probe_transition is None:
+            raise PdaKeywordFailure("probe-transition exercise is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._exercise_probe_transition()
 
     def _resolve_device_state(self, identifier: str, state: str) -> bool:
         original = self._restoration.initial_device_enabled(identifier)

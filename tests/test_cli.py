@@ -319,6 +319,31 @@ class CliTests(unittest.TestCase):
             self.assertEqual(_run(args), 0)
         self.assertEqual(observed, [("pda-live-awake", ["Aux_1"])])
 
+    def test_named_sleep_suite_resolves_to_declarative_suite(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--panel-read-write",
+                "--pda-test-device",
+                "Aux_1",
+                "pda-live-sleep",
+            ]
+        )
+        observed: list[tuple[str, list[str]]] = []
+
+        def record_target(target_args: argparse.Namespace) -> int:
+            observed.append(
+                (
+                    target_args.testcase_suite.identifier,
+                    target_args.pda_test_device,
+                )
+            )
+            return 0
+
+        with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
+            self.assertEqual(_run(args), 0)
+        self.assertEqual(observed, [("pda-live-sleep", ["Aux_1"])])
+
     def test_mutating_yaml_testcase_requires_panel_write(self) -> None:
         testcase = (
             Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"

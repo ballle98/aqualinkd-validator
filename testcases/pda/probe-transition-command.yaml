@@ -1,0 +1,16 @@
+schema: 1
+id: pda.probe-transition-command
+description: Toggle equipment after STATUS retries end and PDA probes resume
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - exercise_probe_transition:
+      timeout: 360s
+finally:
+  - restore_original_state:
+      timeout: 420s

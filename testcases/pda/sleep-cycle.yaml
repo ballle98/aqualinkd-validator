@@ -1,0 +1,13 @@
+schema: 1
+id: pda.sleep-cycle
+description: Observe one natural PDA sleep, wake, status refresh, and sleep cycle
+mode: physical-panel
+access: read-only
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - observe_sleep_cycle:
+      timeout: 360s

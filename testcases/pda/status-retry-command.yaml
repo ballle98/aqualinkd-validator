@@ -1,0 +1,16 @@
+schema: 1
+id: pda.status-retry-command
+description: Toggle equipment while the panel retries an unacknowledged PDA STATUS
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - exercise_status_retry:
+      timeout: 360s
+finally:
+  - restore_original_state:
+      timeout: 420s

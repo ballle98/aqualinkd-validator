@@ -12,6 +12,9 @@ from .model import (
     AssertNoLogStep,
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
+    ExerciseProbeTransitionStep,
+    ExerciseStatusRetryStep,
+    ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -56,6 +59,14 @@ class TestcaseKeywords(Protocol):
 
     async def exercise_discovered_devices(
         self, step: ExerciseDiscoveredDevicesStep
+    ) -> None: ...
+
+    async def observe_sleep_cycle(self, step: ObserveSleepCycleStep) -> None: ...
+
+    async def exercise_status_retry(self, step: ExerciseStatusRetryStep) -> None: ...
+
+    async def exercise_probe_transition(
+        self, step: ExerciseProbeTransitionStep
     ) -> None: ...
 
 
@@ -192,3 +203,9 @@ class TestcaseExecutor:
             await self._keywords.verify_equipment_status(step)
         elif isinstance(step, ExerciseDiscoveredDevicesStep):
             await self._keywords.exercise_discovered_devices(step)
+        elif isinstance(step, ObserveSleepCycleStep):
+            await self._keywords.observe_sleep_cycle(step)
+        elif isinstance(step, ExerciseStatusRetryStep):
+            await self._keywords.exercise_status_retry(step)
+        elif isinstance(step, ExerciseProbeTransitionStep):
+            await self._keywords.exercise_probe_transition(step)

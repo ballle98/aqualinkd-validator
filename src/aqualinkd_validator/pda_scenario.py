@@ -31,7 +31,13 @@ from .pda_simulator import (
 from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
-from .testcases import TestcaseDefinition, TestcaseExecutor
+from .testcases import (
+    ExerciseDiscoveredDevicesStep,
+    ExerciseProbeTransitionStep,
+    ExerciseStatusRetryStep,
+    TestcaseDefinition,
+    TestcaseExecutor,
+)
 
 FILTER_PUMP = "Filter_Pump"
 POOL_HEATER = "Pool_Heater"
@@ -254,9 +260,7 @@ class PdaLivePanelScenario:
                     self._config.suite_name,
                     suite_started,
                     passed=outcome.status == "passed",
-                    detail=(
-                        None if outcome.status == "passed" else outcome.reason
-                    ),
+                    detail=(None if outcome.status == "passed" else outcome.reason),
                 )
             return outcome
         suite_started = time.monotonic()
@@ -414,9 +418,7 @@ class PdaLivePanelScenario:
                     for step in execution.steps
                 ],
             }
-            self._report.setdefault("testcase_executions", []).append(
-                execution_report
-            )
+            self._report.setdefault("testcase_executions", []).append(execution_report)
             self._report["testcase_execution"] = execution_report
         except asyncio.CancelledError as caught:
             error = caught
@@ -524,6 +526,11 @@ class PdaLivePanelScenario:
             restore=restore,
             verify_status=lambda: self._test_with_status_menu(context),
             exercise_devices=lambda: self._test_consecutive_devices(context),
+            observe_sleep=lambda: self._test_sleep_wake_cycle(context),
+            exercise_status_retry=lambda: self._test_device_during_status_retry(
+                context
+            ),
+            exercise_probe_transition=lambda: self._test_device_after_probe(context),
             record_skip=self._skip,
             phase_prefix=f"testcase.{testcase_id}",
         )
@@ -562,7 +569,7 @@ class PdaLivePanelScenario:
         return tuple(case_ids)
 
     def _uses_selected_devices(self) -> bool:
-        return any(
+        legacy_uses_selected_devices = any(
             case_id in self._case_ids
             for case_id in (
                 PdaCaseId.CONSECUTIVE_DEVICES,
@@ -570,6 +577,19 @@ class PdaLivePanelScenario:
                 PdaCaseId.DEVICE_AFTER_PROBE,
             )
         )
+        declarative_uses_selected_devices = any(
+            isinstance(
+                step,
+                (
+                    ExerciseDiscoveredDevicesStep,
+                    ExerciseStatusRetryStep,
+                    ExerciseProbeTransitionStep,
+                ),
+            )
+            for testcase in self._testcases
+            for step in testcase.steps
+        )
+        return legacy_uses_selected_devices or declarative_uses_selected_devices
 
     def _case_operation(
         self,
@@ -2508,9 +2528,7 @@ class PdaLivePanelScenario:
                 activation_seconds=self._config.activation_timeout_seconds,
                 completion_seconds=self._config.action_timeout_seconds,
                 convergence_seconds=self._config.state_timeout_seconds,
-                stabilization_seconds=(
-                    self._config.restoration_timeout_seconds
-                ),
+                stabilization_seconds=(self._config.restoration_timeout_seconds),
             ),
             wait_for_stable=wait_for_stable,
             record_measurement=self._report["measurements"].append,
@@ -2603,6 +2621,7 @@ class PdaLivePanelScenario:
         if self._restoration.initial_snapshot is not self._initial_snapshot:
             self._restoration.capture_initial(self._initial_snapshot)
         restoration["attempted"] = True
+
         async def restore_setpoint(identifier: str, original: int) -> None:
             if identifier != POOL_HEATER:
                 raise ScenarioFailure(
@@ -2621,8 +2640,8 @@ class PdaLivePanelScenario:
         result = await self._restoration.restore(
             read_snapshot=self._api_client.devices,
             restore_setpoint=restore_setpoint,
-            restore_device=lambda identifier, expected: (
-                self._restore_device_state(context, identifier, expected)
+            restore_device=lambda identifier, expected: self._restore_device_state(
+                context, identifier, expected
             ),
         )
         restoration["actions"].extend(
@@ -2878,6 +2897,4 @@ class PdaLivePanelScenario:
         device: DeviceState | Mapping[str, Any],
         enabled: bool,
     ) -> str:
-        return PdaLivePanelScenario._device_state(device).requested_state_label(
-            enabled
-        )
+        return PdaLivePanelScenario._device_state(device).requested_state_label(enabled)

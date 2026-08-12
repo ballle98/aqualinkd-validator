@@ -58,6 +58,9 @@ _BUILTIN_DECLARATIVE_SUITES = {
     "pda-live-awake": (
         Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-awake.yaml"
     ),
+    "pda-live-sleep": (
+        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-sleep.yaml"
+    ),
 }
 _RUN_SUITE_NAMES = tuple((*_BUILTIN_DECLARATIVE_SUITES, *SUITES))
 
@@ -445,7 +448,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.pda_test_device and not any(
         (
             target.testcase_suite is not None
-            and target.testcase_suite.exercises_discovered_devices
+            and target.testcase_suite.uses_selected_devices
         )
         or (
             target.legacy_suite_name is not None
@@ -661,10 +664,7 @@ def _run_process(args: argparse.Namespace) -> int:
                 suite is not None
                 and any(case_id in suite.cases for case_id in DEVICE_SELECTION_CASES)
             )
-            or (
-                testcase_suite is not None
-                and testcase_suite.exercises_discovered_devices
-            )
+            or (testcase_suite is not None and testcase_suite.uses_selected_devices)
             else []
         )
         api_base_url = (

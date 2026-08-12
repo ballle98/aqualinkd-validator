@@ -108,6 +108,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
     def test_specialized_operations_stay_behind_typed_keywords(self) -> None:
         asyncio.run(self._specialized_operations())
 
+    def test_sleep_operations_stay_behind_typed_keywords(self) -> None:
+        asyncio.run(self._sleep_operations())
+
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
         testcase = load_testcase(
@@ -190,6 +193,20 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         self.assertEqual(fixture.status_verifications, 1)
         self.assertEqual(fixture.device_exercises, 1)
 
+    async def _sleep_operations(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        root = Path(__file__).parents[1] / "testcases" / "pda"
+        for name in (
+            "sleep-cycle.yaml",
+            "status-retry-command.yaml",
+            "probe-transition-command.yaml",
+        ):
+            await TestcaseExecutor(fixture.keywords).execute(load_testcase(root / name))
+        self.assertEqual(fixture.sleep_observations, 1)
+        self.assertEqual(fixture.status_retry_exercises, 1)
+        self.assertEqual(fixture.probe_transition_exercises, 1)
+        self.assertEqual(fixture.restore_timeouts, [420, 420])
+
 
 class KeywordFixture:
     def __init__(self, *, initialized: bool = False) -> None:
@@ -201,6 +218,9 @@ class KeywordFixture:
         self.skips: list[tuple[str, str]] = []
         self.status_verifications = 0
         self.device_exercises = 0
+        self.sleep_observations = 0
+        self.status_retry_exercises = 0
+        self.probe_transition_exercises = 0
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -223,6 +243,9 @@ class KeywordFixture:
             restore=self.restore,
             verify_status=self.verify_status,
             exercise_devices=self.exercise_devices,
+            observe_sleep=self.observe_sleep,
+            exercise_status_retry=self.exercise_status_retry,
+            exercise_probe_transition=self.exercise_probe_transition,
             record_skip=lambda name, reason: self.skips.append((name, reason)),
             phase_prefix="yaml.pda.filter",
         )
@@ -247,6 +270,15 @@ class KeywordFixture:
 
     async def exercise_devices(self) -> None:
         self.device_exercises += 1
+
+    async def observe_sleep(self) -> None:
+        self.sleep_observations += 1
+
+    async def exercise_status_retry(self) -> None:
+        self.status_retry_exercises += 1
+
+    async def exercise_probe_transition(self) -> None:
+        self.probe_transition_exercises += 1
 
 
 def snapshot() -> EquipmentSnapshot:

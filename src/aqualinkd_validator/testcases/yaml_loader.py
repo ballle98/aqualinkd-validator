@@ -14,6 +14,9 @@ from .model import (
     DeviceTargetState,
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
+    ExerciseProbeTransitionStep,
+    ExerciseStatusRetryStep,
+    ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -275,6 +278,8 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
                 ExerciseHeaterStep,
                 VerifyEquipmentStatusStep,
                 ExerciseDiscoveredDevicesStep,
+                ExerciseStatusRetryStep,
+                ExerciseProbeTransitionStep,
             ),
         )
         for step in steps
@@ -534,6 +539,21 @@ def _exercise_discovered_devices(
     return ExerciseDiscoveredDevicesStep(_duration(value["timeout"], f"{path}.timeout"))
 
 
+def _observe_sleep_cycle(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ObserveSleepCycleStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
+def _exercise_status_retry(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ExerciseStatusRetryStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
+def _exercise_probe_transition(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ExerciseProbeTransitionStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
 _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "set_device": _set_device,
@@ -546,6 +566,9 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "restore_original_state": _restore,
     "verify_equipment_status": _verify_equipment_status,
     "exercise_discovered_devices": _exercise_discovered_devices,
+    "observe_sleep_cycle": _observe_sleep_cycle,
+    "exercise_status_retry": _exercise_status_retry,
+    "exercise_probe_transition": _exercise_probe_transition,
 }
 
 

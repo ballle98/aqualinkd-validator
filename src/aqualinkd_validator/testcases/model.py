@@ -107,6 +107,24 @@ class ExerciseDiscoveredDevicesStep:
     keyword: str = "exercise_discovered_devices"
 
 
+@dataclass(frozen=True)
+class ObserveSleepCycleStep:
+    timeout_seconds: float
+    keyword: str = "observe_sleep_cycle"
+
+
+@dataclass(frozen=True)
+class ExerciseStatusRetryStep:
+    timeout_seconds: float
+    keyword: str = "exercise_status_retry"
+
+
+@dataclass(frozen=True)
+class ExerciseProbeTransitionStep:
+    timeout_seconds: float
+    keyword: str = "exercise_probe_transition"
+
+
 TestcaseStep: TypeAlias = (
     WaitForStep
     | SetDeviceStep
@@ -119,6 +137,9 @@ TestcaseStep: TypeAlias = (
     | RestoreOriginalStateStep
     | VerifyEquipmentStatusStep
     | ExerciseDiscoveredDevicesStep
+    | ObserveSleepCycleStep
+    | ExerciseStatusRetryStep
+    | ExerciseProbeTransitionStep
 )
 
 
@@ -170,6 +191,21 @@ class TestcaseSuiteDefinition:
         return any(
             any(
                 isinstance(step, ExerciseDiscoveredDevicesStep)
+                for step in member.testcase.steps
+            )
+            for member in self.members
+        )
+
+    @property
+    def uses_selected_devices(self) -> bool:
+        selected_device_steps = (
+            ExerciseDiscoveredDevicesStep,
+            ExerciseStatusRetryStep,
+            ExerciseProbeTransitionStep,
+        )
+        return any(
+            any(
+                isinstance(step, selected_device_steps)
                 for step in member.testcase.steps
             )
             for member in self.members

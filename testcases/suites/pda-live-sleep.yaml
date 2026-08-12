@@ -1,0 +1,19 @@
+schema: 1
+kind: suite
+id: pda-live-sleep
+description: Natural and command-driven PDA sleep and wake validation
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: yes
+  execution_role: sleep
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/sleep-cycle.yaml
+  - ../pda/status-retry-command.yaml
+  - ../pda/probe-transition-command.yaml

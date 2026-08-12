@@ -10,6 +10,9 @@ from aqualinkd_validator.cli import main
 from aqualinkd_validator.testcases import (
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
+    ExerciseProbeTransitionStep,
+    ExerciseStatusRetryStep,
+    ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     TestcaseValidationError,
@@ -94,6 +97,25 @@ class TestcaseYamlTests(unittest.TestCase):
         )
         self.assertEqual(len(awake.members), 5)
         self.assertTrue(awake.exercises_discovered_devices)
+
+        sleep = load_testcase_suite(
+            Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-sleep.yaml"
+        )
+        self.assertEqual(len(sleep.members), 4)
+        self.assertEqual(sleep.config.execution_role, "sleep")
+        self.assertEqual(sleep.config.override_map(), {"pda_sleep_mode": "yes"})
+        self.assertTrue(sleep.uses_selected_devices)
+
+    def test_loads_specialized_sleep_cases(self) -> None:
+        root = Path(__file__).parents[1] / "testcases" / "pda"
+        sleep = load_testcase(root / "sleep-cycle.yaml")
+        retry = load_testcase(root / "status-retry-command.yaml")
+        probe = load_testcase(root / "probe-transition-command.yaml")
+
+        self.assertIsInstance(sleep.steps[1], ObserveSleepCycleStep)
+        self.assertIsInstance(retry.steps[1], ExerciseStatusRetryStep)
+        self.assertIsInstance(probe.steps[1], ExerciseProbeTransitionStep)
+        self.assertEqual(retry.finally_steps[0].timeout_seconds, 420)
 
     def test_suite_rejects_member_access_above_suite_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
