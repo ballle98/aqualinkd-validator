@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aqualinkd_validator.cli import main
 from aqualinkd_validator.testcases import (
+    ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     TestcaseValidationError,
@@ -48,6 +49,19 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertEqual(action.activation_timeout_seconds, 130)
         self.assertEqual(action.convergence_timeout_seconds, 10)
         self.assertIsInstance(testcase.finally_steps[0], RestoreOriginalStateStep)
+
+    def test_loads_optional_heater_policy_as_typed_step(self) -> None:
+        testcase = load_testcase(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "pda"
+            / "pool-heater.yaml"
+        )
+        heater = testcase.steps[1]
+        self.assertIsInstance(heater, ExerciseHeaterStep)
+        assert isinstance(heater, ExerciseHeaterStep)
+        self.assertTrue(heater.optional)
+        self.assertEqual(heater.identifier, "Pool_Heater")
 
     def test_rejects_unknown_keys_with_location(self) -> None:
         error = self._load_error(

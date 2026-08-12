@@ -10,6 +10,7 @@ from .model import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -28,6 +29,8 @@ class TestcaseKeywords(Protocol):
     async def set_device(self, step: SetDeviceStep) -> None: ...
 
     async def set_setpoint(self, step: SetSetpointStep) -> None: ...
+
+    async def exercise_heater(self, step: ExerciseHeaterStep) -> None: ...
 
     async def assert_device(self, step: AssertDeviceStep) -> None: ...
 
@@ -163,6 +166,8 @@ class TestcaseExecutor:
             await self._keywords.set_device(step)
         elif isinstance(step, SetSetpointStep):
             await self._keywords.set_setpoint(step)
+        elif isinstance(step, ExerciseHeaterStep):
+            await self._keywords.exercise_heater(step)
         elif isinstance(step, AssertDeviceStep):
             await self._keywords.assert_device(step)
         elif isinstance(step, AssertLogStep):

@@ -49,6 +49,16 @@ class SetSetpointStep:
 
 
 @dataclass(frozen=True)
+class ExerciseHeaterStep:
+    identifier: str
+    optional: bool
+    activation_timeout_seconds: float
+    completion_timeout_seconds: float
+    convergence_timeout_seconds: float
+    keyword: str = "exercise_heater"
+
+
+@dataclass(frozen=True)
 class AssertDeviceStep:
     identifier: str
     state: DeviceTargetState
@@ -88,6 +98,7 @@ TestcaseStep: TypeAlias = (
     WaitForStep
     | SetDeviceStep
     | SetSetpointStep
+    | ExerciseHeaterStep
     | AssertDeviceStep
     | AssertLogStep
     | AssertNoLogStep

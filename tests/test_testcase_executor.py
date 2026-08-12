@@ -7,6 +7,7 @@ from aqualinkd_validator.testcases import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -31,6 +32,9 @@ class RecordingKeywords:
         await self._record(step.keyword)
 
     async def set_setpoint(self, step: SetSetpointStep) -> None:
+        await self._record(step.keyword)
+
+    async def exercise_heater(self, step: ExerciseHeaterStep) -> None:
         await self._record(step.keyword)
 
     async def assert_device(self, step: AssertDeviceStep) -> None:

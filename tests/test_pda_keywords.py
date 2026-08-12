@@ -16,6 +16,7 @@ from aqualinkd_validator.testcases import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseHeaterStep,
     SetSetpointStep,
     TestcaseExecutor,
     WaitForStep,
@@ -101,6 +102,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
     def test_equipment_action_before_initialization_is_rejected(self) -> None:
         asyncio.run(self._reject_uninitialized_action())
 
+    def test_heater_policy_owns_bounds_and_round_trip(self) -> None:
+        asyncio.run(self._exercise_heater())
+
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
         testcase = load_testcase(
@@ -157,6 +161,27 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
             )
         await fixture.keywords.wait_for(WaitForStep("pda.initialized", 1))
 
+    async def _exercise_heater(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        await fixture.keywords.exercise_heater(
+            ExerciseHeaterStep("Pool_Heater", True, 20, 30, 40)
+        )
+        self.assertEqual(
+            fixture.actions.setpoint_calls,
+            [
+                ("Pool_Heater", 79, 20, 30, 40),
+                ("Pool_Heater", 81, 20, 30, 40),
+                ("Pool_Heater", 80, 20, 30, 40),
+            ],
+        )
+        self.assertEqual(
+            fixture.actions.device_calls,
+            [
+                ("Pool_Heater", False, 20, 30, 40),
+                ("Pool_Heater", True, 20, 30, 40),
+            ],
+        )
+
 
 class KeywordFixture:
     def __init__(self, *, initialized: bool = False) -> None:
@@ -165,6 +190,7 @@ class KeywordFixture:
         self.restoration = RestorationSession()
         self.initialize_count = 0
         self.restore_timeouts: list[float] = []
+        self.skips: list[tuple[str, str]] = []
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -185,6 +211,7 @@ class KeywordFixture:
             initialize=self.initialize,
             wait_for_stable=self.wait_for_stable,
             restore=self.restore,
+            record_skip=lambda name, reason: self.skips.append((name, reason)),
             phase_prefix="yaml.pda.filter",
         )
 

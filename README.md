@@ -251,6 +251,13 @@ performs the filter-pump portion of the fast suite:
   testcases/pda/filter-after-init.yaml
 ```
 
+The optional pool-heater policy is also declarative:
+
+```bash
+.venv/bin/aqualinkd-validator run --panel-read-write \
+  testcases/pda/pool-heater.yaml
+```
+
 The complete YAML file is validated before AqualinkD starts. Its declared
 `read-only` or `read-write` access is enforced against `--panel` or `--panelw`,
 and PDA testcases automatically enable AqualinkD serial debug logging with

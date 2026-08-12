@@ -139,11 +139,18 @@ The initial keyword set should remain deliberately small:
 - `wait_for`
 - `set_device`
 - `set_setpoint`
+- `exercise_heater`
 - `assert_device`
 - `assert_log`
 - `assert_no_log`
 - `wait_for_stable_equipment`
 - `restore_original_state`
+
+`exercise_heater` is deliberately a higher-level PDA keyword: Python selects
+the bounded ±1 setpoint values for Fahrenheit or Celsius, handles an optional
+heater, correlates programmer activity, restores the original setpoint, and
+round-trips the enabled state. YAML does not contain temperature arithmetic or
+conditional control flow.
 
 Protocol-specific behavior belongs behind typed Python keywords. Declarative
 files must not contain arbitrary Python, shell commands, regular-expression

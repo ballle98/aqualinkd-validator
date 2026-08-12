@@ -486,6 +486,7 @@ class PdaLivePanelScenario:
             initialize=lambda: self._initialize(context),
             wait_for_stable=wait_for_stable,
             restore=restore,
+            record_skip=self._skip,
             phase_prefix=f"testcase.{testcase_id}",
         )
 

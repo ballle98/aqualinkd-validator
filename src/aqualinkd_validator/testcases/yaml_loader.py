@@ -12,6 +12,7 @@ from .model import (
     AssertLogStep,
     AssertNoLogStep,
     DeviceTargetState,
+    ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -142,7 +143,10 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         raise TestcaseValidationError(
             f"{source}.finally: only restore_original_state is allowed"
         )
-    mutates = any(isinstance(step, (SetDeviceStep, SetSetpointStep)) for step in steps)
+    mutates = any(
+        isinstance(step, (SetDeviceStep, SetSetpointStep, ExerciseHeaterStep))
+        for step in steps
+    )
     if mutates and access_value != "read-write":
         raise TestcaseValidationError(
             f"{source}.access: mutating steps require read-write access"
@@ -261,6 +265,32 @@ def _set_setpoint(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _exercise_heater(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(
+        value,
+        path,
+        required={"id", "activation_timeout", "completion_timeout"},
+        optional={"optional", "convergence_timeout"},
+    )
+    optional = value.get("optional", False)
+    if not isinstance(optional, bool):
+        raise TestcaseValidationError(f"{path}.optional: expected a boolean")
+    return ExerciseHeaterStep(
+        identifier=_string(value["id"], f"{path}.id"),
+        optional=optional,
+        activation_timeout_seconds=_duration(
+            value["activation_timeout"], f"{path}.activation_timeout"
+        ),
+        completion_timeout_seconds=_duration(
+            value["completion_timeout"], f"{path}.completion_timeout"
+        ),
+        convergence_timeout_seconds=_duration(
+            value.get("convergence_timeout", "10s"),
+            f"{path}.convergence_timeout",
+        ),
+    )
+
+
 def _assert_device(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"id", "state", "timeout"})
     return AssertDeviceStep(
@@ -321,6 +351,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
+    "exercise_heater": _exercise_heater,
     "assert_device": _assert_device,
     "assert_log": _assert_log,
     "assert_no_log": _assert_no_log,

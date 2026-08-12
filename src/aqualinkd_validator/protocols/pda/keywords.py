@@ -13,6 +13,7 @@ from ...testcases.model import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -25,6 +26,7 @@ StableEquipmentWaiter = Callable[
     [tuple[str, ...], float], Awaitable[EquipmentSnapshot]
 ]
 RestoreEquipment = Callable[[float], Awaitable[None]]
+SkipRecorder = Callable[[str, str], None]
 
 
 class PdaEquipmentActions(Protocol):
@@ -88,6 +90,7 @@ class PdaTestcaseKeywords:
         initialize: InitializePda,
         wait_for_stable: StableEquipmentWaiter,
         restore: RestoreEquipment,
+        record_skip: SkipRecorder = lambda name, reason: None,
         phase_prefix: str = "testcase",
     ) -> None:
         self._events = events
@@ -97,6 +100,7 @@ class PdaTestcaseKeywords:
         self._initialize = initialize
         self._wait_for_stable = wait_for_stable
         self._restore = restore
+        self._record_skip = record_skip
         self._phase_prefix = phase_prefix
         self._initialized = restoration.initial_snapshot is not None
         self._requested_states: dict[str, bool] = {}
@@ -160,6 +164,69 @@ class PdaTestcaseKeywords:
             completion_timeout_seconds=step.completion_timeout_seconds,
             convergence_timeout_seconds=step.convergence_timeout_seconds,
         )
+
+    async def exercise_heater(self, step: ExerciseHeaterStep) -> None:
+        self._require_initialized()
+        snapshot = self._restoration.initial_snapshot
+        assert snapshot is not None
+        heater = snapshot.devices.get(step.identifier)
+        if heater is None or heater.kind != "setpoint_thermo":
+            self._skip_optional(
+                step,
+                f"{step.identifier} is not a setpoint heater",
+            )
+            return
+        original_setpoint = heater.setpoint
+        if original_setpoint is None:
+            self._skip_optional(step, f"{step.identifier} has no setpoint")
+            return
+        bounds = {"f": (36, 104), "c": (0, 40)}.get(snapshot.temp_units)
+        if bounds is None:
+            self._skip_optional(
+                step,
+                f"unknown temperature units {snapshot.temp_units!r}",
+            )
+            return
+        try:
+            setpoint_markers = self._markers.setpoints[step.identifier]
+        except KeyError as error:
+            raise PdaKeywordFailure(
+                f"no PDA setpoint programmer markers for {step.identifier}"
+            ) from error
+
+        minimum, maximum = bounds
+        test_values = [
+            value
+            for value in (
+                max(minimum, original_setpoint - 1),
+                min(maximum, original_setpoint + 1),
+            )
+            if value != original_setpoint
+        ]
+        for value in (*test_values, original_setpoint):
+            await self._actions().set_setpoint(
+                step.identifier,
+                value,
+                phase=f"{self._phase_prefix}.exercise_heater.setpoint",
+                category="heater_setpoint",
+                markers=setpoint_markers,
+                activation_timeout_seconds=step.activation_timeout_seconds,
+                completion_timeout_seconds=step.completion_timeout_seconds,
+                convergence_timeout_seconds=step.convergence_timeout_seconds,
+            )
+
+        original_enabled = heater.enabled
+        for enabled in (not original_enabled, original_enabled):
+            await self._actions().set_device(
+                step.identifier,
+                enabled,
+                phase=f"{self._phase_prefix}.exercise_heater.state",
+                markers=self._markers.device,
+                activation_timeout_seconds=step.activation_timeout_seconds,
+                completion_timeout_seconds=step.completion_timeout_seconds,
+                convergence_timeout_seconds=step.convergence_timeout_seconds,
+            )
+            self._requested_states[step.identifier] = enabled
 
     async def assert_device(self, step: AssertDeviceStep) -> None:
         self._require_initialized()
@@ -273,3 +340,11 @@ class PdaTestcaseKeywords:
             raise PdaKeywordFailure(
                 "pda.initialized must be awaited before equipment keywords"
             )
+
+    def _skip_optional(self, step: ExerciseHeaterStep, reason: str) -> None:
+        if not step.optional:
+            raise PdaKeywordFailure(reason)
+        self._record_skip(
+            f"{self._phase_prefix}.exercise_heater.{step.identifier}",
+            reason,
+        )
