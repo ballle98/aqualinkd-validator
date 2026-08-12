@@ -110,6 +110,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
     def test_specialized_operations_stay_behind_typed_keywords(self) -> None:
         asyncio.run(self._specialized_operations())
 
+    def test_spa_heating_stays_behind_typed_keyword(self) -> None:
+        asyncio.run(self._spa_heating())
+
     def test_sleep_operations_stay_behind_typed_keywords(self) -> None:
         asyncio.run(self._sleep_operations())
 
@@ -211,6 +214,18 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         self.assertEqual(fixture.probe_transition_exercises, 1)
         self.assertEqual(fixture.restore_timeouts, [420, 420])
 
+    async def _spa_heating(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        testcase = load_testcase(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "pda"
+            / "spa-heating.yaml"
+        )
+        await DeclarativeExecutor(fixture.keywords).execute(testcase)
+        self.assertEqual(fixture.spa_heating_exercises, 1)
+        self.assertEqual(fixture.restore_timeouts, [600])
+
 
 class KeywordFixture:
     def __init__(self, *, initialized: bool = False) -> None:
@@ -225,6 +240,7 @@ class KeywordFixture:
         self.sleep_observations = 0
         self.status_retry_exercises = 0
         self.probe_transition_exercises = 0
+        self.spa_heating_exercises = 0
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -247,6 +263,7 @@ class KeywordFixture:
             restore=self.restore,
             verify_status=self.verify_status,
             exercise_devices=self.exercise_devices,
+            exercise_spa_heating=self.exercise_spa_heating,
             observe_sleep=self.observe_sleep,
             exercise_status_retry=self.exercise_status_retry,
             exercise_probe_transition=self.exercise_probe_transition,
@@ -274,6 +291,9 @@ class KeywordFixture:
 
     async def exercise_devices(self) -> None:
         self.device_exercises += 1
+
+    async def exercise_spa_heating(self) -> None:
+        self.spa_heating_exercises += 1
 
     async def observe_sleep(self) -> None:
         self.sleep_observations += 1

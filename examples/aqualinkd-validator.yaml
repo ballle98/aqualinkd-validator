@@ -1,0 +1,7 @@
+schema: 1
+
+# Physical characteristics and safety delays for this pool installation.
+# The opt-in pda-live-spa suite uses this delay to circulate/fill the spa in
+# pool mode before changing to spa mode.
+spa:
+  fill_time: 8m

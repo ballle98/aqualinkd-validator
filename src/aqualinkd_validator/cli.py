@@ -36,6 +36,7 @@ from .metadata import (
 from .metrics import summarize_metrics
 from .pda.cases import PdaCaseId
 from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
+from .site_config import SiteConfig, load_site_config
 from .suites import SUITES, SuiteProfile, get_suite
 from .supervisor import supervise
 from .testcases import (
@@ -60,6 +61,9 @@ _BUILTIN_DECLARATIVE_SUITES = {
     ),
     "pda-live-sleep": (
         Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-sleep.yaml"
+    ),
+    "pda-live-spa": (
+        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-spa.yaml"
     ),
 }
 _RUN_SUITE_NAMES = tuple((*_BUILTIN_DECLARATIVE_SUITES, *SUITES))
@@ -119,6 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=Path("/etc/aqualinkd.conf"),
+    )
+    run.add_argument(
+        "--site-config",
+        type=Path,
+        help=(
+            "Installation-specific validator settings; defaults to "
+            "aqualinkd-validator.yaml beside the AqualinkD config"
+        ),
     )
     run.add_argument(
         "--artifacts",
@@ -650,6 +662,7 @@ def _run_process(args: argparse.Namespace) -> int:
     config = args.config.expanduser().resolve(strict=True)
     source_config = getattr(args, "source_config", config)
     config_overrides: dict[str, str] = getattr(args, "config_overrides", {})
+    site_config = load_site_config(source_config, args.site_config)
     disabled_button_numbers = read_disabled_button_numbers(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
     source_tree = (
@@ -722,6 +735,7 @@ def _run_process(args: argparse.Namespace) -> int:
                 disabled_button_numbers=disabled_button_numbers,
                 panel_timezone=args.panel_timezone,
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
+                spa_fill_seconds=site_config.spa.fill_seconds,
                 case_ids=suite.cases if suite is not None else (),
             ),
             api_base_url_override=api_base_url,
@@ -748,6 +762,7 @@ def _run_process(args: argparse.Namespace) -> int:
             config=config,
             source_config=source_config,
             config_overrides=config_overrides,
+            site_config=site_config,
             execution_phase=(
                 suite.execution_role
                 if suite is not None
@@ -776,6 +791,7 @@ def _run_in_artifact(
     config: Path,
     source_config: Path,
     config_overrides: dict[str, str],
+    site_config: SiteConfig,
     execution_phase: Literal["single", "awake", "sleep"],
     disabled_button_numbers: tuple[int, ...],
     serial_device: Path,
@@ -885,6 +901,15 @@ def _run_in_artifact(
             "effective_sha256": sha256_file(config),
             "overrides": config_overrides,
         },
+        "site_config": (
+            {
+                "name": site_config.source.name,
+                "sha256": sha256_file(site_config.source),
+                "spa": {"fill_seconds": site_config.spa.fill_seconds},
+            }
+            if site_config.source is not None
+            else None
+        ),
         "serial": {
             "device": str(serial_device),
             "source": (
@@ -902,6 +927,8 @@ def _run_in_artifact(
     print(f"Artifacts: {artifact_dir}", flush=True)
     print(f"AqualinkD: {binary}", flush=True)
     print(f"Config fingerprint: {manifest['config']['sha256']}", flush=True)
+    if site_config.source is not None:
+        print(f"Site config: {site_config.source}", flush=True)
     if config_overrides:
         formatted_overrides = ", ".join(
             f"{key}={value}" for key, value in config_overrides.items()

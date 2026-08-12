@@ -60,6 +60,12 @@ class ExerciseHeaterStep:
 
 
 @dataclass(frozen=True)
+class ExerciseSpaHeatingStep:
+    timeout_seconds: float
+    keyword: str = "exercise_spa_heating"
+
+
+@dataclass(frozen=True)
 class AssertDeviceStep:
     identifier: str
     state: DeviceTargetState
@@ -130,6 +136,7 @@ TestcaseStep: TypeAlias = (
     | SetDeviceStep
     | SetSetpointStep
     | ExerciseHeaterStep
+    | ExerciseSpaHeatingStep
     | AssertDeviceStep
     | AssertLogStep
     | AssertNoLogStep

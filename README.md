@@ -220,6 +220,54 @@ configuration is fingerprinted but not copied into artifacts, avoiding
 accidental publication of credentials. These are live-panel
 integration/regression tests rather than unit tests.
 
+### Pool-specific validator settings
+
+Installation-specific physical behavior belongs in a validator site profile,
+not in reusable testcases or additional routine command-line options. By
+default the validator looks for `aqualinkd-validator.yaml` beside the active
+`aqualinkd.conf`. The file is optional for the normal fast, awake, sleep, and
+long suites. Start with the supplied example when enabling spa tests:
+
+```sh
+sudo cp examples/aqualinkd-validator.yaml /etc/aqualinkd-validator.yaml
+sudo editor /etc/aqualinkd-validator.yaml
+```
+
+```yaml
+schema: 1
+spa:
+  fill_time: 8m
+```
+
+`spa.fill_time` is the time this installation needs to circulate in Pool mode
+before switching to Spa mode. It is required only by the opt-in
+`pda-live-spa` suite. An explicit `--site-config` path is available for an
+unusual layout, but is not needed when the file is beside `aqualinkd.conf`.
+
+For Docker, mount the profile at its default container path and run the
+separate suite:
+
+```sh
+sudo docker run --rm \
+  --env TZ=America/Chicago \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --mount type=bind,source=/usr/local/bin/aqualinkd,target=/usr/local/bin/aqualinkd,readonly \
+  --mount type=bind,source=/etc/aqualinkd.conf,target=/etc/aqualinkd.conf,readonly \
+  --mount type=bind,source=/etc/aqualinkd-validator.yaml,target=/etc/aqualinkd-validator.yaml,readonly \
+  --mount type=bind,source=/var/www/aqualinkd,target=/var/www/aqualinkd \
+  --volume /home/pi/aqualinkd-validator-artifacts:/tmp/aqualinkd-validator-artifacts \
+  aqualinkd-validator:local run \
+    --panel-read-write \
+    pda-live-spa
+```
+
+The suite fills in Pool mode, enters Spa mode, raises the Spa Heater setpoint
+only enough to demand heat, verifies active heating, turns heat off, validates
+the delayed cooldown transition, and restores the original setpoint and
+equipment state. It is intentionally excluded from `pda-live-long`, since it
+can take many minutes and changes water routing. A pool-only panel reports the
+case as skipped.
+
 ### PDA live-panel suites
 
 The live-panel coverage is assembled from reusable cases, process suites, and
@@ -231,6 +279,7 @@ one composite suite:
 | `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
 | `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and switch round trips during STATUS retries and after probing begins |
 | `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
+| `pda-live-spa` | Explicit hydraulic/heating validation | Site-configured Pool-mode fill, Spa-mode entry, active Spa Heater demand, cooldown/lockout, and full restoration; not included in `pda-live-long` |
 | `pda-live-simulator` | AquaPDA interface transport regression on a physical panel | Opens the same northbound AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
 | `pda-live-simulator-menu-walk` | Extensive AquaPDA interface-emulator navigation against a physical panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
 | `pda-powercenter-simulator-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
@@ -383,7 +432,8 @@ Aux 1 through Aux 5 and excludes Aux 6 and above. This protects against a
 configuration declaring a larger panel than the connected hardware.
 
 1. `pda-live-awake`, with `pda_sleep_mode = no`: run the fast checks, enable
-   every eligible configured switch and heater, wait for the PDA to return home,
+   every eligible configured switch and heater except Spa mode and Spa Heater,
+   wait for the PDA to return home,
    and capture a complete multi-page `EQUIPMENT STATUS` loop. Verify every
    expected device appeared and remained on in `/api/devices` after AqualinkD
    reconciled the full loop. If an SWG is present, verify its status was
@@ -391,6 +441,9 @@ configuration declaring a larger panel than the connected hardware.
    consecutive device operations and restore them in reverse order.
    Supplying repeated `--pda-test-device` options restricts the separate
    consecutive-device operation to those switch IDs.
+   Spa hydraulics and active heating are isolated in `pda-live-spa` so this
+   general regression does not unexpectedly route water or incur fill and
+   cooldown delays.
 2. `pda-live-sleep`, with `pda_sleep_mode = yes`: restart AqualinkD, repeat PDA
    initialization and identity checks, wait for AqualinkD's PDA sleep marker,
    observe one complete natural sleep/wake cycle, then toggle a switch about

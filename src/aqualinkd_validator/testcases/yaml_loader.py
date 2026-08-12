@@ -15,6 +15,7 @@ from .model import (
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
+    ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
@@ -473,6 +474,11 @@ def _exercise_heater(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _exercise_spa_heating(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ExerciseSpaHeatingStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
 def _assert_device(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"id", "state", "timeout"})
     return AssertDeviceStep(
@@ -559,6 +565,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
     "exercise_heater": _exercise_heater,
+    "exercise_spa_heating": _exercise_spa_heating,
     "assert_device": _assert_device,
     "assert_log": _assert_log,
     "assert_no_log": _assert_no_log,

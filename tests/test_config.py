@@ -11,9 +11,44 @@ from aqualinkd_validator.config import (
     resolve_api_base_url,
     write_config_with_overrides,
 )
+from aqualinkd_validator.site_config import SiteConfigError, load_site_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_loads_site_specific_spa_fill_time(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            aqualinkd_config = root / "aqualinkd.conf"
+            aqualinkd_config.touch()
+            (root / "aqualinkd-validator.yaml").write_text(
+                "schema: 1\nspa:\n  fill_time: 8m\n",
+                encoding="utf-8",
+            )
+
+            site = load_site_config(aqualinkd_config)
+
+            self.assertEqual(site.spa.fill_seconds, 480.0)
+            self.assertEqual(site.source, root / "aqualinkd-validator.yaml")
+
+    def test_missing_implicit_site_config_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "aqualinkd.conf"
+            config.touch()
+            self.assertIsNone(load_site_config(config).source)
+
+    def test_explicit_site_config_must_be_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "aqualinkd.conf"
+            site_config = root / "site.yaml"
+            config.touch()
+            site_config.write_text(
+                "schema: 1\nspa:\n  fill_time: eight minutes\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SiteConfigError, "duration such as 8m"):
+                load_site_config(config, site_config)
+
     def test_reads_effective_none_button_labels(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "aqualinkd.conf"

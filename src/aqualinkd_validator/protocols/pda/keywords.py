@@ -16,6 +16,7 @@ from ...testcases.model import (
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
+    ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
@@ -96,6 +97,7 @@ class PdaTestcaseKeywords:
         restore: RestoreEquipment,
         verify_status: ComplexPdaOperation | None = None,
         exercise_devices: ComplexPdaOperation | None = None,
+        exercise_spa_heating: ComplexPdaOperation | None = None,
         observe_sleep: ComplexPdaOperation | None = None,
         exercise_status_retry: ComplexPdaOperation | None = None,
         exercise_probe_transition: ComplexPdaOperation | None = None,
@@ -111,6 +113,7 @@ class PdaTestcaseKeywords:
         self._restore = restore
         self._verify_status = verify_status
         self._exercise_devices = exercise_devices
+        self._exercise_spa_heating = exercise_spa_heating
         self._observe_sleep = observe_sleep
         self._exercise_status_retry = exercise_status_retry
         self._exercise_probe_transition = exercise_probe_transition
@@ -238,6 +241,13 @@ class PdaTestcaseKeywords:
                 convergence_timeout_seconds=step.convergence_timeout_seconds,
             )
             self._requested_states[step.identifier] = enabled
+
+    async def exercise_spa_heating(self, step: ExerciseSpaHeatingStep) -> None:
+        self._require_initialized()
+        if self._exercise_spa_heating is None:
+            raise PdaKeywordFailure("spa-heating exercise is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._exercise_spa_heating()
 
     async def assert_device(self, step: AssertDeviceStep) -> None:
         self._require_initialized()

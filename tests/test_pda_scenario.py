@@ -28,6 +28,9 @@ from aqualinkd_validator.pda_scenario import (
     POOL_HEATER,
     POOL_HEATER_SETPOINT_ACTIVE,
     POOL_HEATER_SETPOINT_FINISHED,
+    SPA_HEATER,
+    SPA_HEATER_SETPOINT_ACTIVE,
+    SPA_HEATER_SETPOINT_FINISHED,
     STATUS_MENU_PRESENT,
     WAKE_INIT_ACTIVE,
     WAKE_INIT_FINISHED,
@@ -239,7 +242,39 @@ class CleanupApi:
         self._devices[identifier]["spvalue"] = str(value)
 
 
+class SpaApi(CleanupApi):
+    async def set_device(self, identifier: str, enabled: bool) -> None:
+        self.set_device_calls.append((identifier, enabled))
+        self._devices[identifier].update(
+            int_status="1" if enabled else "0",
+            state="on" if enabled else "off",
+            status="on" if enabled else "off",
+        )
+        await self._context.monitor.publish(
+            self._context.timeline.offset_ns(), "stdout", DEVICE_ACTIVE
+        )
+        await self._context.monitor.publish(
+            self._context.timeline.offset_ns(), "stdout", DEVICE_FINISHED
+        )
+
+    async def set_setpoint(self, identifier: str, value: int) -> None:
+        self._devices[identifier]["spvalue"] = str(value)
+        await self._context.monitor.publish(
+            self._context.timeline.offset_ns(),
+            "stdout",
+            SPA_HEATER_SETPOINT_ACTIVE,
+        )
+        await self._context.monitor.publish(
+            self._context.timeline.offset_ns(),
+            "stdout",
+            SPA_HEATER_SETPOINT_FINISHED,
+        )
+
+
 class PdaScenarioTests(unittest.TestCase):
+    def test_spa_heating_uses_site_fill_and_restores_state(self) -> None:
+        asyncio.run(self._run_spa_heating())
+
     def test_declarative_filter_test_uses_scenario_lifecycle(self) -> None:
         asyncio.run(self._run_declarative_filter_test())
 
@@ -1300,6 +1335,73 @@ class PdaScenarioTests(unittest.TestCase):
             )
             self.assertEqual(clock_check["status"], "failed")
             self.assertIn("Panel time differs", report["error"])
+
+    async def _run_spa_heating(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            context = ScenarioContext(
+                artifact_dir=Path(directory),
+                monitor=OutputMonitor(),
+                timeline=Timeline(
+                    Path(directory) / "timeline.jsonl",
+                    time.monotonic_ns(),
+                ),
+            )
+            api = SpaApi(
+                context,
+                {
+                    "Filter_Pump": {
+                        "id": "Filter_Pump",
+                        "type": "switch",
+                        "int_status": "0",
+                        "state": "off",
+                        "status": "off",
+                    },
+                    "Spa": {
+                        "id": "Spa",
+                        "type": "switch",
+                        "int_status": "0",
+                        "state": "off",
+                        "status": "off",
+                    },
+                    SPA_HEATER: {
+                        "id": SPA_HEATER,
+                        "type": "setpoint_thermo",
+                        "int_status": "0",
+                        "state": "off",
+                        "status": "off",
+                        "spvalue": "78",
+                        "value": "78",
+                    },
+                },
+            )
+            scenario = PdaLivePanelScenario(
+                api,
+                PdaScenarioConfig(
+                    spa_fill_seconds=0.001,
+                    status_timeout_seconds=0.2,
+                    restoration_timeout_seconds=0.2,
+                ),
+            )
+            initial = await api.devices()
+            scenario._initial_snapshot = initial
+            scenario._restoration.capture_initial(initial)
+            try:
+                await scenario._test_spa_heating(context)
+                errors = await scenario._restore_original_state(context)
+            finally:
+                context.timeline.close()
+
+            self.assertEqual(errors, [])
+            restored = await api.devices()
+            self.assertFalse(restored.devices["Filter_Pump"].enabled)
+            self.assertFalse(restored.devices["Spa"].enabled)
+            self.assertFalse(restored.devices[SPA_HEATER].enabled)
+            self.assertEqual(restored.devices[SPA_HEATER].setpoint, 78)
+            measurement_names = {
+                measurement["name"] for measurement in scenario._report["measurements"]
+            }
+            self.assertIn("spa.pool_mode_fill", measurement_names)
+            self.assertIn("spa.heater.active", measurement_names)
 
     async def _feed_panel_states(
         self,

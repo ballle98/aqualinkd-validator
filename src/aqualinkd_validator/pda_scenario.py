@@ -30,6 +30,7 @@ from .pda_simulator import (
 )
 from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
+from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 from .testcases import (
     ExerciseDiscoveredDevicesStep,
@@ -41,6 +42,7 @@ from .testcases import (
 
 FILTER_PUMP = "Filter_Pump"
 POOL_HEATER = "Pool_Heater"
+SPA_HEATER = "Spa_Heater"
 
 INIT_FINISHED = "(Init PDA) finished"
 INIT_ACTIVE = "is active (Init PDA)"
@@ -57,6 +59,18 @@ POOL_HEATER_SETPOINT_FINISHED_MARKERS = (
 POOL_HEATER_SETPOINT_ACTIVE_MARKERS = (
     POOL_HEATER_SETPOINT_ACTIVE,
     LEGACY_POOL_HEATER_SETPOINT_ACTIVE,
+)
+SPA_HEATER_SETPOINT_FINISHED = "(Set PDA Spa Heater) finished"
+SPA_HEATER_SETPOINT_ACTIVE = "is active (Set PDA Spa Heater)"
+LEGACY_SPA_HEATER_SETPOINT_FINISHED = "(Set Spa heater setpoint) finished"
+LEGACY_SPA_HEATER_SETPOINT_ACTIVE = "is active (Set Spa heater setpoint)"
+SPA_HEATER_SETPOINT_FINISHED_MARKERS = (
+    SPA_HEATER_SETPOINT_FINISHED,
+    LEGACY_SPA_HEATER_SETPOINT_FINISHED,
+)
+SPA_HEATER_SETPOINT_ACTIVE_MARKERS = (
+    SPA_HEATER_SETPOINT_ACTIVE,
+    LEGACY_SPA_HEATER_SETPOINT_ACTIVE,
 )
 STATUS_MENU_PRESENT = "PDA Start new Equiptment loop"
 LEGACY_STATUS_MENU_PRESENT = "PDA Start new Equipment loop"
@@ -124,6 +138,7 @@ class PdaScenarioConfig:
     disabled_button_numbers: tuple[int, ...] = ()
     panel_timezone: str = "UTC"
     panel_time_tolerance_seconds: float = 120.0
+    spa_fill_seconds: float | None = None
     case_ids: tuple[PdaCaseId, ...] = ()
     simulator_packet_count: int = 20
     simulator_timeout_seconds: float = 20.0
@@ -188,6 +203,9 @@ class PdaLivePanelScenario:
                     config.status_retry_command_delay_seconds
                 ),
                 "probe_command_min_delay": (config.probe_command_min_delay_seconds),
+            },
+            "site_profile": {
+                "spa_fill_seconds": config.spa_fill_seconds,
             },
             "checks": [],
             "aqualinkd": None,
@@ -518,7 +536,12 @@ class PdaLivePanelScenario:
                         "Set PDA Pool Heater",
                         POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
                         POOL_HEATER_SETPOINT_FINISHED_MARKERS,
-                    )
+                    ),
+                    SPA_HEATER: ProgrammerMarkers(
+                        "Set PDA Spa Heater",
+                        SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
+                        SPA_HEATER_SETPOINT_FINISHED_MARKERS,
+                    ),
                 },
             ),
             initialize=lambda: self._initialize(context),
@@ -526,6 +549,7 @@ class PdaLivePanelScenario:
             restore=restore,
             verify_status=lambda: self._test_with_status_menu(context),
             exercise_devices=lambda: self._test_consecutive_devices(context),
+            exercise_spa_heating=lambda: self._test_spa_heating(context),
             observe_sleep=lambda: self._test_sleep_wake_cycle(context),
             exercise_status_retry=lambda: self._test_device_during_status_retry(
                 context
@@ -1601,15 +1625,27 @@ class PdaLivePanelScenario:
 
     async def _test_with_status_menu(self, context: ScenarioContext) -> None:
         assert self._initial_snapshot is not None
+        spa_hydraulic_controls = {"Spa", "Spa_Mode", "Spa_Heater"}
         controls = [
             identifier
             for identifier, device in self._initial_snapshot.devices.items()
             if device.get("type") in {"switch", "setpoint_thermo"}
+            and identifier not in spa_hydraulic_controls
             and not self._skip_unactionable_device(
                 identifier,
                 phase="devices.status_menu.setup",
             )
         ]
+        deferred_spa_controls = sorted(
+            spa_hydraulic_controls & self._initial_snapshot.devices.keys()
+        )
+        if deferred_spa_controls:
+            self._skip(
+                "devices.status_menu.spa_hydraulics",
+                "Left unchanged; covered by opt-in pda-live-spa: "
+                + ", ".join(deferred_spa_controls),
+            )
+
         if not controls:
             self._skip(
                 "devices.status_menu",
@@ -1733,6 +1769,43 @@ class PdaLivePanelScenario:
             log_completion_offset_ns=reconciled.offset_ns,
             state_observed_offset_ns=context.timeline.offset_ns(),
         )
+
+    async def _test_spa_heating(self, context: ScenarioContext) -> None:
+        assert self._initial_snapshot is not None
+        fill_seconds = self._config.spa_fill_seconds
+        if fill_seconds is None:
+            raise ScenarioFailure(
+                "pda-live-spa requires spa.fill_time in "
+                "aqualinkd-validator.yaml beside aqualinkd.conf"
+            )
+        exercise = PdaSpaExercise(
+            api=self._api_client,
+            config=SpaExerciseConfig(
+                fill_seconds=fill_seconds,
+                active_timeout_seconds=self._config.status_timeout_seconds,
+                transition_timeout_seconds=self._config.restoration_timeout_seconds,
+            ),
+            set_device=lambda identifier, enabled, phase, timeout: self._set_device(
+                context,
+                identifier,
+                enabled,
+                phase=phase,
+                state_timeout_seconds=timeout,
+            ),
+            set_setpoint=lambda identifier, value, phase: self._set_setpoint(
+                context,
+                identifier,
+                value,
+                phase=phase,
+                active_marker=SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
+                completion_marker=SPA_HEATER_SETPOINT_FINISHED_MARKERS,
+                category="spa_heating",
+            ),
+            record_measurement=self._append_measurement,
+            record_skip=self._skip,
+            offset_ns=context.timeline.offset_ns,
+        )
+        await exercise.run(self._initial_snapshot)
 
     def _status_loop_events(
         self,
@@ -2570,7 +2643,10 @@ class PdaLivePanelScenario:
         completion_marker: str | tuple[str, ...],
         category: str,
     ) -> None:
-        task_name = "Set PDA Pool Heater" if identifier == POOL_HEATER else identifier
+        task_name = {
+            POOL_HEATER: "Set PDA Pool Heater",
+            SPA_HEATER: "Set PDA Spa Heater",
+        }.get(identifier, identifier)
         try:
             await self._equipment_actions(context).set_setpoint(
                 identifier,
@@ -2623,7 +2699,17 @@ class PdaLivePanelScenario:
         restoration["attempted"] = True
 
         async def restore_setpoint(identifier: str, original: int) -> None:
-            if identifier != POOL_HEATER:
+            markers = {
+                POOL_HEATER: (
+                    POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
+                    POOL_HEATER_SETPOINT_FINISHED_MARKERS,
+                ),
+                SPA_HEATER: (
+                    SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
+                    SPA_HEATER_SETPOINT_FINISHED_MARKERS,
+                ),
+            }.get(identifier)
+            if markers is None:
                 raise ScenarioFailure(
                     f"No restoration programmer markers for {identifier}"
                 )
@@ -2632,8 +2718,8 @@ class PdaLivePanelScenario:
                 identifier,
                 original,
                 phase="restoration.setpoint",
-                active_marker=POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
-                completion_marker=POOL_HEATER_SETPOINT_FINISHED_MARKERS,
+                active_marker=markers[0],
+                completion_marker=markers[1],
                 category="restoration",
             )
 

@@ -1,0 +1,16 @@
+schema: 1
+id: pda.spa-heating
+description: Fill the spa, force active heating, and validate cooldown lockout
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - exercise_spa_heating:
+      timeout: 20m
+finally:
+  - restore_original_state:
+      timeout: 10m

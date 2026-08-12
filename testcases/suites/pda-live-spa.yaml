@@ -1,0 +1,17 @@
+schema: 1
+kind: suite
+id: pda-live-spa
+description: Opt-in live spa hydraulic, heating, and cooldown validation
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: no
+  execution_role: awake
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/spa-heating.yaml
