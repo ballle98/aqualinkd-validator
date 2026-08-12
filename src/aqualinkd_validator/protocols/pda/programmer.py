@@ -28,8 +28,7 @@ class PdaProgrammerObserver:
         wait_reason: str = "waiting in the programmer queue",
     ) -> LineEvent:
         print(
-            f"[ WAIT ] {task_name}: {wait_reason} "
-            f"(timeout {timeout_seconds:g}s)",
+            f"[ WAIT ] {task_name}: {wait_reason} (timeout {timeout_seconds:g}s)",
             flush=True,
         )
         try:
@@ -43,12 +42,9 @@ class PdaProgrammerObserver:
             raise PdaProgrammerFailure(
                 f"{task_name} did not become active within {timeout_seconds:g}s"
             ) from error
-        activation_seconds = (
-            active.offset_ns - requested_offset_ns
-        ) / 1_000_000_000
+        activation_seconds = (active.offset_ns - requested_offset_ns) / 1_000_000_000
         print(
-            f"[ACTIVE] {task_name} became active after "
-            f"{activation_seconds:.3f}s",
+            f"[ACTIVE] {task_name} became active after {activation_seconds:.3f}s",
             flush=True,
         )
         if task_name == "Init PDA":
@@ -82,12 +78,9 @@ class PdaProgrammerObserver:
                 f"{task_name} did not complete within {timeout_seconds:g}s "
                 "after becoming active"
             ) from error
-        programmer_seconds = (
-            completed.offset_ns - active.offset_ns
-        ) / 1_000_000_000
+        programmer_seconds = (completed.offset_ns - active.offset_ns) / 1_000_000_000
         print(
-            f"[ DONE ] {task_name} programmer completed in "
-            f"{programmer_seconds:.3f}s",
+            f"[ DONE ] {task_name} programmer completed in {programmer_seconds:.3f}s",
             flush=True,
         )
         if task_name == "Init PDA":

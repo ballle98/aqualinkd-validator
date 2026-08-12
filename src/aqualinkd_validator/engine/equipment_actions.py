@@ -311,8 +311,7 @@ class EquipmentActions:
             device.requested_state_label(enabled) if device is not None else enabled
         )
         raise EquipmentActionFailure(
-            f"{identifier} did not become {requested} within "
-            f"{timeout_seconds:g}s"
+            f"{identifier} did not become {requested} within {timeout_seconds:g}s"
         )
 
     async def _wait_for_setpoint(

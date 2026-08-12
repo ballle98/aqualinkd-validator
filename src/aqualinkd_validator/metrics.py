@@ -18,9 +18,7 @@ def summarize_metrics(path: Path) -> dict[str, Any]:
 
     first = samples[0]
     last = samples[-1]
-    elapsed_seconds = max(
-        0.0, (last["offset_ns"] - first["offset_ns"]) / 1_000_000_000
-    )
+    elapsed_seconds = max(0.0, (last["offset_ns"] - first["offset_ns"]) / 1_000_000_000)
     clock_ticks = os.sysconf("SC_CLK_TCK")
     user_seconds = _delta(first, last, "cpu_user_ticks") / clock_ticks
     system_seconds = _delta(first, last, "cpu_system_ticks") / clock_ticks
@@ -46,12 +44,8 @@ def summarize_metrics(path: Path) -> dict[str, Any]:
             "maximum": max(sample["threads"] for sample in samples),
         },
         "context_switches": {
-            "voluntary": _delta(
-                first, last, "voluntary_context_switches"
-            ),
-            "nonvoluntary": _delta(
-                first, last, "nonvoluntary_context_switches"
-            ),
+            "voluntary": _delta(first, last, "voluntary_context_switches"),
+            "nonvoluntary": _delta(first, last, "nonvoluntary_context_switches"),
         },
         "io_bytes": {
             "read": _delta(first, last, "read_bytes"),

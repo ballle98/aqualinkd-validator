@@ -412,9 +412,7 @@ class AquaPdaSimulator:
                         quiet_since = time.monotonic()
                     elif quiet_since is None:
                         quiet_since = time.monotonic()
-                    quiet_remaining = idle_seconds - (
-                        time.monotonic() - quiet_since
-                    )
+                    quiet_remaining = idle_seconds - (time.monotonic() - quiet_since)
                     if quiet_remaining <= 0:
                         return self.screen_update_count
                     try:
@@ -427,9 +425,7 @@ class AquaPdaSimulator:
                             return self.screen_update_count
                 else:
                     try:
-                        await asyncio.wait_for(
-                            self._condition.wait(), remaining
-                        )
+                        await asyncio.wait_for(self._condition.wait(), remaining)
                     except TimeoutError as error:
                         raise SimulatorProtocolError(
                             "PDA screen did not update after a navigation key"

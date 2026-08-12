@@ -48,9 +48,7 @@ class OutputMonitor:
 
     def recent_events(self, *, before: int | None = None) -> list[LineEvent]:
         return [
-            event
-            for event in self._events
-            if before is None or event.sequence < before
+            event for event in self._events if before is None or event.sequence < before
         ]
 
     async def publish(self, offset_ns: int, stream: str, text: str) -> None:
@@ -465,9 +463,7 @@ def _read_proc_sample(pid: int) -> dict[str, int] | None:
         "read_bytes": int(io.get("read_bytes", 0)),
         "rss_bytes": int(stat_fields[21]) * page_size,
         "threads": int(stat_fields[17]),
-        "voluntary_context_switches": int(
-            status.get("voluntary_ctxt_switches", 0)
-        ),
+        "voluntary_context_switches": int(status.get("voluntary_ctxt_switches", 0)),
         "nonvoluntary_context_switches": int(
             status.get("nonvoluntary_ctxt_switches", 0)
         ),

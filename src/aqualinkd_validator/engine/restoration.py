@@ -102,9 +102,7 @@ class RestorationSession:
                 current = self._require_device(await read_snapshot(), identifier)
                 if current.setpoint != original:
                     await restore_setpoint(identifier, original)
-                actions.append(
-                    RestorationAction(identifier, "setpoint", original)
-                )
+                actions.append(RestorationAction(identifier, "setpoint", original))
             except Exception as error:
                 errors.append(f"{identifier} setpoint: {error}")
 

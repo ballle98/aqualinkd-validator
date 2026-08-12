@@ -53,10 +53,7 @@ def format_comparison(comparison: dict[str, Any]) -> str:
                     2,
                 ),
                 _format_number(threads.get("average"), 2),
-                str(
-                    switches.get("voluntary", 0)
-                    + switches.get("nonvoluntary", 0)
-                ),
+                str(switches.get("voluntary", 0) + switches.get("nonvoluntary", 0)),
             ]
         )
 
@@ -66,8 +63,7 @@ def format_comparison(comparison: dict[str, Any]) -> str:
     ]
     lines = [
         "  ".join(
-            heading.ljust(widths[index])
-            for index, heading in enumerate(headings)
+            heading.ljust(widths[index]) for index, heading in enumerate(headings)
         ),
         "  ".join("-" * width for width in widths),
     ]
@@ -94,10 +90,7 @@ def _format_scenario_timings(runs: list[dict[str, Any]]) -> list[str]:
     rows = [
         [
             name,
-            *[
-                _format_number(values.get(name), 3)
-                for values in measurements
-            ],
+            *[_format_number(values.get(name), 3) for values in measurements],
         ]
         for name in names
     ]
@@ -107,15 +100,11 @@ def _format_scenario_timings(runs: list[dict[str, Any]]) -> list[str]:
     ]
     return [
         "  ".join(
-            heading.ljust(widths[index])
-            for index, heading in enumerate(headings)
+            heading.ljust(widths[index]) for index, heading in enumerate(headings)
         ),
         "  ".join("-" * width for width in widths),
         *[
-            "  ".join(
-                value.ljust(widths[index])
-                for index, value in enumerate(row)
-            )
+            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
             for row in rows
         ],
     ]
@@ -175,13 +164,11 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
         ),
         "container runtime": lambda run: run["manifest"]["host"].get("container"),
         "suite": lambda run: (run["manifest"].get("suite") or {}).get("name"),
-        "PDA execution role": lambda run: (
-            run["manifest"].get("suite") or {}
-        ).get("execution_phase"),
+        "PDA execution role": lambda run: (run["manifest"].get("suite") or {}).get(
+            "execution_phase"
+        ),
         "PDA device restriction": lambda run: (
-            run["manifest"]
-            .get("equipment_control", {})
-            .get("pda_test_devices")
+            run["manifest"].get("equipment_control", {}).get("pda_test_devices")
         ),
         "PDA resolved switches": lambda run: (
             (run["performance"].get("scenario") or {})
@@ -189,14 +176,10 @@ def _comparability_warnings(runs: list[dict[str, Any]]) -> list[str]:
             .get("resolved")
         ),
         "PDA timeouts": lambda run: (
-            run["manifest"]
-            .get("equipment_control", {})
-            .get("timeouts_seconds")
+            run["manifest"].get("equipment_control", {}).get("timeouts_seconds")
         ),
         "panel time configuration": lambda run: (
-            run["manifest"]
-            .get("equipment_control", {})
-            .get("panel_time")
+            run["manifest"].get("equipment_control", {}).get("panel_time")
         ),
         "PDA panel type": _pda_panel_type,
         "PDA firmware": _pda_firmware,

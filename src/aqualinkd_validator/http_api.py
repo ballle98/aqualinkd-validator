@@ -11,6 +11,8 @@ from .domain import EquipmentSnapshot
 
 class ApiError(RuntimeError):
     """Raised when AqualinkD's HTTP API cannot satisfy a request."""
+
+
 class AqualinkHttpApi:
     def __init__(self, base_url: str, timeout_seconds: float = 5.0) -> None:
         self._base_url = base_url.rstrip("/")

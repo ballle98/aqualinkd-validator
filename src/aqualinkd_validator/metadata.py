@@ -62,9 +62,7 @@ def collect_source_metadata(
         return metadata
     try:
         metadata["commit"] = source_commit or _git(resolved, "rev-parse", "HEAD")
-        metadata["branch"] = source_branch or _git(
-            resolved, "branch", "--show-current"
-        )
+        metadata["branch"] = source_branch or _git(resolved, "branch", "--show-current")
         metadata["dirty"] = bool(_git(resolved, "status", "--porcelain"))
     except subprocess.CalledProcessError as error:
         metadata["git_error"] = error.stderr.strip() or "git metadata unavailable"

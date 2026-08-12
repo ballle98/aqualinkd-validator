@@ -43,9 +43,7 @@ FAST_CASES = (
 SUITES: dict[str, PdaSuiteDefinition] = {
     "pda-live-awake": PdaSuiteDefinition(
         name="pda-live-awake",
-        description=(
-            "PDA live-panel tests requiring sleep mode to remain disabled"
-        ),
+        description=("PDA live-panel tests requiring sleep mode to remain disabled"),
         cases=(
             *FAST_CASES,
             PdaCaseId.EQUIPMENT_STATUS,
@@ -90,8 +88,7 @@ SUITES: dict[str, PdaSuiteDefinition] = {
     "pda-live-simulator-menu-walk": PdaSuiteDefinition(
         name="pda-live-simulator-menu-walk",
         description=(
-            "Read-only traversal using AqualinkD's PDA simulator against "
-            "a live panel"
+            "Read-only traversal using AqualinkD's PDA simulator against a live panel"
         ),
         cases=(
             PdaCaseId.INITIALIZATION,

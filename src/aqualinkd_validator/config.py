@@ -44,13 +44,9 @@ def read_disabled_button_numbers(path: Path) -> tuple[int, ...]:
             button = _BUTTON_LABEL.fullmatch(assignment.group(1))
             if button is None:
                 continue
-            labels[int(button.group(1))] = _unquote(
-                assignment.group(2).strip()
-            )
+            labels[int(button.group(1))] = _unquote(assignment.group(2).strip())
     return tuple(
-        number
-        for number, label in sorted(labels.items())
-        if label.casefold() == "none"
+        number for number, label in sorted(labels.items()) if label.casefold() == "none"
     )
 
 
@@ -118,8 +114,7 @@ def resolve_api_base_url(
     value = requested_url or read_config_value(config_path, "listen_address")
     if value is None:
         raise ConfigurationError(
-            "No API URL was supplied and the configuration has no active "
-            "listen_address"
+            "No API URL was supplied and the configuration has no active listen_address"
         )
     return normalize_api_base_url(value)
 
@@ -130,9 +125,7 @@ def normalize_api_base_url(value: str) -> str:
     if parsed.scheme != "http" or parsed.hostname is None:
         raise ConfigurationError(f"Invalid AqualinkD API URL: {value}")
     hostname = (
-        "127.0.0.1"
-        if parsed.hostname in {"0.0.0.0", "::", "[::]"}
-        else parsed.hostname
+        "127.0.0.1" if parsed.hostname in {"0.0.0.0", "::", "[::]"} else parsed.hostname
     )
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
