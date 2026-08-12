@@ -41,6 +41,7 @@ source modules are:
 | `supervisor.py` | AqualinkD lifecycle, stdout/stderr fan-out, timing, and process metrics |
 | `interfaces/events.py` | Typed ordered-log and monotonic-timeline boundaries |
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
+| `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `pda/cases.py` | Stable case identifiers, names, and mutation policy |
 | `pda/suites.py` | Declarative ordering of cases and configuration overrides |
@@ -48,11 +49,10 @@ source modules are:
 | `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
 | `pda_simulator.py` | Client for AqualinkD's AquaPDA interface-emulation WebSocket |
 
-`pda_scenario.py` currently contains too many responsibilities. Restoration
-policy has moved into `RestorationSession`; PDA-specific command/log
-correlation is moving into `PdaProgrammerObserver`. New work should prefer
-extracting a cohesive parser, action, state model, or case module rather than
-making that class larger.
+`pda_scenario.py` still contains too many responsibilities. Restoration policy,
+equipment mutations, and PDA programmer correlation now live behind focused
+engine and protocol classes. New work should prefer extracting a cohesive
+parser, state model, or case module rather than making that coordinator larger.
 
 ## Terminology
 

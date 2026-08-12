@@ -5,7 +5,7 @@ import contextlib
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, TypeVar
@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import normalize_api_base_url
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
-from .engine import RestorationSession
+from .engine import (
+    EquipmentActionFailure,
+    EquipmentActions,
+    EquipmentActionTimeouts,
+    ProgrammerMarkers,
+    RestorationSession,
+)
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
 from .pda.cases import CASES, PdaCaseDefinition, PdaCaseId
@@ -2286,6 +2292,43 @@ class PdaLivePanelScenario:
         )
         return True
 
+    def _equipment_actions(
+        self,
+        context: ScenarioContext,
+    ) -> EquipmentActions:
+        async def wait_for_stable(
+            identifier: str,
+            phase: str,
+            initial: EquipmentSnapshot,
+            timeout_seconds: float,
+        ) -> EquipmentSnapshot:
+            return await self._wait_for_stable_equipment_snapshot(
+                context,
+                [identifier],
+                phase=phase,
+                timeout_seconds=timeout_seconds,
+                initial_snapshot=initial,
+            )
+
+        return EquipmentActions(
+            api=self._api_client,
+            events=context.monitor,
+            timeline=context.timeline,
+            programmer=self._programmer,
+            restoration=self._restoration,
+            timeouts=EquipmentActionTimeouts(
+                activation_seconds=self._config.activation_timeout_seconds,
+                completion_seconds=self._config.action_timeout_seconds,
+                convergence_seconds=self._config.state_timeout_seconds,
+                stabilization_seconds=(
+                    self._config.restoration_timeout_seconds
+                ),
+            ),
+            wait_for_stable=wait_for_stable,
+            record_measurement=self._report["measurements"].append,
+            record_skip=self._skip,
+        )
+
     async def _set_device(
         self,
         context: ScenarioContext,
@@ -2295,129 +2338,20 @@ class PdaLivePanelScenario:
         phase: str,
         state_timeout_seconds: float | None = None,
     ) -> None:
-        self._remember_device(identifier)
-        if not phase.startswith("restoration."):
-            self._restoration.forget_requested_state(identifier)
-        current_snapshot = await self._api_client.devices()
-        current_device = self._require_device(current_snapshot, identifier)
-        if self._device_transition_pending(current_device):
-            current_snapshot = await self._wait_for_stable_equipment_snapshot(
-                context,
-                [identifier],
-                phase=f"{phase}.{identifier}.precondition",
-                # A water-mode change can leave the filter in a panel-managed
-                # cooldown for several minutes.  Do not send a second toggle
-                # while that transition is pending.
-                timeout_seconds=self._config.restoration_timeout_seconds,
-                initial_snapshot=current_snapshot,
-            )
-            current_device = self._require_device(
-                current_snapshot,
-                identifier,
-            )
-        requested_state = self._requested_device_state_label(
-            current_device,
-            enabled,
-        )
-        if self._device_enabled(current_device) == enabled:
-            self._skip(
-                f"{phase}.{identifier}.{requested_state}",
-                "Device is already in the requested state",
-            )
-            return
-
-        cursor = context.monitor.cursor
-        started = context.timeline.offset_ns()
-        await context.timeline.write(
-            "scenario_action_started",
-            phase=phase,
-            action="set_device",
-            target=identifier,
-            value=enabled,
-        )
-        await self._api_client.set_device(identifier, enabled)
-        acknowledged = context.timeline.offset_ns()
-        task_name = "Switch PDA device on/off"
-        active = await self._wait_for_task_active(
-            context,
-            task_name=task_name,
-            marker=DEVICE_ACTIVE,
-            after=cursor,
-            requested_offset_ns=started,
-            timeout_seconds=self._config.activation_timeout_seconds,
-        )
-        completed = await self._wait_for_task_completion(
-            context,
-            task_name=task_name,
-            marker=DEVICE_FINISHED,
-            active=active,
-            timeout_seconds=self._config.action_timeout_seconds,
-        )
-        state_timeout = (
-            state_timeout_seconds
-            if state_timeout_seconds is not None
-            else self._config.state_timeout_seconds
-        )
-        print(
-            f"[ WAIT ] {identifier}: waiting for API state "
-            f"{requested_state} (timeout "
-            f"{state_timeout:g}s)",
-            flush=True,
-        )
         try:
-            observed = await self._wait_for_state_or_programmer_error(
-                context,
-                task_name=task_name,
-                after=active.sequence,
-                state_wait=self._wait_for_device_state(
-                    context,
-                    identifier,
-                    enabled,
-                    timeout_seconds=state_timeout,
-                ),
-            )
-        except Exception:
-            self._append_measurement(
-                name=f"{phase}.{identifier}.{requested_state}",
-                category="device",
+            await self._equipment_actions(context).set_device(
+                identifier,
+                enabled,
                 phase=phase,
-                target=identifier,
-                requested_value=enabled,
-                start_offset_ns=started,
-                api_ack_offset_ns=acknowledged,
-                task_active_offset_ns=active.offset_ns,
-                log_completion_offset_ns=completed.offset_ns,
-                state_observed_offset_ns=None,
-                status="failed",
+                markers=ProgrammerMarkers(
+                    task_name="Switch PDA device on/off",
+                    active=DEVICE_ACTIVE,
+                    completed=DEVICE_FINISHED,
+                ),
+                convergence_timeout_seconds=state_timeout_seconds,
             )
-            raise
-        state_seconds = (observed - completed.offset_ns) / 1_000_000_000
-        print(
-            f"[STATE ] {identifier} became {requested_state} "
-            f"{state_seconds:.3f}s after programmer completion",
-            flush=True,
-        )
-
-        self._append_measurement(
-            name=f"{phase}.{identifier}.{requested_state}",
-            category="device",
-            phase=phase,
-            target=identifier,
-            requested_value=enabled,
-            start_offset_ns=started,
-            api_ack_offset_ns=acknowledged,
-            task_active_offset_ns=active.offset_ns,
-            log_completion_offset_ns=completed.offset_ns,
-            state_observed_offset_ns=observed,
-        )
-        await context.timeline.write(
-            "scenario_action_finished",
-            phase=phase,
-            action="set_device",
-            target=identifier,
-            value=enabled,
-            status="passed",
-        )
+        except (EquipmentActionFailure, PdaProgrammerFailure) as error:
+            raise ScenarioFailure(str(error)) from error
 
     async def _set_setpoint(
         self,
@@ -2430,85 +2364,21 @@ class PdaLivePanelScenario:
         completion_marker: str | tuple[str, ...],
         category: str,
     ) -> None:
-        self._restoration.touch_setpoint(identifier)
-        cursor = context.monitor.cursor
-        started = context.timeline.offset_ns()
-        await context.timeline.write(
-            "scenario_action_started",
-            phase=phase,
-            action="set_setpoint",
-            target=identifier,
-            value=value,
-        )
-        await self._api_client.set_setpoint(identifier, value)
-        acknowledged = context.timeline.offset_ns()
         task_name = "Set PDA Pool Heater" if identifier == POOL_HEATER else identifier
-        active = await self._wait_for_task_active(
-            context,
-            task_name=task_name,
-            marker=active_marker,
-            after=cursor,
-            requested_offset_ns=started,
-            timeout_seconds=self._config.activation_timeout_seconds,
-        )
-        completed = await self._wait_for_task_completion(
-            context,
-            task_name=task_name,
-            marker=completion_marker,
-            active=active,
-            timeout_seconds=self._config.action_timeout_seconds,
-        )
-        print(
-            f"[ WAIT ] {identifier}: waiting for API setpoint {value} "
-            f"(timeout {self._config.state_timeout_seconds:g}s)",
-            flush=True,
-        )
         try:
-            observed = await self._wait_for_state_or_programmer_error(
-                context,
-                task_name=task_name,
-                after=active.sequence,
-                state_wait=self._wait_for_setpoint(
-                    context,
-                    identifier,
-                    value,
-                    timeout_seconds=self._config.state_timeout_seconds,
+            await self._equipment_actions(context).set_setpoint(
+                identifier,
+                value,
+                phase=phase,
+                category=category,
+                markers=ProgrammerMarkers(
+                    task_name=task_name,
+                    active=active_marker,
+                    completed=completion_marker,
                 ),
             )
-        except Exception:
-            self._append_measurement(
-                name=f"{phase}.{value}",
-                category=category,
-                phase=phase,
-                target=identifier,
-                requested_value=value,
-                start_offset_ns=started,
-                api_ack_offset_ns=acknowledged,
-                task_active_offset_ns=active.offset_ns,
-                log_completion_offset_ns=completed.offset_ns,
-                state_observed_offset_ns=None,
-                status="failed",
-            )
-            raise
-        state_seconds = (observed - completed.offset_ns) / 1_000_000_000
-        print(
-            f"[STATE ] {identifier} reached setpoint {value} "
-            f"{state_seconds:.3f}s after programmer completion",
-            flush=True,
-        )
-
-        self._append_measurement(
-            name=f"{phase}.{value}",
-            category=category,
-            phase=phase,
-            target=identifier,
-            requested_value=value,
-            start_offset_ns=started,
-            api_ack_offset_ns=acknowledged,
-            task_active_offset_ns=active.offset_ns,
-            log_completion_offset_ns=completed.offset_ns,
-            state_observed_offset_ns=observed,
-        )
+        except (EquipmentActionFailure, PdaProgrammerFailure) as error:
+            raise ScenarioFailure(str(error)) from error
 
     async def _wait_for_device_state(
         self,
@@ -2519,46 +2389,14 @@ class PdaLivePanelScenario:
         timeout_seconds: float | None = None,
     ) -> int:
         timeout = timeout_seconds or self._config.state_timeout_seconds
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            snapshot = await self._api_client.devices()
-            device = self._require_device(snapshot, identifier)
-            if (
-                not self._device_transition_pending(device)
-                and self._device_enabled(device) == enabled
-            ):
-                return context.timeline.offset_ns()
-            await asyncio.sleep(0.25)
-        requested_state = self._requested_device_state_label(device, enabled)
-        raise ScenarioFailure(
-            f"{identifier} did not become {requested_state} within {timeout:g}s"
-        )
-
-    async def _wait_for_setpoint(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        expected: int,
-        *,
-        timeout_seconds: float | None = None,
-    ) -> int:
-        timeout = timeout_seconds or self._config.state_timeout_seconds
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            snapshot = await self._api_client.devices()
-            device = self._require_device(snapshot, identifier)
-            try:
-                actual = round(float(device["spvalue"]))
-            except (KeyError, TypeError, ValueError) as error:
-                raise ScenarioFailure(
-                    f"{identifier} returned a non-numeric spvalue"
-                ) from error
-            if actual == expected:
-                return context.timeline.offset_ns()
-            await asyncio.sleep(0.25)
-        raise ScenarioFailure(
-            f"{identifier} setpoint did not become {expected} within {timeout:g}s"
-        )
+        try:
+            return await self._equipment_actions(context).wait_for_device_state(
+                identifier,
+                enabled,
+                timeout_seconds=timeout,
+            )
+        except EquipmentActionFailure as error:
+            raise ScenarioFailure(str(error)) from error
 
     async def _current_device_enabled(self, identifier: str) -> bool:
         snapshot = await self._api_client.devices()
@@ -2566,9 +2404,6 @@ class PdaLivePanelScenario:
 
     def _initial_device_enabled(self, identifier: str) -> bool:
         return self._restoration.initial_device_enabled(identifier)
-
-    def _remember_device(self, identifier: str) -> None:
-        self._restoration.touch_device(identifier)
 
     async def _restore_original_state(
         self,
@@ -2766,25 +2601,6 @@ class PdaLivePanelScenario:
             ),
         }
         self._report["measurements"].append(measurement)
-
-    async def _wait_for_state_or_programmer_error(
-        self,
-        context: ScenarioContext,
-        *,
-        task_name: str,
-        after: int,
-        state_wait: Coroutine[Any, Any, int],
-    ) -> int:
-        try:
-            return await self._programmer.wait_for_state_or_error(
-                context.monitor,
-                task_name=task_name,
-                after=after,
-                state_wait=state_wait,
-                timeout_seconds=self._config.state_timeout_seconds,
-            )
-        except PdaProgrammerFailure as error:
-            raise ScenarioFailure(str(error)) from error
 
     def _skip(self, name: str, reason: str) -> None:
         self._report["skipped"].append({"name": name, "reason": reason})
