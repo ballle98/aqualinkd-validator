@@ -7,16 +7,18 @@ intended to add serial capture and replay so timing-sensitive behavior can be
 reproduced and checked consistently.
 
 > [!IMPORTANT]
-> This project is under active development. The `doctor`, `run`, and `compare`
-> commands and the PDA live-panel hardware suites are implemented. The live
+> This project is under active development. The `doctor`, `run`, `compare`,
+> and `validate-testcase` commands and the PDA live-panel hardware suites are
+> implemented. The live
 > suites supervise AqualinkD, perform HTTP actions,
 > validate PDA state and timing, restore changed equipment state, and retain
-> diagnostic and performance artifacts. Generic YAML scenarios, isolated PTY
+> diagnostic and performance artifacts. Versioned YAML testcase loading and
+> preflight validation are available; YAML execution, isolated PTY
 > panel emulation, PCAPNG serial capture, operational RS485-log collection,
 > and legacy importers remain planned under
 > [issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1).
 
-Developer setup, test-extension rules, safety expectations, and the planned
+Developer setup, test-extension rules, safety expectations, and the
 declarative testcase format are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 The wiki contains the
 [high-level design](https://github.com/ballle98/aqualinkd-validator/wiki/High-Level-Design).
@@ -967,7 +969,9 @@ the log paths configurable per run.
    timestamps, and packet expectations.
 7. Write the versioned capture bundle, including serial PCAPNG, the combined
    JSONL timeline, and a provenance/fidelity manifest.
-8. Define and validate the YAML scenario schema.
+8. Define and validate the YAML scenario schema. **Implemented:** the schema-v1
+   typed model, strict loader, example, and hardware-free validation command;
+   execution is the next integration step.
 9. Complete the bounded panel-free feasibility test: a minimal probe/ACK
    exchange plus one HTTP action and expected serial response.
 10. Add failure artifacts, including snapshots of any enabled AqualinkD

@@ -97,8 +97,9 @@ configuration overrides.
 
 ## Declarative testcases
 
-The intended contributor-facing format is versioned YAML. It is not implemented
-yet; current executable cases remain Python. Python should continue to own
+The contributor-facing format is versioned YAML. Schema-v1 loading and complete
+preflight validation are implemented; execution is the next integration step,
+so current executable cases remain Python. Python continues to own
 transport, process supervision, monotonic timing, typed state interpretation,
 and restoration. YAML should describe test intent by composing a small set of
 reviewable keywords.
@@ -145,6 +146,13 @@ Protocol-specific behavior belongs behind typed Python keywords. Declarative
 files must not contain arbitrary Python, shell commands, regular-expression
 control flow, or unbounded loops. The loader should validate the complete file
 before starting AqualinkD and reject unknown keys.
+
+Validate one or more files without starting AqualinkD or touching hardware:
+
+```console
+.venv/bin/aqualinkd-validator validate-testcase \
+  testcases/pda/filter-after-init.yaml
+```
 
 This design lets a contributor clone the repository and edit a testcase
 without understanding `asyncio`, while keeping hazardous operations and cleanup

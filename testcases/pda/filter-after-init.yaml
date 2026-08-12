@@ -1,0 +1,24 @@
+schema: 1
+id: pda.filter-after-init
+description: Toggle the filter pump after PDA initialization
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - set_device:
+      id: Filter_Pump
+      state: opposite-of-original
+      activation_timeout: 130s
+      completion_timeout: 90s
+      convergence_timeout: 10s
+  - assert_device:
+      id: Filter_Pump
+      state: requested
+      timeout: 10s
+finally:
+  - restore_original_state:
+      timeout: 300s

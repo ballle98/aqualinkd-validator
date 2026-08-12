@@ -9,6 +9,9 @@ LABEL org.opencontainers.image.revision="${VCS_REF}"
 
 WORKDIR /opt/aqualinkd-validator
 
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir --requirement requirements.txt
+
 COPY src ./src
 
 ENV PYTHONPATH=/opt/aqualinkd-validator/src

@@ -38,6 +38,7 @@ from .pda.cases import PdaCaseId
 from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
 from .suites import SUITES, SuiteProfile, get_suite
 from .supervisor import supervise
+from .testcases import load_testcase
 
 DEVICE_SELECTION_CASES = frozenset(
     {
@@ -63,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("artifact_dirs", nargs="+", type=Path)
     compare.add_argument("--json", action="store_true", dest="as_json")
+
+    validate = subparsers.add_parser(
+        "validate-testcase",
+        help="Validate declarative testcase YAML without starting AqualinkD",
+    )
+    validate.add_argument("paths", nargs="+", type=Path, metavar="TESTCASE")
 
     run = subparsers.add_parser(
         "run",
@@ -227,6 +234,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _doctor(args.as_json)
         elif args.command == "compare":
             exit_code = _compare(args.artifact_dirs, args.as_json)
+        elif args.command == "validate-testcase":
+            exit_code = _validate_testcases(args.paths)
         elif args.command == "run":
             exit_code = _run(args)
         else:
@@ -269,6 +278,16 @@ def _compare(artifact_dirs: list[Path], as_json: bool) -> int:
         print(json.dumps(comparison, indent=2, sort_keys=True))
     else:
         print(format_comparison(comparison))
+    return 0
+
+
+def _validate_testcases(paths: list[Path]) -> int:
+    for path in paths:
+        testcase = load_testcase(path)
+        print(
+            f"Valid: {path} ({testcase.identifier}, "
+            f"{len(testcase.steps)} step(s))"
+        )
     return 0
 
 
