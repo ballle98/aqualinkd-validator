@@ -18,10 +18,17 @@ from .model import (
     TestcaseDefinition,
     TestcaseRequirements,
     TestcaseStep,
+    TestcaseSuiteConfig,
+    TestcaseSuiteDefinition,
+    TestcaseSuiteMember,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
-from .yaml_loader import TestcaseValidationError, load_testcase
+from .yaml_loader import (
+    TestcaseValidationError,
+    load_testcase,
+    load_testcase_suite,
+)
 
 __all__ = [
     "AssertDeviceStep",
@@ -33,6 +40,9 @@ __all__ = [
     "SetSetpointStep",
     "StepExecution",
     "TestcaseDefinition",
+    "TestcaseSuiteConfig",
+    "TestcaseSuiteDefinition",
+    "TestcaseSuiteMember",
     "TestcaseExecution",
     "TestcaseExecutionFailure",
     "TestcaseExecutor",
@@ -43,4 +53,5 @@ __all__ = [
     "WaitForStableEquipmentStep",
     "WaitForStep",
     "load_testcase",
+    "load_testcase_suite",
 ]

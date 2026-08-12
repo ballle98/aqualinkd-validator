@@ -1,0 +1,18 @@
+schema: 1
+kind: suite
+id: pda-live-fast
+description: Fast PDA regression tests against a live RS485 panel
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: no
+  execution_role: awake
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/filter-after-init.yaml
+  - ../pda/pool-heater.yaml

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, TypeAlias
 
 TestcaseMode: TypeAlias = Literal["physical-panel", "rs485-panel-emulator"]
@@ -117,3 +118,35 @@ class TestcaseDefinition:
     requirements: TestcaseRequirements
     steps: tuple[TestcaseStep, ...]
     finally_steps: tuple[TestcaseStep, ...]
+
+
+@dataclass(frozen=True)
+class TestcaseSuiteConfig:
+    aqualinkd_args: tuple[str, ...]
+    overrides: tuple[tuple[str, str], ...]
+    execution_role: Literal["single", "awake", "sleep"]
+
+    def override_map(self) -> dict[str, str]:
+        return dict(self.overrides)
+
+
+@dataclass(frozen=True)
+class TestcaseSuiteMember:
+    source: Path
+    testcase: TestcaseDefinition
+
+
+@dataclass(frozen=True)
+class TestcaseSuiteDefinition:
+    schema: int
+    identifier: str
+    description: str
+    mode: TestcaseMode
+    access: TestcaseAccess
+    requirements: TestcaseRequirements
+    config: TestcaseSuiteConfig
+    members: tuple[TestcaseSuiteMember, ...]
+
+    @property
+    def mutates_panel(self) -> bool:
+        return any(member.testcase.access == "read-write" for member in self.members)

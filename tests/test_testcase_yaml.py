@@ -14,16 +14,14 @@ from aqualinkd_validator.testcases import (
     TestcaseValidationError,
     WaitForStep,
     load_testcase,
+    load_testcase_suite,
 )
 
 
 class TestcaseYamlTests(unittest.TestCase):
     def test_cli_validates_without_starting_aqualinkd(self) -> None:
         path = (
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "filter-after-init.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
         output = StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as result:
@@ -33,10 +31,7 @@ class TestcaseYamlTests(unittest.TestCase):
 
     def test_loads_versioned_testcase_into_typed_steps(self) -> None:
         testcase = load_testcase(
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "filter-after-init.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
 
         self.assertEqual(testcase.schema, 1)
@@ -52,16 +47,71 @@ class TestcaseYamlTests(unittest.TestCase):
 
     def test_loads_optional_heater_policy_as_typed_step(self) -> None:
         testcase = load_testcase(
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "pool-heater.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "pool-heater.yaml"
         )
         heater = testcase.steps[1]
         self.assertIsInstance(heater, ExerciseHeaterStep)
         assert isinstance(heater, ExerciseHeaterStep)
         self.assertTrue(heater.optional)
         self.assertEqual(heater.identifier, "Pool_Heater")
+
+    def test_loads_and_validates_complete_suite_graph(self) -> None:
+        suite = load_testcase_suite(
+            Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-fast.yaml"
+        )
+
+        self.assertEqual(suite.identifier, "pda-live-fast")
+        self.assertEqual(suite.config.execution_role, "awake")
+        self.assertEqual(suite.config.override_map(), {"pda_sleep_mode": "no"})
+        self.assertEqual(
+            [member.testcase.identifier for member in suite.members],
+            ["pda.initialization", "pda.filter-after-init", "pda.pool-heater"],
+        )
+        self.assertTrue(suite.mutates_panel)
+
+    def test_suite_rejects_member_access_above_suite_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            testcase = root / "mutating.yaml"
+            testcase.write_text(
+                """
+schema: 1
+id: pda.mutating
+description: Mutating member
+mode: physical-panel
+access: read-write
+requires: {protocol: pda}
+steps:
+  - set_device:
+      id: Filter_Pump
+      state: on
+      activation_timeout: 10s
+      completion_timeout: 10s
+finally:
+  - restore_original_state: {}
+""",
+                encoding="utf-8",
+            )
+            suite = root / "suite.yaml"
+            suite.write_text(
+                """
+schema: 1
+kind: suite
+id: pda.read-only
+description: Unsafe suite access
+mode: physical-panel
+access: read-only
+requires: {protocol: pda}
+config: {}
+testcases: [mutating.yaml]
+""",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                TestcaseValidationError,
+                "requires read-write suite access",
+            ):
+                load_testcase_suite(suite)
 
     def test_rejects_unknown_keys_with_location(self) -> None:
         error = self._load_error(

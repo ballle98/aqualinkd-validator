@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TypeAlias, cast
+from typing import Literal, TypeAlias, cast
 
 import yaml  # type: ignore[import-untyped]
 
@@ -22,6 +22,9 @@ from .model import (
     TestcaseProtocol,
     TestcaseRequirements,
     TestcaseStep,
+    TestcaseSuiteConfig,
+    TestcaseSuiteDefinition,
+    TestcaseSuiteMember,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
@@ -49,11 +52,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):  # type: ignore[misc]
 # Testcases use those words as device states, so retain booleans only for the
 # YAML 1.2 spellings ``true`` and ``false``.
 _UniqueKeyLoader.yaml_implicit_resolvers = {
-    key: [
-        resolver
-        for resolver in resolvers
-        if resolver[0] != "tag:yaml.org,2002:bool"
-    ]
+    key: [resolver for resolver in resolvers if resolver[0] != "tag:yaml.org,2002:bool"]
     for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 _UniqueKeyLoader.add_implicit_resolver(
@@ -94,13 +93,121 @@ StepParser: TypeAlias = Callable[[Mapping[str, object], str], TestcaseStep]
 def load_testcase(path: Path) -> TestcaseDefinition:
     """Load and completely validate one schema-v1 YAML testcase."""
 
+    raw = _load_yaml(path)
+    return parse_testcase(raw, source=str(path))
+
+
+def load_testcase_suite(path: Path) -> TestcaseSuiteDefinition:
+    """Load a suite and validate its complete referenced testcase graph."""
+
+    raw = _load_yaml(path)
+    source = str(path)
+    document = _mapping(raw, source)
+    _keys(
+        document,
+        source,
+        required={
+            "schema",
+            "kind",
+            "id",
+            "description",
+            "mode",
+            "access",
+            "requires",
+            "config",
+            "testcases",
+        },
+    )
+    schema = _integer(document["schema"], f"{source}.schema")
+    if schema != 1:
+        raise TestcaseValidationError(
+            f"{source}.schema: unsupported schema {schema}; expected 1"
+        )
+    if _string(document["kind"], f"{source}.kind") != "suite":
+        raise TestcaseValidationError(f"{source}.kind: expected 'suite'")
+    identifier = _validated_identifier(document["id"], f"{source}.id")
+    mode = cast(
+        TestcaseMode,
+        _choice(
+            document["mode"],
+            f"{source}.mode",
+            {"physical-panel", "rs485-panel-emulator"},
+        ),
+    )
+    access = cast(
+        TestcaseAccess,
+        _choice(
+            document["access"],
+            f"{source}.access",
+            {"read-only", "read-write"},
+        ),
+    )
+    requirements = _requirements(document["requires"], f"{source}.requires")
+    config = _suite_config(document["config"], f"{source}.config")
+    raw_members = document["testcases"]
+    if not isinstance(raw_members, list) or not raw_members:
+        raise TestcaseValidationError(f"{source}.testcases: expected a non-empty list")
+    members: list[TestcaseSuiteMember] = []
+    member_ids: set[str] = set()
+    member_paths: set[Path] = set()
+    for index, raw_member in enumerate(raw_members):
+        member_path_text = _string(
+            raw_member,
+            f"{source}.testcases[{index}]",
+        )
+        member_path = (path.parent / member_path_text).resolve()
+        if member_path in member_paths:
+            raise TestcaseValidationError(
+                f"{source}.testcases[{index}]: duplicate testcase path "
+                f"{member_path_text!r}"
+            )
+        member_paths.add(member_path)
+        testcase = load_testcase(member_path)
+        if testcase.identifier in member_ids:
+            raise TestcaseValidationError(
+                f"{source}.testcases[{index}]: duplicate testcase id "
+                f"{testcase.identifier!r}"
+            )
+        member_ids.add(testcase.identifier)
+        if testcase.mode != mode:
+            raise TestcaseValidationError(
+                f"{source}.testcases[{index}]: {testcase.identifier} uses mode "
+                f"{testcase.mode!r}, expected {mode!r}"
+            )
+        if testcase.requirements.protocol != requirements.protocol:
+            raise TestcaseValidationError(
+                f"{source}.testcases[{index}]: {testcase.identifier} uses "
+                f"protocol {testcase.requirements.protocol!r}, expected "
+                f"{requirements.protocol!r}"
+            )
+        if testcase.access == "read-write" and access != "read-write":
+            raise TestcaseValidationError(
+                f"{source}.access: read-write testcase "
+                f"{testcase.identifier!r} requires read-write suite access"
+            )
+        members.append(TestcaseSuiteMember(member_path, testcase))
+    return TestcaseSuiteDefinition(
+        schema=schema,
+        identifier=identifier,
+        description=_string(document["description"], f"{source}.description"),
+        mode=mode,
+        access=access,
+        requirements=requirements,
+        config=config,
+        members=tuple(members),
+    )
+
+
+def _load_yaml(path: Path) -> object:
     try:
-        raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+        return yaml.load(
+            path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeyLoader,
+        )
     except OSError as error:
         raise TestcaseValidationError(f"cannot read {path}: {error}") from error
     except yaml.YAMLError as error:
         raise TestcaseValidationError(f"invalid YAML in {path}: {error}") from error
-    return parse_testcase(raw, source=str(path))
 
 
 def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefinition:
@@ -116,11 +223,7 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         raise TestcaseValidationError(
             f"{source}.schema: unsupported schema {schema}; expected 1"
         )
-    identifier = _string(document["id"], f"{source}.id")
-    if not _IDENTIFIER.fullmatch(identifier):
-        raise TestcaseValidationError(
-            f"{source}.id: use lowercase letters, numbers, '.', '_' or '-'"
-        )
+    identifier = _validated_identifier(document["id"], f"{source}.id")
     mode_value = _choice(
         document["mode"],
         f"{source}.mode",
@@ -176,6 +279,55 @@ def _requirements(raw: object, path: str) -> TestcaseRequirements:
     return TestcaseRequirements(protocol=cast(TestcaseProtocol, protocol))
 
 
+def _suite_config(raw: object, path: str) -> TestcaseSuiteConfig:
+    value = _mapping(raw, path)
+    _keys(
+        value,
+        path,
+        required=set(),
+        optional={"aqualinkd_args", "overrides", "execution_role"},
+    )
+    raw_args = value.get("aqualinkd_args", ["-vv"])
+    if not isinstance(raw_args, list):
+        raise TestcaseValidationError(f"{path}.aqualinkd_args: expected a list")
+    arguments = tuple(
+        _string(argument, f"{path}.aqualinkd_args[{index}]")
+        for index, argument in enumerate(raw_args)
+    )
+    unsupported = [argument for argument in arguments if argument not in {"-v", "-vv"}]
+    if unsupported:
+        raise TestcaseValidationError(
+            f"{path}.aqualinkd_args: unsupported argument(s): " + ", ".join(unsupported)
+        )
+    raw_overrides = _mapping(value.get("overrides", {}), f"{path}.overrides")
+    overrides: list[tuple[str, str]] = []
+    for key, raw_value in raw_overrides.items():
+        if not isinstance(key, str) or not _IDENTIFIER.fullmatch(key):
+            raise TestcaseValidationError(
+                f"{path}.overrides: invalid configuration key {key!r}"
+            )
+        overrides.append((key, _string(raw_value, f"{path}.overrides.{key}")))
+    execution_role = _choice(
+        value.get("execution_role", "single"),
+        f"{path}.execution_role",
+        {"single", "awake", "sleep"},
+    )
+    return TestcaseSuiteConfig(
+        aqualinkd_args=arguments,
+        overrides=tuple(overrides),
+        execution_role=cast(Literal["single", "awake", "sleep"], execution_role),
+    )
+
+
+def _validated_identifier(raw: object, path: str) -> str:
+    identifier = _string(raw, path)
+    if not _IDENTIFIER.fullmatch(identifier):
+        raise TestcaseValidationError(
+            f"{path}: use lowercase letters, numbers, '.', '_' or '-'"
+        )
+    return identifier
+
+
 def _steps(raw: object, path: str) -> tuple[TestcaseStep, ...]:
     if not isinstance(raw, list):
         raise TestcaseValidationError(f"{path}: expected a list")
@@ -184,14 +336,10 @@ def _steps(raw: object, path: str) -> tuple[TestcaseStep, ...]:
         step_path = f"{path}[{index}]"
         step = _mapping(raw_step, step_path)
         if len(step) != 1:
-            raise TestcaseValidationError(
-                f"{step_path}: expected exactly one keyword"
-            )
+            raise TestcaseValidationError(f"{step_path}: expected exactly one keyword")
         keyword, arguments = next(iter(step.items()))
         if not isinstance(keyword, str) or keyword not in _STEP_PARSERS:
-            raise TestcaseValidationError(
-                f"{step_path}: unknown keyword {keyword!r}"
-            )
+            raise TestcaseValidationError(f"{step_path}: unknown keyword {keyword!r}")
         parsed.append(
             _STEP_PARSERS[keyword](
                 _mapping(arguments, f"{step_path}.{keyword}"),
@@ -313,9 +461,7 @@ def _assert_no_log(value: Mapping[str, object], path: str) -> TestcaseStep:
     contains = _optional_string(value.get("contains"), f"{path}.contains")
     level = _optional_string(value.get("level"), f"{path}.level")
     if contains is None and level is None:
-        raise TestcaseValidationError(
-            f"{path}: either contains or level is required"
-        )
+        raise TestcaseValidationError(f"{path}: either contains or level is required")
     return AssertNoLogStep(
         contains,
         level,

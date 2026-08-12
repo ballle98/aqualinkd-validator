@@ -1,0 +1,11 @@
+schema: 1
+id: pda.initialization
+description: Initialize PDA and verify panel identity and clock
+mode: physical-panel
+access: read-only
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
