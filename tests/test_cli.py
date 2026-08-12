@@ -228,9 +228,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(read_config_value(config, "pda_sleep_mode"), "no")
 
     def test_run_uses_installed_paths_and_tmp_artifacts_by_default(self) -> None:
-        args = build_parser().parse_args(
-            ["run", "--panel-read-write", "pda-live-fast"]
-        )
+        args = build_parser().parse_args(["run", "--panel-read-write", "pda-live-fast"])
         self.assertEqual(args.aqualinkd, Path("/usr/local/bin/aqualinkd"))
         self.assertEqual(args.config, Path("/etc/aqualinkd.conf"))
         self.assertIsNone(args.serial_device)
@@ -243,23 +241,16 @@ class CliTests(unittest.TestCase):
     def test_run_rejects_unknown_positional_suite(self) -> None:
         stderr = io.StringIO()
         with redirect_stderr(stderr), self.assertRaises(SystemExit) as context:
-            build_parser().parse_args(
-                ["run", "--panel-read-write", "not-a-suite"]
-            )
+            build_parser().parse_args(["run", "--panel-read-write", "not-a-suite"])
 
         self.assertEqual(context.exception.code, 2)
         self.assertIn("unknown run target 'not-a-suite'", stderr.getvalue())
 
     def test_run_accepts_yaml_testcase_as_positional_target(self) -> None:
         testcase = (
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "filter-after-init.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
-        args = build_parser().parse_args(
-            ["run", "--panel-read-write", str(testcase)]
-        )
+        args = build_parser().parse_args(["run", "--panel-read-write", str(testcase)])
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
@@ -273,14 +264,9 @@ class CliTests(unittest.TestCase):
 
     def test_run_accepts_yaml_suite_as_positional_target(self) -> None:
         suite = (
-            Path(__file__).parents[1]
-            / "testcases"
-            / "suites"
-            / "pda-live-fast.yaml"
+            Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-fast.yaml"
         )
-        args = build_parser().parse_args(
-            ["run", "--panel-read-write", str(suite)]
-        )
+        args = build_parser().parse_args(["run", "--panel-read-write", str(suite)])
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
@@ -294,9 +280,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(observed, ["pda-live-fast"])
 
     def test_named_fast_suite_resolves_to_declarative_suite(self) -> None:
-        args = build_parser().parse_args(
-            ["run", "--panel-read-write", "pda-live-fast"]
-        )
+        args = build_parser().parse_args(["run", "--panel-read-write", "pda-live-fast"])
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
@@ -309,16 +293,37 @@ class CliTests(unittest.TestCase):
             self.assertEqual(_run(args), 0)
         self.assertEqual(observed, ["pda-live-fast"])
 
+    def test_named_awake_suite_resolves_to_declarative_suite(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--panel-read-write",
+                "--pda-test-device",
+                "Aux_1",
+                "pda-live-awake",
+            ]
+        )
+        observed: list[tuple[str, list[str]]] = []
+
+        def record_target(target_args: argparse.Namespace) -> int:
+            observed.append(
+                (
+                    target_args.testcase_suite.identifier,
+                    target_args.pda_test_device,
+                )
+            )
+            self.assertIsNone(target_args.suite)
+            return 0
+
+        with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
+            self.assertEqual(_run(args), 0)
+        self.assertEqual(observed, [("pda-live-awake", ["Aux_1"])])
+
     def test_mutating_yaml_testcase_requires_panel_write(self) -> None:
         testcase = (
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "filter-after-init.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
-        args = build_parser().parse_args(
-            ["run", "--panel-read-only", str(testcase)]
-        )
+        args = build_parser().parse_args(["run", "--panel-read-only", str(testcase)])
         with self.assertRaisesRegex(ConfigurationError, "--panel-read-write"):
             _run(args)
 
@@ -362,9 +367,7 @@ class CliTests(unittest.TestCase):
             config.write_text("serial_port=/dev/null\n", encoding="utf-8")
 
             stderr = io.StringIO()
-            with redirect_stderr(stderr), self.assertRaises(
-                SystemExit
-            ) as exit_context:
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as exit_context:
                 main(
                     [
                         "run",
@@ -406,15 +409,12 @@ class CliTests(unittest.TestCase):
             mock.chmod(0o755)
             config = root / "aqualinkd.conf"
             config.write_text(
-                "serial_port=/dev/null\n"
-                "listen_address=http://0.0.0.0:80\n",
+                "serial_port=/dev/null\nlisten_address=http://0.0.0.0:80\n",
                 encoding="utf-8",
             )
 
             stderr = io.StringIO()
-            with redirect_stderr(stderr), self.assertRaises(
-                SystemExit
-            ) as exit_context:
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as exit_context:
                 main(
                     [
                         "run",
@@ -528,15 +528,12 @@ class CliTests(unittest.TestCase):
             mock.chmod(0o755)
             config = root / "aqualinkd.conf"
             config.write_text(
-                "serial_port=/dev/null\n"
-                "listen_address=http://0.0.0.0:80\n",
+                "serial_port=/dev/null\nlisten_address=http://0.0.0.0:80\n",
                 encoding="utf-8",
             )
 
             stderr = io.StringIO()
-            with redirect_stderr(stderr), self.assertRaises(
-                SystemExit
-            ) as exit_context:
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as exit_context:
                 main(
                     [
                         "run",

@@ -73,6 +73,7 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertIsInstance(status.steps[1], VerifyEquipmentStatusStep)
         self.assertIsInstance(consecutive.steps[1], ExerciseDiscoveredDevicesStep)
         self.assertEqual(status.steps[1].timeout_seconds, 600)
+        self.assertEqual(status.finally_steps[0].timeout_seconds, 420)
 
     def test_loads_and_validates_complete_suite_graph(self) -> None:
         suite = load_testcase_suite(
@@ -87,6 +88,12 @@ class TestcaseYamlTests(unittest.TestCase):
             ["pda.initialization", "pda.filter-after-init", "pda.pool-heater"],
         )
         self.assertTrue(suite.mutates_panel)
+
+        awake = load_testcase_suite(
+            Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-awake.yaml"
+        )
+        self.assertEqual(len(awake.members), 5)
+        self.assertTrue(awake.exercises_discovered_devices)
 
     def test_suite_rejects_member_access_above_suite_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

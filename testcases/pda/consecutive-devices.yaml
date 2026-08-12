@@ -13,4 +13,4 @@ steps:
       timeout: 600s
 finally:
   - restore_original_state:
-      timeout: 300s
+      timeout: 420s

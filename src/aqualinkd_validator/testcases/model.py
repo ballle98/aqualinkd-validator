@@ -164,3 +164,13 @@ class TestcaseSuiteDefinition:
     @property
     def mutates_panel(self) -> bool:
         return any(member.testcase.access == "read-write" for member in self.members)
+
+    @property
+    def exercises_discovered_devices(self) -> bool:
+        return any(
+            any(
+                isinstance(step, ExerciseDiscoveredDevicesStep)
+                for step in member.testcase.steps
+            )
+            for member in self.members
+        )

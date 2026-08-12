@@ -55,6 +55,9 @@ _BUILTIN_DECLARATIVE_SUITES = {
     "pda-live-fast": (
         Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-fast.yaml"
     ),
+    "pda-live-awake": (
+        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-awake.yaml"
+    ),
 }
 _RUN_SUITE_NAMES = tuple((*_BUILTIN_DECLARATIVE_SUITES, *SUITES))
 
@@ -234,9 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--panel-timezone",
-        help=(
-            "Override the local IANA timezone used to validate the panel clock"
-        ),
+        help=("Override the local IANA timezone used to validate the panel clock"),
     )
     run.add_argument(
         "--panel-time-tolerance",
@@ -319,8 +320,7 @@ def _validate_testcases(paths: list[Path]) -> int:
             )
         else:
             print(
-                f"Valid: {path} ({document.identifier}, "
-                f"{len(document.steps)} step(s))"
+                f"Valid: {path} ({document.identifier}, {len(document.steps)} step(s))"
             )
     return 0
 
@@ -443,19 +443,21 @@ def _run(args: argparse.Namespace) -> int:
             + ", ".join(mutating_targets)
         )
     if args.pda_test_device and not any(
-        any(
-            _suite_contains_case(name, case_id)
-            for case_id in DEVICE_SELECTION_CASES
+        (
+            target.testcase_suite is not None
+            and target.testcase_suite.exercises_discovered_devices
+        )
+        or (
+            target.legacy_suite_name is not None
+            and any(
+                _suite_contains_case(target.legacy_suite_name, case_id)
+                for case_id in DEVICE_SELECTION_CASES
+            )
         )
         for target in targets
-        if target.testcase is None
-        and target.testcase_suite is None
-        and target.legacy_suite_name is not None
-        for name in (target.legacy_suite_name,)
     ):
         raise ConfigurationError(
-            "--pda-test-device requires a suite containing device-focused "
-            "validation"
+            "--pda-test-device requires a suite containing device-focused validation"
         )
     if args.panel_timezone is None:
         args.panel_timezone = _local_timezone_name()
@@ -503,9 +505,7 @@ def _run_declarative_suite(
     overrides = suite.config.override_map()
     if not overrides:
         return _run_process(args)
-    with tempfile.TemporaryDirectory(
-        prefix="aqualinkd-validator-config-"
-    ) as directory:
+    with tempfile.TemporaryDirectory(prefix="aqualinkd-validator-config-") as directory:
         derived_config = Path(directory) / f"{suite.identifier}.conf"
         write_config_with_overrides(source_config, derived_config, overrides)
         process_args = copy.copy(args)
@@ -571,9 +571,7 @@ def _run_process_suite(args: argparse.Namespace) -> int:
     assert suite is not None and not suite.is_composite
     source_config = args.config.expanduser().resolve(strict=True)
     overrides = suite.override_map()
-    with tempfile.TemporaryDirectory(
-        prefix="aqualinkd-validator-config-"
-    ) as directory:
+    with tempfile.TemporaryDirectory(prefix="aqualinkd-validator-config-") as directory:
         runtime_dir = Path(directory)
         derived_config = runtime_dir / f"{suite.name}.conf"
         write_config_with_overrides(
@@ -620,9 +618,7 @@ def _run_process(args: argparse.Namespace) -> int:
     binary = args.aqualinkd.expanduser().resolve(strict=True)
     config = args.config.expanduser().resolve(strict=True)
     source_config = getattr(args, "source_config", config)
-    config_overrides: dict[str, str] = getattr(
-        args, "config_overrides", {}
-    )
+    config_overrides: dict[str, str] = getattr(args, "config_overrides", {})
     disabled_button_numbers = read_disabled_button_numbers(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
     source_tree = (
@@ -661,8 +657,14 @@ def _run_process(args: argparse.Namespace) -> int:
             target_name = testcase.identifier
         suite_test_devices = (
             args.pda_test_device
-            if suite is not None
-            and any(case_id in suite.cases for case_id in DEVICE_SELECTION_CASES)
+            if (
+                suite is not None
+                and any(case_id in suite.cases for case_id in DEVICE_SELECTION_CASES)
+            )
+            or (
+                testcase_suite is not None
+                and testcase_suite.exercises_discovered_devices
+            )
             else []
         )
         api_base_url = (
@@ -704,11 +706,12 @@ def _run_process(args: argparse.Namespace) -> int:
         )
     artifact_dir = _new_artifact_dir(args.artifacts, args.label)
     args.last_artifact_dir = artifact_dir
-    with (artifact_dir / "summary.log").open(
-        "w",
-        encoding="utf-8",
-    ) as summary_handle, contextlib.redirect_stdout(
-        _TeeTextIO(sys.stdout, summary_handle)
+    with (
+        (artifact_dir / "summary.log").open(
+            "w",
+            encoding="utf-8",
+        ) as summary_handle,
+        contextlib.redirect_stdout(_TeeTextIO(sys.stdout, summary_handle)),
     ):
         return _run_in_artifact(
             args,
@@ -824,15 +827,8 @@ def _run_in_artifact(
             "configured_none_buttons": list(disabled_button_numbers),
             "pda_device_selection": (
                 "not_applicable"
-                if (
-                    suite is None
-                    or PdaCaseId.CONSECUTIVE_DEVICES not in suite.cases
-                )
-                else (
-                    "restricted"
-                    if suite_test_devices
-                    else "all_discovered_switches"
-                )
+                if (suite is None or PdaCaseId.CONSECUTIVE_DEVICES not in suite.cases)
+                else ("restricted" if suite_test_devices else "all_discovered_switches")
             ),
             "panel_time": {
                 "timezone": args.panel_timezone,
@@ -931,26 +927,24 @@ def _run_in_artifact(
     }
     scenario_path = artifact_dir / "scenario.json"
     if scenario_path.exists():
-        scenario_data = json.loads(
-            scenario_path.read_text(encoding="utf-8")
-        )
+        scenario_data = json.loads(scenario_path.read_text(encoding="utf-8"))
         args.last_run_safe_to_continue = bool(
             scenario_data.get("safe_to_continue", False)
         )
         performance["scenario"] = scenario_data
         scenario_aqualinkd = scenario_data.get("aqualinkd")
         if isinstance(scenario_aqualinkd, dict):
-            manifest["aqualinkd"]["reported_version"] = (
-                scenario_aqualinkd.get("version")
+            manifest["aqualinkd"]["reported_version"] = scenario_aqualinkd.get(
+                "version"
             )
-            manifest["aqualinkd"]["configured_panel_type"] = (
-                scenario_aqualinkd.get("configured_panel_type")
+            manifest["aqualinkd"]["configured_panel_type"] = scenario_aqualinkd.get(
+                "configured_panel_type"
             )
         manifest["equipment_control"]["api_base_url"] = scenario_data.get(
             "api_base_url"
         )
-        manifest["equipment_control"]["api_endpoint_source"] = (
-            scenario_data.get("api_endpoint_source")
+        manifest["equipment_control"]["api_endpoint_source"] = scenario_data.get(
+            "api_endpoint_source"
         )
         _write_json(artifact_dir / "manifest.yaml", manifest)
     _write_json(artifact_dir / "performance.json", performance)
