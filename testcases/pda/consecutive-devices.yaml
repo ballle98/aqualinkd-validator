@@ -1,0 +1,16 @@
+schema: 1
+id: pda.consecutive-devices
+description: Exercise discovered equipment consecutively
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - exercise_discovered_devices:
+      timeout: 600s
+finally:
+  - restore_original_state:
+      timeout: 300s

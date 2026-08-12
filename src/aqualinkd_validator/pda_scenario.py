@@ -522,6 +522,8 @@ class PdaLivePanelScenario:
             initialize=lambda: self._initialize(context),
             wait_for_stable=wait_for_stable,
             restore=restore,
+            verify_status=lambda: self._test_with_status_menu(context),
+            exercise_devices=lambda: self._test_consecutive_devices(context),
             record_skip=self._skip,
             phase_prefix=f"testcase.{testcase_id}",
         )

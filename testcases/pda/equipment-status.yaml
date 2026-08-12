@@ -1,0 +1,16 @@
+schema: 1
+id: pda.equipment-status
+description: Verify a complete multi-page EQUIPMENT STATUS reconciliation
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - verify_equipment_status:
+      timeout: 600s
+finally:
+  - restore_original_state:
+      timeout: 300s

@@ -12,6 +12,7 @@ from .model import (
     AssertLogStep,
     AssertNoLogStep,
     DeviceTargetState,
+    ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
@@ -25,6 +26,7 @@ from .model import (
     TestcaseSuiteConfig,
     TestcaseSuiteDefinition,
     TestcaseSuiteMember,
+    VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
@@ -265,7 +267,16 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
             f"{source}.finally: only restore_original_state is allowed"
         )
     mutates = any(
-        isinstance(step, (SetDeviceStep, SetSetpointStep, ExerciseHeaterStep))
+        isinstance(
+            step,
+            (
+                SetDeviceStep,
+                SetSetpointStep,
+                ExerciseHeaterStep,
+                VerifyEquipmentStatusStep,
+                ExerciseDiscoveredDevicesStep,
+            ),
+        )
         for step in steps
     )
     if mutates and access_value != "read-write":
@@ -511,6 +522,18 @@ def _restore(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _verify_equipment_status(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return VerifyEquipmentStatusStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
+def _exercise_discovered_devices(
+    value: Mapping[str, object], path: str
+) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ExerciseDiscoveredDevicesStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
 _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "set_device": _set_device,
@@ -521,6 +544,8 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "assert_no_log": _assert_no_log,
     "wait_for_stable_equipment": _wait_for_stable,
     "restore_original_state": _restore,
+    "verify_equipment_status": _verify_equipment_status,
+    "exercise_discovered_devices": _exercise_discovered_devices,
 }
 
 

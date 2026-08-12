@@ -95,6 +95,18 @@ class RestoreOriginalStateStep:
     keyword: str = "restore_original_state"
 
 
+@dataclass(frozen=True)
+class VerifyEquipmentStatusStep:
+    timeout_seconds: float
+    keyword: str = "verify_equipment_status"
+
+
+@dataclass(frozen=True)
+class ExerciseDiscoveredDevicesStep:
+    timeout_seconds: float
+    keyword: str = "exercise_discovered_devices"
+
+
 TestcaseStep: TypeAlias = (
     WaitForStep
     | SetDeviceStep
@@ -105,6 +117,8 @@ TestcaseStep: TypeAlias = (
     | AssertNoLogStep
     | WaitForStableEquipmentStep
     | RestoreOriginalStateStep
+    | VerifyEquipmentStatusStep
+    | ExerciseDiscoveredDevicesStep
 )
 
 

@@ -13,19 +13,20 @@ from ...testcases.model import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
+    VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
 
 InitializePda = Callable[[], Awaitable[None]]
-StableEquipmentWaiter = Callable[
-    [tuple[str, ...], float], Awaitable[EquipmentSnapshot]
-]
+StableEquipmentWaiter = Callable[[tuple[str, ...], float], Awaitable[EquipmentSnapshot]]
 RestoreEquipment = Callable[[float], Awaitable[None]]
+ComplexPdaOperation = Callable[[], Awaitable[None]]
 SkipRecorder = Callable[[str, str], None]
 
 
@@ -90,6 +91,8 @@ class PdaTestcaseKeywords:
         initialize: InitializePda,
         wait_for_stable: StableEquipmentWaiter,
         restore: RestoreEquipment,
+        verify_status: ComplexPdaOperation | None = None,
+        exercise_devices: ComplexPdaOperation | None = None,
         record_skip: SkipRecorder = lambda name, reason: None,
         phase_prefix: str = "testcase",
     ) -> None:
@@ -100,6 +103,8 @@ class PdaTestcaseKeywords:
         self._initialize = initialize
         self._wait_for_stable = wait_for_stable
         self._restore = restore
+        self._verify_status = verify_status
+        self._exercise_devices = exercise_devices
         self._record_skip = record_skip
         self._phase_prefix = phase_prefix
         self._initialized = restoration.initial_snapshot is not None
@@ -108,9 +113,7 @@ class PdaTestcaseKeywords:
 
     async def wait_for(self, step: WaitForStep) -> None:
         if step.condition != "pda.initialized":
-            raise PdaKeywordFailure(
-                f"unsupported PDA condition {step.condition!r}"
-            )
+            raise PdaKeywordFailure(f"unsupported PDA condition {step.condition!r}")
         if self._initialized:
             return
         try:
@@ -118,8 +121,7 @@ class PdaTestcaseKeywords:
                 await self._initialize()
         except TimeoutError as error:
             raise PdaKeywordFailure(
-                f"PDA initialization did not complete within "
-                f"{step.timeout_seconds:g}s"
+                f"PDA initialization did not complete within {step.timeout_seconds:g}s"
             ) from error
         if self._restoration.initial_snapshot is None:
             raise PdaKeywordFailure(
@@ -299,6 +301,22 @@ class PdaTestcaseKeywords:
                 f"equipment restoration did not complete within "
                 f"{step.timeout_seconds:g}s"
             ) from error
+
+    async def verify_equipment_status(self, step: VerifyEquipmentStatusStep) -> None:
+        self._require_initialized()
+        if self._verify_status is None:
+            raise PdaKeywordFailure("equipment-status verification is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._verify_status()
+
+    async def exercise_discovered_devices(
+        self, step: ExerciseDiscoveredDevicesStep
+    ) -> None:
+        self._require_initialized()
+        if self._exercise_devices is None:
+            raise PdaKeywordFailure("discovered-device exercise is unavailable")
+        async with asyncio.timeout(step.timeout_seconds):
+            await self._exercise_devices()
 
     def _resolve_device_state(self, identifier: str, state: str) -> bool:
         original = self._restoration.initial_device_enabled(identifier)

@@ -10,12 +10,14 @@ from .model import (
     AssertDeviceStep,
     AssertLogStep,
     AssertNoLogStep,
+    ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     SetSetpointStep,
     TestcaseDefinition,
     TestcaseStep,
+    VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
@@ -46,6 +48,14 @@ class TestcaseKeywords(Protocol):
     async def restore_original_state(
         self,
         step: RestoreOriginalStateStep,
+    ) -> None: ...
+
+    async def verify_equipment_status(
+        self, step: VerifyEquipmentStatusStep
+    ) -> None: ...
+
+    async def exercise_discovered_devices(
+        self, step: ExerciseDiscoveredDevicesStep
     ) -> None: ...
 
 
@@ -178,3 +188,7 @@ class TestcaseExecutor:
             await self._keywords.wait_for_stable_equipment(step)
         elif isinstance(step, RestoreOriginalStateStep):
             await self._keywords.restore_original_state(step)
+        elif isinstance(step, VerifyEquipmentStatusStep):
+            await self._keywords.verify_equipment_status(step)
+        elif isinstance(step, ExerciseDiscoveredDevicesStep):
+            await self._keywords.exercise_discovered_devices(step)

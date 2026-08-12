@@ -8,10 +8,12 @@ from pathlib import Path
 
 from aqualinkd_validator.cli import main
 from aqualinkd_validator.testcases import (
+    ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     RestoreOriginalStateStep,
     SetDeviceStep,
     TestcaseValidationError,
+    VerifyEquipmentStatusStep,
     WaitForStep,
     load_testcase,
     load_testcase_suite,
@@ -30,12 +32,7 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertIn("pda.filter-after-init, 3 step(s)", output.getvalue())
 
     def test_cli_validates_complete_suite_without_starting_aqualinkd(self) -> None:
-        path = (
-            Path(__file__).parents[1]
-            / "testcases"
-            / "suites"
-            / "pda-live-fast.yaml"
-        )
+        path = Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-fast.yaml"
         output = StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as result:
             main(["validate-testcase", str(path)])
@@ -67,6 +64,15 @@ class TestcaseYamlTests(unittest.TestCase):
         assert isinstance(heater, ExerciseHeaterStep)
         self.assertTrue(heater.optional)
         self.assertEqual(heater.identifier, "Pool_Heater")
+
+    def test_loads_specialized_equipment_cases(self) -> None:
+        root = Path(__file__).parents[1] / "testcases" / "pda"
+        status = load_testcase(root / "equipment-status.yaml")
+        consecutive = load_testcase(root / "consecutive-devices.yaml")
+
+        self.assertIsInstance(status.steps[1], VerifyEquipmentStatusStep)
+        self.assertIsInstance(consecutive.steps[1], ExerciseDiscoveredDevicesStep)
+        self.assertEqual(status.steps[1].timeout_seconds, 600)
 
     def test_loads_and_validates_complete_suite_graph(self) -> None:
         suite = load_testcase_suite(

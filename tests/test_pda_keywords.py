@@ -105,13 +105,13 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
     def test_heater_policy_owns_bounds_and_round_trip(self) -> None:
         asyncio.run(self._exercise_heater())
 
+    def test_specialized_operations_stay_behind_typed_keywords(self) -> None:
+        asyncio.run(self._specialized_operations())
+
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
         testcase = load_testcase(
-            Path(__file__).parents[1]
-            / "testcases"
-            / "pda"
-            / "filter-after-init.yaml"
+            Path(__file__).parents[1] / "testcases" / "pda" / "filter-after-init.yaml"
         )
 
         result = await TestcaseExecutor(fixture.keywords).execute(testcase)
@@ -140,14 +140,10 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
 
         await fixture.monitor.publish(1, "stdout", "PDA init complete")
         await fixture.keywords.assert_log(AssertLogStep("init complete", 0.1))
-        await fixture.keywords.assert_no_log(
-            AssertNoLogStep(None, "error", 0.001)
-        )
+        await fixture.keywords.assert_no_log(AssertNoLogStep(None, "error", 0.001))
         await fixture.monitor.publish(2, "stderr", "Error: simulated failure")
         with self.assertRaisesRegex(PdaKeywordFailure, "simulated failure"):
-            await fixture.keywords.assert_no_log(
-                AssertNoLogStep(None, "error", 0.1)
-            )
+            await fixture.keywords.assert_no_log(AssertNoLogStep(None, "error", 0.1))
 
     async def _reject_uninitialized_action(self) -> None:
         fixture = KeywordFixture()
@@ -182,6 +178,18 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
             ],
         )
 
+    async def _specialized_operations(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        root = Path(__file__).parents[1] / "testcases" / "pda"
+        await TestcaseExecutor(fixture.keywords).execute(
+            load_testcase(root / "equipment-status.yaml")
+        )
+        await TestcaseExecutor(fixture.keywords).execute(
+            load_testcase(root / "consecutive-devices.yaml")
+        )
+        self.assertEqual(fixture.status_verifications, 1)
+        self.assertEqual(fixture.device_exercises, 1)
+
 
 class KeywordFixture:
     def __init__(self, *, initialized: bool = False) -> None:
@@ -191,6 +199,8 @@ class KeywordFixture:
         self.initialize_count = 0
         self.restore_timeouts: list[float] = []
         self.skips: list[tuple[str, str]] = []
+        self.status_verifications = 0
+        self.device_exercises = 0
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -211,6 +221,8 @@ class KeywordFixture:
             initialize=self.initialize,
             wait_for_stable=self.wait_for_stable,
             restore=self.restore,
+            verify_status=self.verify_status,
+            exercise_devices=self.exercise_devices,
             record_skip=lambda name, reason: self.skips.append((name, reason)),
             phase_prefix="yaml.pda.filter",
         )
@@ -229,6 +241,12 @@ class KeywordFixture:
 
     async def restore(self, timeout_seconds: float) -> None:
         self.restore_timeouts.append(timeout_seconds)
+
+    async def verify_status(self) -> None:
+        self.status_verifications += 1
+
+    async def exercise_devices(self) -> None:
+        self.device_exercises += 1
 
 
 def snapshot() -> EquipmentSnapshot:
