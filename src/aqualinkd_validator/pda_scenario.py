@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Any, Literal, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import normalize_api_base_url
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
 from .engine import (
     EquipmentActionFailure,
@@ -29,6 +28,7 @@ from .pda_simulator import (
     SimulatorProtocolError,
 )
 from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
+from .protocols.pda import session as pda_session
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
@@ -44,9 +44,9 @@ from .testcases import (
 FILTER_PUMP = "Filter_Pump"
 POOL_HEATER = "Pool_Heater"
 SPA_HEATER = "Spa_Heater"
+INIT_ACTIVE = pda_session.INIT_ACTIVE
+INIT_FINISHED = pda_session.INIT_FINISHED
 
-INIT_FINISHED = "(Init PDA) finished"
-INIT_ACTIVE = "is active (Init PDA)"
 DEVICE_FINISHED = "(Switch PDA device on/off) finished"
 DEVICE_ACTIVE = "is active (Switch PDA device on/off)"
 POOL_HEATER_SETPOINT_FINISHED = "(Set PDA Pool Heater) finished"
@@ -90,23 +90,10 @@ PDA_ADDRESS_STATUS = "To 0x60 of type           Status"
 PDA_ADDRESS_PROBE = "To 0x60 of type            Probe"
 WAKE_INIT_ACTIVE = "is active (PDA init after wake)"
 WAKE_INIT_FINISHED = "(PDA init after wake) finished"
-FIRMWARE_VERSION_SCREEN = "PDA Menu Line 3 = Firmware Version"
-WEB_SERVER_STARTED = "Starting web server on "
-
 _EQUIPMENT_STABLE_SECONDS = 0.5
 _EQUIPMENT_POLL_SECONDS = 0.25
 
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
-_WEB_SERVER_URL = re.compile(r"Starting web server on\s+(\S+)")
-_WEB_SERVER_PORT = re.compile(r"Starting web server on port\s+(\d+)")
-_AQUALINKD_VERSION = re.compile(
-    r"(?:Starting\s+)?Aqualink Daemon\s+(v.+?)(?:\s+!\s*)?$",
-    re.IGNORECASE,
-)
-_CONFIGURED_PANEL = re.compile(
-    r"(?:Panel set to|panel type\s*=)\s*(.+?)\s*$",
-    re.IGNORECASE,
-)
 _AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
 _STATUS_MESSAGE = re.compile(r"\*\*\* Pass Equiptment msg '([^']*)'")
 _FOUND_STATUS = re.compile(
@@ -1082,23 +1069,24 @@ class PdaLivePanelScenario:
                 source="explicit_override",
             )
 
-        async with asyncio.TaskGroup() as tasks:
-            startup_task = tasks.create_task(self._wait_for_startup(context))
-            identity_task = tasks.create_task(self._capture_aqualinkd_identity(context))
-            discovery_task = (
-                tasks.create_task(self._discover_api_base_url(context))
-                if self._api is None
-                else None
-            )
-        if discovery_task is not None:
-            discovered = discovery_task.result()
+        try:
+            result = await pda_session.PdaSessionInitializer(
+                events=context.monitor,
+                timeline=context.timeline,
+                programmer=self._programmer,
+                timeout_seconds=self._config.init_timeout_seconds,
+            ).initialize(discover_api=self._api is None)
+        except pda_session.PdaSessionFailure as error:
+            raise ScenarioFailure(str(error)) from error
+        if result.discovered_api_base_url is not None:
+            discovered = result.discovered_api_base_url
             self._configure_api(discovered, source="aqualinkd_startup_log")
             await context.timeline.write(
                 "api_endpoint_discovered",
                 api_base_url=discovered,
                 source="aqualinkd_startup_log",
             )
-        identity = identity_task.result()
+        identity = result.aqualinkd_identity
         self._report["aqualinkd"] = identity
         print(
             f"[INFO  ] AqualinkD version: {identity['version']}",
@@ -1108,65 +1096,19 @@ class PdaLivePanelScenario:
             f"[INFO  ] Configured panel: {identity['configured_panel_type']}",
             flush=True,
         )
-        return startup_task.result()
-
-    async def _discover_api_base_url(
-        self,
-        context: ScenarioContext,
-    ) -> str:
-        event = await context.monitor.wait_for(
-            WEB_SERVER_STARTED,
-            timeout_seconds=self._config.init_timeout_seconds,
+        self._append_measurement(
+            name="pda.init",
+            category="initialization",
+            phase="startup",
+            target="PDA_INIT",
+            requested_value=None,
+            start_offset_ns=0,
+            api_ack_offset_ns=None,
+            task_active_offset_ns=result.active.offset_ns,
+            log_completion_offset_ns=result.completed.offset_ns,
+            state_observed_offset_ns=None,
         )
-        port_match = _WEB_SERVER_PORT.search(event.text)
-        if port_match is not None:
-            return normalize_api_base_url(f"http://127.0.0.1:{port_match.group(1)}")
-
-        match = _WEB_SERVER_URL.search(event.text)
-        if match is None:
-            raise ScenarioFailure(
-                "AqualinkD web-server startup log did not contain a URL"
-            )
-        try:
-            return normalize_api_base_url(match.group(1))
-        except ValueError as error:
-            raise ScenarioFailure(
-                f"Invalid AqualinkD web-server URL in log: {match.group(1)}"
-            ) from error
-
-    async def _capture_aqualinkd_identity(
-        self,
-        context: ScenarioContext,
-    ) -> dict[str, str]:
-        async with asyncio.TaskGroup() as tasks:
-            version_task = tasks.create_task(
-                context.monitor.wait_for(
-                    "Aqualink Daemon v",
-                    timeout_seconds=self._config.init_timeout_seconds,
-                )
-            )
-            panel_task = tasks.create_task(
-                context.monitor.wait_for_any(
-                    ("Panel set to ", "panel type"),
-                    timeout_seconds=self._config.init_timeout_seconds,
-                )
-            )
-
-        version_match = _AQUALINKD_VERSION.search(version_task.result().text)
-        if version_match is None:
-            raise ScenarioFailure(
-                "AqualinkD startup log did not contain a parseable version"
-            )
-        panel_match = _CONFIGURED_PANEL.search(panel_task.result().text)
-        if panel_match is None:
-            raise ScenarioFailure(
-                "AqualinkD startup log did not contain a parseable panel type"
-            )
-        return {
-            "version": version_match.group(1).strip(),
-            "configured_panel_type": panel_match.group(1).strip(),
-            "source": "aqualinkd_startup_log",
-        }
+        return result.init_screen
 
     @staticmethod
     async def _wait_for_marker(
@@ -1198,92 +1140,6 @@ class PdaLivePanelScenario:
         if self._api is None:
             raise ScenarioFailure("AqualinkD HTTP API endpoint is not configured")
         return self._api
-
-    async def _wait_for_startup(
-        self,
-        context: ScenarioContext,
-    ) -> dict[str, str]:
-        active = await self._wait_for_task_active(
-            context,
-            task_name="Init PDA",
-            marker=INIT_ACTIVE,
-            after=0,
-            requested_offset_ns=0,
-            timeout_seconds=self._config.init_timeout_seconds,
-            wait_reason="waiting for the panel probe",
-        )
-        async with asyncio.TaskGroup() as tasks:
-            completion_task = tasks.create_task(
-                self._wait_for_task_completion(
-                    context,
-                    task_name="Init PDA",
-                    marker=INIT_FINISHED,
-                    active=active,
-                    timeout_seconds=self._config.init_timeout_seconds,
-                )
-            )
-            screen_task = tasks.create_task(
-                self._capture_init_screen(context, after=active.sequence)
-            )
-        completion = completion_task.result()
-        self._append_measurement(
-            name="pda.init",
-            category="initialization",
-            phase="startup",
-            target="PDA_INIT",
-            requested_value=None,
-            start_offset_ns=0,
-            api_ack_offset_ns=None,
-            task_active_offset_ns=active.offset_ns,
-            log_completion_offset_ns=completion.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        await context.timeline.write(
-            "scenario_phase",
-            phase="startup",
-            state="PDA_INIT completed",
-        )
-        return screen_task.result()
-
-    async def _capture_init_screen(
-        self,
-        context: ScenarioContext,
-        *,
-        after: int,
-    ) -> dict[str, str]:
-        firmware_marker = await context.monitor.wait_for(
-            FIRMWARE_VERSION_SCREEN,
-            after=after,
-            timeout_seconds=self._config.init_timeout_seconds,
-        )
-        panel_type = ""
-        for event in reversed(
-            context.monitor.recent_events(before=firmware_marker.sequence)
-        ):
-            parsed = self._parse_menu_line(event.text)
-            if parsed is not None and parsed[0] == 1:
-                panel_type = parsed[1]
-                break
-        firmware_event = await context.monitor.wait_for(
-            "PDA Menu Line 5 =",
-            after=firmware_marker.sequence,
-            timeout_seconds=self._config.init_timeout_seconds,
-        )
-        firmware = self._parse_menu_line(firmware_event.text)
-        if not panel_type:
-            raise ScenarioFailure(
-                "PDA firmware-version screen did not contain a panel type on line 1"
-            )
-        if firmware is None or firmware[0] != 5 or not firmware[1]:
-            raise ScenarioFailure(
-                "PDA firmware-version screen did not contain firmware "
-                "information on line 5"
-            )
-        return {
-            "panel_type": panel_type,
-            "firmware": firmware[1],
-            "source": "pda_firmware_version_screen",
-        }
 
     async def _record_panel_identity_and_check_time(
         self,

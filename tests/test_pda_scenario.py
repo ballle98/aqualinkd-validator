@@ -400,9 +400,6 @@ class PdaScenarioTests(unittest.TestCase):
             "ScenarioFailure: legacy startup log was invalid",
         )
 
-    def test_current_web_server_url_log_is_supported(self) -> None:
-        asyncio.run(self._run_web_server_discovery())
-
     def test_failed_case_restores_then_continues(self) -> None:
         asyncio.run(self._run_failed_case_continuation())
 
@@ -702,34 +699,6 @@ class PdaScenarioTests(unittest.TestCase):
                 ["passed", "failed", "passed"],
             )
             self.assertEqual(len(observed), 3)
-
-    async def _run_web_server_discovery(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(
-                artifact_dir / "timeline.jsonl",
-                time.monotonic_ns(),
-            )
-            monitor = OutputMonitor()
-            context = ScenarioContext(
-                artifact_dir=artifact_dir,
-                monitor=monitor,
-                timeline=timeline,
-            )
-            scenario = PdaLivePanelScenario(
-                None,
-                PdaScenarioConfig(init_timeout_seconds=0.5),
-            )
-            await monitor.publish(
-                0,
-                "stdout",
-                "Notice: NetService:Starting web server on http://0.0.0.0:8080",
-            )
-            try:
-                discovered = await scenario._discover_api_base_url(context)
-            finally:
-                timeline.close()
-            self.assertEqual(discovered, "http://127.0.0.1:8080")
 
     async def _run_declarative_filter_test(
         self,

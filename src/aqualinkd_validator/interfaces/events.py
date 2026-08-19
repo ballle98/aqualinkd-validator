@@ -12,6 +12,8 @@ class OrderedLogEvents(Protocol):
     @property
     def cursor(self) -> int: ...
 
+    def recent_events(self, *, before: int | None = None) -> list[LineEvent]: ...
+
     async def wait_for(
         self,
         predicate: str,
