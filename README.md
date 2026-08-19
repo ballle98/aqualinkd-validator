@@ -275,8 +275,8 @@ one composite suite:
 
 | Suite | Intended use | Coverage |
 | --- | --- | --- |
-| `pda-live-fast` | Default development regression | Initialization, panel identity and clock, filter-pump round trip, and optional pool-heater setpoint and enable round trips |
-| `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
+| `pda-live-fast` | Default development regression | Initialization, panel identity and clock, filter-pump round trip, and optional non-heating pool-heater control checks |
+| `pda-live-awake` | Awake-state diagnostics or focused reruns | Fast cases plus maximum safe equipment-status reconciliation and consecutive-device operations, with PDA sleep disabled |
 | `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and switch round trips during STATUS retries and after probing begins |
 | `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
 | `pda-live-spa` | Explicit hydraulic/heating validation | Site-configured Pool-mode fill, Spa-mode entry, active Spa Heater demand, cooldown/lockout, and full restoration; not included in `pda-live-long` |
@@ -415,10 +415,12 @@ The fast suite performs these phases:
    timezone, or the explicit `--panel-timezone` override.
 3. Toggle the filter pump after initialization and restore its original
    state.
-4. If a pool heater is present, move its setpoint down one degree, up one
-   degree, and back to the original setting. It also toggles the heater
-   enable state and restores the original state. A direction is skipped when
-   the original setpoint is at its supported boundary.
+4. If a pool heater is present and is not already actively heating, disable
+   it if necessary, exercise adjacent setpoints at the supported minimum,
+   enable it only at that non-heating setpoint, verify it remains enabled but
+   inactive, then disable it and restore its original setpoint and enabled
+   state. The case is skipped when the water temperature cannot prove those
+   minimum setpoints are below the current water temperature.
 
 The long suite composes the following two process suites:
 
@@ -431,9 +433,11 @@ to or greater than the reported panel size; for example, a PDA-PS6 permits
 Aux 1 through Aux 5 and excludes Aux 6 and above. This protects against a
 configuration declaring a larger panel than the connected hardware.
 
-1. `pda-live-awake`, with `pda_sleep_mode = no`: run the fast checks, enable
-   every eligible configured switch and heater except Spa mode and Spa Heater,
-   wait for the PDA to return home,
+1. `pda-live-awake`, with `pda_sleep_mode = no`: run the fast checks, lower
+   Pool and Spa Heater setpoints to their supported minimum, then enable the
+   maximum safe set of configured controls while leaving Spa mode and Solar
+   Heater unchanged. Verify that neither enabled heater becomes active, wait
+   for the PDA to return home,
    and capture a complete multi-page `EQUIPMENT STATUS` loop. Verify every
    expected device appeared and remained on in `/api/devices` after AqualinkD
    reconciled the full loop. If an SWG is present, verify its status was
@@ -441,9 +445,10 @@ configuration declaring a larger panel than the connected hardware.
    consecutive device operations and restore them in reverse order.
    Supplying repeated `--pda-test-device` options restricts the separate
    consecutive-device operation to those switch IDs.
-   Spa hydraulics and active heating are isolated in `pda-live-spa` so this
-   general regression does not unexpectedly route water or incur fill and
-   cooldown delays.
+   Spa hydraulics and deliberate active heating are isolated in
+   `pda-live-spa`, so this general regression does not unexpectedly route
+   water, fire a heater, or incur cooldown delays. Cleanup safety-disables a
+   test-enabled heater before restoring its normal setpoint.
 2. `pda-live-sleep`, with `pda_sleep_mode = yes`: restart AqualinkD, repeat PDA
    initialization and identity checks, wait for AqualinkD's PDA sleep marker,
    observe one complete natural sleep/wake cycle, then toggle a switch about

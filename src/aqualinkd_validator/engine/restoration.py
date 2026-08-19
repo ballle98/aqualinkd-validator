@@ -95,8 +95,28 @@ class RestorationSession:
 
         actions: list[RestorationAction] = []
         errors: list[str] = []
+        predisabled_heaters: set[str] = set()
+        unsafe_setpoint_restores: set[str] = set()
+
+        # A heater setpoint must never be raised while the heater remains
+        # test-enabled. Remove heat demand first, then restore the setpoint,
+        # and finally restore the original device state in dependency order.
+        for identifier in sorted(self._touched_setpoints & _HEATERS):
+            try:
+                current = self._require_device(await read_snapshot(), identifier)
+                if current.enabled:
+                    await restore_device(identifier, False)
+                    actions.append(
+                        RestorationAction(identifier, "state", False, "safety-disabled")
+                    )
+                    predisabled_heaters.add(identifier)
+            except Exception as error:
+                errors.append(f"{identifier} safety disable: {error}")
+                unsafe_setpoint_restores.add(identifier)
 
         for identifier in sorted(self._touched_setpoints):
+            if identifier in unsafe_setpoint_restores:
+                continue
             try:
                 original = self._require_original_setpoint(identifier)
                 current = self._require_device(await read_snapshot(), identifier)
@@ -112,6 +132,8 @@ class RestorationSession:
         ):
             try:
                 expected = self.initial_device_enabled(identifier)
+                if identifier in predisabled_heaters and not expected:
+                    continue
                 await restore_device(identifier, expected)
                 actions.append(RestorationAction(identifier, "state", expected))
             except Exception as error:

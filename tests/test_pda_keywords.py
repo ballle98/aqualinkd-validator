@@ -173,9 +173,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         self.assertEqual(
             fixture.actions.setpoint_calls,
             [
-                ("Pool_Heater", 79, 20, 30, 40),
-                ("Pool_Heater", 81, 20, 30, 40),
-                ("Pool_Heater", 80, 20, 30, 40),
+                ("Pool_Heater", 36, 20, 30, 40),
+                ("Pool_Heater", 37, 20, 30, 40),
+                ("Pool_Heater", 36, 20, 30, 40),
             ],
         )
         self.assertEqual(
@@ -183,6 +183,7 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
             [
                 ("Pool_Heater", False, 20, 30, 40),
                 ("Pool_Heater", True, 20, 30, 40),
+                ("Pool_Heater", False, 20, 30, 40),
             ],
         )
 
@@ -323,6 +324,7 @@ def snapshot() -> EquipmentSnapshot:
                 "state": "off",
                 "status": "enabled",
                 "spvalue": "80",
+                "value": "82",
             },
         },
     )

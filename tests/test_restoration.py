@@ -35,8 +35,8 @@ class RestorationSessionTests(unittest.TestCase):
     def test_enabled_dependencies_restore_pump_before_mode_and_heater(self) -> None:
         asyncio.run(self._restore_enabled_dependencies())
 
-    def test_setpoint_is_restored_before_device_state(self) -> None:
-        asyncio.run(self._restore_setpoint_before_state())
+    def test_heater_is_disabled_before_setpoint_is_restored(self) -> None:
+        asyncio.run(self._disable_heater_before_setpoint())
 
     def test_failure_retains_pending_mutations_for_retry(self) -> None:
         asyncio.run(self._retain_failed_mutation())
@@ -115,7 +115,7 @@ class RestorationSessionTests(unittest.TestCase):
             ["Filter_Pump", "Spa_Mode", "Aux_1", "Pool_Heater"],
         )
 
-    async def _restore_setpoint_before_state(self) -> None:
+    async def _disable_heater_before_setpoint(self) -> None:
         initial = snapshot({"Pool_Heater": (False, 80)})
         current = snapshot({"Pool_Heater": (True, 85)})
         session = RestorationSession()
@@ -140,7 +140,17 @@ class RestorationSessionTests(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual(actions, [("Pool_Heater", 80), ("Pool_Heater", False)])
+        self.assertEqual(actions, [("Pool_Heater", False), ("Pool_Heater", 80)])
+        self.assertEqual(
+            [
+                (action.property, action.value, action.status)
+                for action in result.actions
+            ],
+            [
+                ("state", False, "safety-disabled"),
+                ("setpoint", 80, "restored"),
+            ],
+        )
 
     async def _retain_failed_mutation(self) -> None:
         initial = snapshot({"Spa_Mode": (False, None)})

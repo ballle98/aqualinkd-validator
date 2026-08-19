@@ -180,6 +180,8 @@ class PdaTestcaseKeywords:
         )
 
     async def exercise_heater(self, step: ExerciseHeaterStep) -> None:
+        """Exercise a heater's controls without creating heat demand."""
+
         self._require_initialized()
         snapshot = self._restoration.initial_snapshot
         assert snapshot is not None
@@ -193,6 +195,12 @@ class PdaTestcaseKeywords:
         original_setpoint = heater.setpoint
         if original_setpoint is None:
             self._skip_optional(step, f"{step.identifier} has no setpoint")
+            return
+        if heater.active:
+            self._skip_optional(
+                step,
+                f"{step.identifier} is already actively heating",
+            )
             return
         bounds = {"f": (36, 104), "c": (0, 40)}.get(snapshot.temp_units)
         if bounds is None:
@@ -209,15 +217,43 @@ class PdaTestcaseKeywords:
             ) from error
 
         minimum, maximum = bounds
-        test_values = [
-            value
-            for value in (
-                max(minimum, original_setpoint - 1),
-                min(maximum, original_setpoint + 1),
+        raw_water_temperature = heater.raw.get("value")
+        try:
+            water_temperature = (
+                float(raw_water_temperature)
+                if isinstance(raw_water_temperature, (int, float, str))
+                else float("nan")
             )
-            if value != original_setpoint
-        ]
-        for value in (*test_values, original_setpoint):
+        except ValueError:
+            water_temperature = float("nan")
+        safe_upper = minimum + 1
+        filter_pump = snapshot.devices.get("Filter_Pump")
+        circulation_is_off = filter_pump is not None and not filter_pump.enabled
+        if not circulation_is_off and not water_temperature > safe_upper:
+            self._skip_optional(
+                step,
+                "Filter Pump is enabled and the water temperature is unavailable "
+                f"or not above the safe test setpoints {minimum}-{safe_upper}",
+            )
+            return
+
+        original_enabled = heater.enabled
+        if original_enabled:
+            await self._actions().set_device(
+                step.identifier,
+                False,
+                phase=f"{self._phase_prefix}.exercise_heater.safety_disable",
+                markers=self._markers.device,
+                activation_timeout_seconds=step.activation_timeout_seconds,
+                completion_timeout_seconds=step.completion_timeout_seconds,
+                convergence_timeout_seconds=step.convergence_timeout_seconds,
+            )
+            self._requested_states[step.identifier] = False
+
+        # Exercise both setpoint directions while disabled, then leave the
+        # setpoint at its minimum before testing the enabled state.
+        test_values = (minimum, min(maximum, minimum + 1), minimum)
+        for value in test_values:
             await self._actions().set_setpoint(
                 step.identifier,
                 value,
@@ -229,18 +265,37 @@ class PdaTestcaseKeywords:
                 convergence_timeout_seconds=step.convergence_timeout_seconds,
             )
 
-        original_enabled = heater.enabled
-        for enabled in (not original_enabled, original_enabled):
-            await self._actions().set_device(
-                step.identifier,
-                enabled,
-                phase=f"{self._phase_prefix}.exercise_heater.state",
-                markers=self._markers.device,
-                activation_timeout_seconds=step.activation_timeout_seconds,
-                completion_timeout_seconds=step.completion_timeout_seconds,
-                convergence_timeout_seconds=step.convergence_timeout_seconds,
+        await self._actions().set_device(
+            step.identifier,
+            True,
+            phase=f"{self._phase_prefix}.exercise_heater.state",
+            markers=self._markers.device,
+            activation_timeout_seconds=step.activation_timeout_seconds,
+            completion_timeout_seconds=step.completion_timeout_seconds,
+            convergence_timeout_seconds=step.convergence_timeout_seconds,
+        )
+        self._requested_states[step.identifier] = True
+        observed = await self._wait_for_stable(
+            (step.identifier,),
+            step.convergence_timeout_seconds,
+        )
+        enabled_heater = observed.devices[step.identifier]
+        if enabled_heater.active:
+            raise PdaKeywordFailure(
+                f"{step.identifier} became actively heating during the "
+                "non-heating control test"
             )
-            self._requested_states[step.identifier] = enabled
+
+        await self._actions().set_device(
+            step.identifier,
+            False,
+            phase=f"{self._phase_prefix}.exercise_heater.state",
+            markers=self._markers.device,
+            activation_timeout_seconds=step.activation_timeout_seconds,
+            completion_timeout_seconds=step.completion_timeout_seconds,
+            convergence_timeout_seconds=step.convergence_timeout_seconds,
+        )
+        self._requested_states[step.identifier] = False
 
     async def exercise_spa_heating(self, step: ExerciseSpaHeatingStep) -> None:
         self._require_initialized()

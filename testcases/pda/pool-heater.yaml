@@ -1,6 +1,6 @@
 schema: 1
 id: pda.pool-heater
-description: Exercise the optional pool-heater setpoint and enabled state
+description: Exercise pool-heater controls at non-heating setpoints
 mode: physical-panel
 access: read-write
 requires:
