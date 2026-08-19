@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TextIO
@@ -34,57 +34,16 @@ from .metadata import (
     collect_source_metadata,
 )
 from .metrics import summarize_metrics
-from .pda.cases import PdaCaseId
 from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
+from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
-from .suites import SUITES, SuiteProfile, get_suite
 from .supervisor import supervise
 from .testcases import (
-    TestcaseDefinition,
     TestcaseSuiteDefinition,
     load_testcase_document,
 )
 
-DEVICE_SELECTION_CASES = frozenset(
-    {
-        PdaCaseId.CONSECUTIVE_DEVICES,
-        PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-        PdaCaseId.DEVICE_AFTER_PROBE,
-    }
-)
-_BUILTIN_DECLARATIVE_SUITES = {
-    "pda-live-fast": (
-        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-fast.yaml"
-    ),
-    "pda-live-awake": (
-        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-awake.yaml"
-    ),
-    "pda-live-sleep": (
-        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-sleep.yaml"
-    ),
-    "pda-live-spa": (
-        Path(__file__).parents[2] / "testcases" / "suites" / "pda-live-spa.yaml"
-    ),
-}
-_RUN_SUITE_NAMES = tuple((*_BUILTIN_DECLARATIVE_SUITES, *SUITES))
-
-
-@dataclass(frozen=True)
-class _RunTarget:
-    legacy_suite_name: str | None = None
-    testcase: TestcaseDefinition | None = None
-    testcase_suite: TestcaseSuiteDefinition | None = None
-    source: Path | None = None
-
-    @property
-    def identifier(self) -> str | None:
-        if self.legacy_suite_name is not None:
-            return self.legacy_suite_name
-        if self.testcase is not None:
-            return self.testcase.identifier
-        if self.testcase_suite is not None:
-            return self.testcase_suite.identifier
-        return None
+_RUN_SUITE_NAMES = RUN_TARGETS.names
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,13 +97,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("/tmp/aqualinkd-validator-artifacts"),
     )
     run.add_argument("--label", default="live-panel")
-    run.add_argument(
-        "--suite",
-        choices=_RUN_SUITE_NAMES,
-        action="append",
-        dest="legacy_suites",
-        help=argparse.SUPPRESS,
-    )
     run.add_argument("--source-tree", type=Path)
     run.add_argument("--source-commit")
     run.add_argument("--source-branch")
@@ -341,78 +293,25 @@ def _validate_testcases(paths: list[Path]) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    positional_suites = list(args.suites)
-    legacy_suites = list(args.legacy_suites or ())
-    if positional_suites and legacy_suites:
-        raise ConfigurationError(
-            "Specify suites positionally; do not combine them with --suite"
-        )
-    target_names: list[str | None] = positional_suites or legacy_suites or [None]
-    selected_names = [name for name in target_names if name is not None]
+    target_names: list[str] = list(args.suites)
+    selected_names = list(target_names)
     if len(selected_names) != len(set(selected_names)):
         raise ConfigurationError("Each run target may be selected only once")
-    targets: list[_RunTarget] = []
+    targets: list[ResolvedRunTarget] = []
     document_sources: dict[str, Path] = {}
     for selected_name in target_names:
-        document_path = (
-            Path(selected_name).expanduser().resolve()
-            if selected_name is not None and _is_testcase_target(selected_name)
-            else (
-                _BUILTIN_DECLARATIVE_SUITES.get(selected_name)
-                if selected_name is not None
-                else None
-            )
-        )
-        document = load_testcase_document(document_path) if document_path else None
-        testcase = document if isinstance(document, TestcaseDefinition) else None
-        testcase_suite = (
-            document if isinstance(document, TestcaseSuiteDefinition) else None
-        )
-        document_id = (
-            testcase.identifier
-            if testcase is not None
-            else testcase_suite.identifier
-            if testcase_suite is not None
-            else None
-        )
-        if document_id is not None and document_path is not None:
-            if document_id in document_sources:
+        target = RUN_TARGETS.resolve(selected_name)
+        if target.source is not None:
+            if target.identifier in document_sources:
                 raise ConfigurationError(
-                    f"Duplicate declarative target id {document_id!r}"
+                    f"Duplicate declarative target id {target.identifier!r}"
                 )
-            document_sources[document_id] = document_path
-        suite = get_suite(selected_name) if document is None else None
-        declarative_mode = (
-            testcase.mode
-            if testcase is not None
-            else testcase_suite.mode
-            if testcase_suite is not None
-            else None
-        )
-        if declarative_mode is not None and declarative_mode != "physical-panel":
+            document_sources[target.identifier] = target.source
+        if args.mode != target.mode:
             raise ConfigurationError(
-                f"{selected_name}: execution for testcase mode "
-                f"{declarative_mode} is not implemented"
+                f"{selected_name} requires --mode {target.mode}, not {args.mode}"
             )
-        required_mode = (
-            suite.mode
-            if suite is not None
-            else "live-panel"
-            if declarative_mode == "physical-panel"
-            else args.mode
-        )
-        if args.mode != required_mode:
-            raise ConfigurationError(
-                f"{selected_name} requires --mode {required_mode}, not {args.mode}"
-            )
-        targets.append(
-            _RunTarget(
-                legacy_suite_name=selected_name if suite is not None else None,
-                testcase=testcase,
-                testcase_suite=testcase_suite,
-                source=document_path,
-            )
-        )
+        targets.append(target)
 
     if args.panel_access == "read-only" and args.allow_equipment_control:
         raise ConfigurationError(
@@ -432,44 +331,14 @@ def _run(args: argparse.Namespace) -> int:
             "--panel-read-write because it opens a real or externally "
             "managed serial bus"
         )
-    mutating_suites = [
-        target.legacy_suite_name
-        for target in targets
-        if target.legacy_suite_name is not None
-        and _suite_mutates_panel(target.legacy_suite_name)
-    ]
-    mutating_declarative = [
-        identifier
-        for target in targets
-        for identifier in (target.identifier,)
-        if (
-            (target.testcase is not None and target.testcase.access == "read-write")
-            or (
-                target.testcase_suite is not None
-                and target.testcase_suite.access == "read-write"
-            )
-        )
-        and identifier is not None
-    ]
-    mutating_targets = [*mutating_suites, *mutating_declarative]
+    mutating_targets = [target.identifier for target in targets if target.mutates_panel]
     if mutating_targets and not args.allow_equipment_control:
         raise ConfigurationError(
             "Selected targets change equipment and require --panel-read-write: "
             + ", ".join(mutating_targets)
         )
     if args.pda_test_device and not any(
-        (
-            target.testcase_suite is not None
-            and target.testcase_suite.uses_selected_devices
-        )
-        or (
-            target.legacy_suite_name is not None
-            and any(
-                _suite_contains_case(target.legacy_suite_name, case_id)
-                for case_id in DEVICE_SELECTION_CASES
-            )
-        )
-        for target in targets
+        target.uses_selected_devices for target in targets
     ):
         raise ConfigurationError(
             "--pda-test-device requires a suite containing device-focused validation"
@@ -477,19 +346,16 @@ def _run(args: argparse.Namespace) -> int:
     if args.panel_timezone is None:
         args.panel_timezone = _local_timezone_name()
 
+    if not targets:
+        args.run_target = None
+        return _run_one(args)
+
     original_label = args.label
     for target in targets:
-        args.suite = target.legacy_suite_name
-        args.testcase = target.testcase
-        args.testcase_suite = target.testcase_suite
-        args.testcase_path = target.source if target.testcase is not None else None
-        args.testcase_suite_path = (
-            target.source if target.testcase_suite is not None else None
-        )
-        target_label = target.identifier
+        args.run_target = target
         args.label = (
-            f"{original_label}-{target_label}"
-            if len(targets) > 1 and target_label is not None
+            f"{original_label}-{target.identifier}"
+            if len(targets) > 1
             else original_label
         )
         current_exit_code = _run_one(args)
@@ -499,76 +365,29 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _run_one(args: argparse.Namespace) -> int:
-    testcase_suite: TestcaseSuiteDefinition | None = getattr(
-        args, "testcase_suite", None
-    )
-    if testcase_suite is not None:
-        return _run_declarative_suite(args, testcase_suite)
-    suite = get_suite(args.suite)
-    if suite is not None and suite.is_composite:
+    target: ResolvedRunTarget | None = getattr(args, "run_target", None)
+    if target is not None and target.is_composite:
         return _run_composite_suite(args)
-    if suite is not None and suite.config_overrides:
-        return _run_process_suite(args)
+    if target is not None and target.config_overrides:
+        return _run_configured_target(args, target)
     return _run_process(args)
 
 
-def _run_declarative_suite(
-    args: argparse.Namespace,
-    suite: TestcaseSuiteDefinition,
-) -> int:
-    source_config = args.config.expanduser().resolve(strict=True)
-    overrides = suite.config.override_map()
-    if not overrides:
-        return _run_process(args)
-    with tempfile.TemporaryDirectory(prefix="aqualinkd-validator-config-") as directory:
-        derived_config = Path(directory) / f"{suite.identifier}.conf"
-        write_config_with_overrides(source_config, derived_config, overrides)
-        process_args = copy.copy(args)
-        process_args.config = derived_config
-        process_args.source_config = source_config
-        process_args.config_overrides = overrides
-        exit_code = _run_process(process_args)
-        args.last_run_safe_to_continue = getattr(
-            process_args, "last_run_safe_to_continue", False
-        )
-        args.last_artifact_dir = getattr(process_args, "last_artifact_dir", None)
-        return exit_code
-
-
 def _run_composite_suite(args: argparse.Namespace) -> int:
-    composite = get_suite(args.suite)
+    composite: ResolvedRunTarget | None = getattr(args, "run_target", None)
     if composite is None or not composite.is_composite:
-        raise ConfigurationError(f"Suite is not composite: {args.suite}")
+        raise ConfigurationError("Run target is not a composite suite")
     overall_exit_code = 0
     safe_to_continue = True
     original_label = args.label
     for member_name in composite.members:
         member_args = copy.copy(args)
-        declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(member_name)
-        if declarative_path is not None:
-            member_document = load_testcase_document(declarative_path)
-            if not isinstance(member_document, TestcaseSuiteDefinition):
-                raise ConfigurationError(
-                    f"Composite member is not a suite: {member_name}"
-                )
-            member_args.suite = None
-            member_args.testcase = None
-            member_args.testcase_suite = member_document
-            member_args.testcase_suite_path = declarative_path
-            suffix = member_name.removeprefix("pda-live-")
-        else:
-            member = get_suite(member_name)
-            if member is None:
-                raise ConfigurationError(
-                    f"Unknown composite member: {member_name}"
-                )
-            member_args.suite = member.name
-            member_args.testcase = None
-            member_args.testcase_suite = None
-            suffix = member.artifact_suffix or member.name
+        member = RUN_TARGETS.resolve(member_name)
+        member_args.run_target = member
+        suffix = member.artifact_suffix or member_name.removeprefix("pda-live-")
         member_args.label = f"{original_label}-{suffix}"
         print(
-            f"\n=== {composite.name} member: {member_name} ===",
+            f"\n=== {composite.identifier} member: {member_name} ===",
             flush=True,
         )
         exit_code = _run_one(member_args)
@@ -599,14 +418,15 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
     return overall_exit_code
 
 
-def _run_process_suite(args: argparse.Namespace) -> int:
-    suite = get_suite(args.suite)
-    assert suite is not None and not suite.is_composite
+def _run_configured_target(
+    args: argparse.Namespace,
+    target: ResolvedRunTarget,
+) -> int:
     source_config = args.config.expanduser().resolve(strict=True)
-    overrides = suite.override_map()
+    overrides = target.override_map()
     with tempfile.TemporaryDirectory(prefix="aqualinkd-validator-config-") as directory:
         runtime_dir = Path(directory)
-        derived_config = runtime_dir / f"{suite.name}.conf"
+        derived_config = runtime_dir / f"{target.identifier}.conf"
         write_config_with_overrides(
             source_config,
             derived_config,
@@ -630,32 +450,6 @@ def _run_process_suite(args: argparse.Namespace) -> int:
         return exit_code
 
 
-def _suite_contains_case(name: str, case_id: PdaCaseId) -> bool:
-    declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(name)
-    if declarative_path is not None:
-        document = load_testcase_document(declarative_path)
-        assert isinstance(document, TestcaseSuiteDefinition)
-        return case_id in DEVICE_SELECTION_CASES and document.uses_selected_devices
-    suite = get_suite(name)
-    assert suite is not None
-    if case_id in suite.cases:
-        return True
-    return any(_suite_contains_case(member, case_id) for member in suite.members)
-
-
-def _suite_mutates_panel(name: str) -> bool:
-    declarative_path = _BUILTIN_DECLARATIVE_SUITES.get(name)
-    if declarative_path is not None:
-        document = load_testcase_document(declarative_path)
-        assert isinstance(document, TestcaseSuiteDefinition)
-        return document.mutates_panel
-    suite = get_suite(name)
-    assert suite is not None
-    return suite.mutates_panel or any(
-        _suite_mutates_panel(member) for member in suite.members
-    )
-
-
 def _run_process(args: argparse.Namespace) -> int:
     args.last_run_safe_to_continue = False
     binary = args.aqualinkd.expanduser().resolve(strict=True)
@@ -675,38 +469,17 @@ def _run_process(args: argparse.Namespace) -> int:
         if args.workdir is not None
         else binary.parent
     )
-    suite = get_suite(args.suite)
-    testcase: TestcaseDefinition | None = getattr(args, "testcase", None)
-    testcase_suite: TestcaseSuiteDefinition | None = getattr(
-        args, "testcase_suite", None
-    )
-    if suite is not None and args.mode != suite.mode:
-        raise ConfigurationError(
-            f"{suite.name} requires --mode {suite.mode}, not {args.mode}"
-        )
+    target: ResolvedRunTarget | None = getattr(args, "run_target", None)
     scenario: PdaLivePanelScenario | None = None
     api_base_url: str | None = None
     suite_test_devices: list[str] = []
-    if suite is not None or testcase is not None or testcase_suite is not None:
-        if suite is not None and suite.is_composite:
+    if target is not None:
+        if target.is_composite:
             raise ConfigurationError(
-                f"Composite suite cannot run in one process: {suite.name}"
+                f"Composite suite cannot run in one process: {target.identifier}"
             )
-        if suite is not None:
-            target_name = suite.name
-        elif testcase_suite is not None:
-            target_name = testcase_suite.identifier
-        else:
-            assert testcase is not None
-            target_name = testcase.identifier
         suite_test_devices = (
-            args.pda_test_device
-            if (
-                suite is not None
-                and any(case_id in suite.cases for case_id in DEVICE_SELECTION_CASES)
-            )
-            or (testcase_suite is not None and testcase_suite.uses_selected_devices)
-            else []
+            args.pda_test_device if target.uses_selected_devices else []
         )
         api_base_url = (
             normalize_api_base_url(args.api_base_url)
@@ -716,14 +489,8 @@ def _run_process(args: argparse.Namespace) -> int:
         scenario = PdaLivePanelScenario(
             None,
             PdaScenarioConfig(
-                suite_name=target_name,
-                execution_phase=(
-                    suite.execution_role
-                    if suite is not None
-                    else testcase_suite.config.execution_role
-                    if testcase_suite is not None
-                    else "single"
-                ),
+                suite_name=target.identifier,
+                execution_phase=target.execution_role,
                 activation_timeout_seconds=args.pda_activation_timeout,
                 action_timeout_seconds=args.pda_action_timeout,
                 status_timeout_seconds=args.pda_status_timeout,
@@ -736,15 +503,11 @@ def _run_process(args: argparse.Namespace) -> int:
                 panel_timezone=args.panel_timezone,
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
                 spa_fill_seconds=site_config.spa.fill_seconds,
-                case_ids=suite.cases if suite is not None else (),
+                case_ids=target.case_ids,
             ),
             api_base_url_override=api_base_url,
-            testcase=testcase,
-            testcases=(
-                tuple(member.testcase for member in testcase_suite.members)
-                if testcase_suite is not None
-                else ()
-            ),
+            testcase=target.testcase,
+            testcases=target.testcases,
         )
     artifact_dir = _new_artifact_dir(args.artifacts, args.label)
     args.last_artifact_dir = artifact_dir
@@ -763,20 +526,12 @@ def _run_process(args: argparse.Namespace) -> int:
             source_config=source_config,
             config_overrides=config_overrides,
             site_config=site_config,
-            execution_phase=(
-                suite.execution_role
-                if suite is not None
-                else testcase_suite.config.execution_role
-                if testcase_suite is not None
-                else "single"
-            ),
+            execution_phase=(target.execution_role if target is not None else "single"),
             disabled_button_numbers=disabled_button_numbers,
             serial_device=serial_device,
             source_tree=source_tree,
             workdir=workdir,
-            suite=suite,
-            testcase=testcase,
-            testcase_suite=testcase_suite,
+            target=target,
             scenario=scenario,
             api_base_url=api_base_url,
             suite_test_devices=suite_test_devices,
@@ -797,9 +552,7 @@ def _run_in_artifact(
     serial_device: Path,
     source_tree: Path | None,
     workdir: Path,
-    suite: SuiteProfile | None,
-    testcase: TestcaseDefinition | None,
-    testcase_suite: TestcaseSuiteDefinition | None,
+    target: ResolvedRunTarget | None,
     scenario: PdaLivePanelScenario | None,
     api_base_url: str | None,
     suite_test_devices: list[str],
@@ -807,8 +560,7 @@ def _run_in_artifact(
     command = build_aqualinkd_command(
         binary,
         config,
-        args.suite,
-        pda_testcase=testcase is not None or testcase_suite is not None,
+        target.aqualinkd_args if target is not None else (),
     )
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -816,46 +568,22 @@ def _run_in_artifact(
         "created_at": datetime.now(UTC).isoformat(),
         "label": args.label,
         "mode": args.mode,
-        "suite": (
-            {
-                "name": suite.name,
-                "description": suite.description,
-                "mode": suite.mode,
-                "aqualinkd_args": list(suite.aqualinkd_args),
-                "cases": [case_id.value for case_id in suite.cases],
-                "execution_phase": execution_phase,
-            }
-            if suite is not None
-            else {
-                "name": testcase_suite.identifier,
-                "description": testcase_suite.description,
-                "mode": testcase_suite.mode,
-                "aqualinkd_args": list(testcase_suite.config.aqualinkd_args),
-                "testcases": [
-                    member.testcase.identifier for member in testcase_suite.members
-                ],
-                "execution_phase": testcase_suite.config.execution_role,
-                "source": {
-                    "name": args.testcase_suite_path.name,
-                    "sha256": sha256_file(args.testcase_suite_path),
-                },
-            }
-            if testcase_suite is not None
-            else None
-        ),
+        "suite": _suite_manifest(target, execution_phase),
         "testcase": (
             {
-                "id": testcase.identifier,
-                "description": testcase.description,
-                "schema": testcase.schema,
-                "mode": testcase.mode,
-                "access": testcase.access,
+                "id": target.testcase.identifier,
+                "description": target.testcase.description,
+                "schema": target.testcase.schema,
+                "mode": target.testcase.mode,
+                "access": target.testcase.access,
                 "source": {
-                    "name": args.testcase_path.name,
-                    "sha256": sha256_file(args.testcase_path),
+                    "name": target.source.name,
+                    "sha256": sha256_file(target.source),
                 },
             }
-            if testcase is not None
+            if target is not None
+            and target.testcase is not None
+            and target.source is not None
             else None
         ),
         "command": command,
@@ -870,9 +598,9 @@ def _run_in_artifact(
             "pda_test_devices": suite_test_devices,
             "configured_none_buttons": list(disabled_button_numbers),
             "pda_device_selection": (
-                "not_applicable"
-                if (suite is None or PdaCaseId.CONSECUTIVE_DEVICES not in suite.cases)
-                else ("restricted" if suite_test_devices else "all_discovered_switches")
+                ("restricted" if suite_test_devices else "all_discovered_switches")
+                if target is not None and target.uses_selected_devices
+                else "not_applicable"
             ),
             "panel_time": {
                 "timezone": args.panel_timezone,
@@ -936,16 +664,19 @@ def _run_in_artifact(
         print(f"Config overrides: {formatted_overrides}", flush=True)
     print(f"Serial device: {serial_device}", flush=True)
     print(f"Mode: {args.mode}", flush=True)
-    if testcase is not None:
-        print(f"Testcase: {testcase.identifier}", flush=True)
-    elif testcase_suite is not None:
+    if target is not None and target.is_testcase:
+        print(f"Testcase: {target.identifier}", flush=True)
+    elif target is not None and target.is_declarative_suite:
         print(
-            f"Suite: {testcase_suite.identifier} "
-            f"({len(testcase_suite.members)} declarative testcases)",
+            f"Suite: {target.identifier} "
+            f"({len(target.testcases)} declarative testcases)",
             flush=True,
         )
     else:
-        print(f"Suite: {suite.name if suite is not None else 'none'}", flush=True)
+        print(
+            f"Suite: {target.identifier if target is not None else 'none'}",
+            flush=True,
+        )
 
     try:
         result = asyncio.run(
@@ -1012,19 +743,38 @@ def _run_in_artifact(
     return 0 if result.status == "passed" else 1
 
 
+def _suite_manifest(
+    target: ResolvedRunTarget | None,
+    execution_phase: Literal["single", "awake", "sleep"],
+) -> dict[str, Any] | None:
+    if target is None or target.is_testcase:
+        return None
+    manifest: dict[str, Any] = {
+        "name": target.identifier,
+        "description": target.description,
+        "mode": "physical-panel" if target.source is not None else target.mode,
+        "aqualinkd_args": list(target.aqualinkd_args),
+        "execution_phase": execution_phase,
+    }
+    if target.case_ids:
+        manifest["cases"] = [case_id.value for case_id in target.case_ids]
+    if target.testcases:
+        manifest["testcases"] = [testcase.identifier for testcase in target.testcases]
+    if target.source is not None:
+        manifest["source"] = {
+            "name": target.source.name,
+            "sha256": sha256_file(target.source),
+        }
+    return manifest
+
+
 def build_aqualinkd_command(
     binary: Path,
     config: Path,
-    suite_name: str | None,
-    *,
-    pda_testcase: bool = False,
+    aqualinkd_args: Sequence[str] = (),
 ) -> list[str]:
     command = [str(binary), "-d", "-c", str(config)]
-    suite = get_suite(suite_name)
-    if suite is not None:
-        command.extend(suite.aqualinkd_args)
-    elif pda_testcase:
-        command.append("-vv")
+    command.extend(aqualinkd_args)
     return command
 
 
@@ -1108,15 +858,6 @@ def _positive_float(value: str) -> float:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than zero")
     return parsed
-
-
-def _suite_name(value: str) -> str:
-    if value not in _RUN_SUITE_NAMES:
-        choices = ", ".join(_RUN_SUITE_NAMES)
-        raise argparse.ArgumentTypeError(
-            f"unknown suite {value!r}; choose from: {choices}"
-        )
-    return value
 
 
 def _run_target(value: str) -> str:

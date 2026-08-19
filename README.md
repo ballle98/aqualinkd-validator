@@ -1096,20 +1096,22 @@ and timing-sensitive PDA live-panel suites described above. These features are
 usable but remain pre-1.0 and should be treated as active development,
 especially when operating physical equipment.
 
-PDA organization has three layers:
+PDA organization now resolves through one execution path:
 
-- `pda/cases.py` gives each independently reported validation case a stable
-  ID, display name, and mutation policy.
-- `pda/suites.py` declares process suites as ordered case lists plus required
-  configuration overrides, and declares composite suites as ordered
-  process-suite members.
-- `pda_scenario.py` contains the shared live-panel runtime, protocol-log
-  interpretation, HTTP operations, timing, and restoration machinery.
+- `testcases/pda/` contains versioned YAML cases and `testcases/suites/`
+  provides their serialized ordering and AqualinkD configuration overrides.
+- `run_targets.py` is the single registry and normalized target model for
+  built-in suite names, explicit YAML paths, the cross-process long suite, and
+  the remaining interface-emulator suites.
+- `protocols/pda/keywords.py` binds small declarative steps to typed Python
+  behavior, while `pda_scenario.py` still contains shared PDA session,
+  protocol-log, status, sleep, and interface-emulator coordination awaiting
+  further cohesive extraction.
 
-This keeps suite composition declarative: adding or regrouping coverage does
-not add another CLI mode or phase selector. Case implementations still share
-one runtime because they use the same initial snapshot, log cursor, timing
-model, exclusion rules, and restoration guarantees.
+The old general-purpose suite compatibility layer has been removed. The
+remaining `pda/cases.py` and `pda/suites.py` catalog entries are limited to the
+AqualinkD interface-emulator tests and the long suite's required process
+boundary; ordinary physical-panel coverage is authored in YAML.
 
 [GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
 tracks the initial panel-free end-to-end milestone. Its isolated configuration

@@ -21,6 +21,7 @@ from aqualinkd_validator.config import (
     read_config_value,
     validate_live_serial_device,
 )
+from aqualinkd_validator.run_targets import RUN_TARGETS
 
 
 class CliTests(unittest.TestCase):
@@ -66,7 +67,7 @@ class CliTests(unittest.TestCase):
                     "pda-live-long",
                 ]
             )
-            args.suite = "pda-live-long"
+            args.run_target = RUN_TARGETS.resolve("pda-live-long")
             observed: list[tuple[str, str, str | None, Path, dict[str, str]]] = []
             derived_paths: list[Path] = []
 
@@ -75,7 +76,7 @@ class CliTests(unittest.TestCase):
                 phase_args.last_run_safe_to_continue = True
                 observed.append(
                     (
-                        phase_args.testcase_suite.identifier,
+                        phase_args.run_target.identifier,
                         phase_args.label,
                         read_config_value(
                             phase_args.config,
@@ -134,11 +135,11 @@ class CliTests(unittest.TestCase):
                     "pda-live-long",
                 ]
             )
-            args.suite = "pda-live-long"
+            args.run_target = RUN_TARGETS.resolve("pda-live-long")
             observed: list[str] = []
 
             def fail_awake(phase_args: argparse.Namespace) -> int:
-                member_name = phase_args.testcase_suite.identifier
+                member_name = phase_args.run_target.identifier
                 observed.append(member_name)
                 phase_args.last_run_safe_to_continue = True
                 return 1 if member_name == "pda-live-awake" else 0
@@ -170,11 +171,11 @@ class CliTests(unittest.TestCase):
                     "pda-live-long",
                 ]
             )
-            args.suite = "pda-live-long"
+            args.run_target = RUN_TARGETS.resolve("pda-live-long")
             observed: list[str] = []
 
             def fail_unsafely(phase_args: argparse.Namespace) -> int:
-                observed.append(phase_args.testcase_suite.identifier)
+                observed.append(phase_args.run_target.identifier)
                 phase_args.last_run_safe_to_continue = False
                 return 1
 
@@ -208,7 +209,7 @@ class CliTests(unittest.TestCase):
                 phase_args.last_run_safe_to_continue = True
                 observed.append(
                     (
-                        phase_args.testcase_suite.identifier,
+                        phase_args.run_target.identifier,
                         read_config_value(
                             phase_args.config,
                             "pda_sleep_mode",
@@ -253,8 +254,8 @@ class CliTests(unittest.TestCase):
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
-            observed.append(target_args.testcase.identifier)
-            self.assertIsNone(target_args.suite)
+            observed.append(target_args.run_target.identifier)
+            self.assertTrue(target_args.run_target.is_testcase)
             return 0
 
         with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
@@ -269,9 +270,8 @@ class CliTests(unittest.TestCase):
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
-            observed.append(target_args.testcase_suite.identifier)
-            self.assertIsNone(target_args.suite)
-            self.assertIsNone(target_args.testcase)
+            observed.append(target_args.run_target.identifier)
+            self.assertTrue(target_args.run_target.is_declarative_suite)
             return 0
 
         with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
@@ -283,9 +283,8 @@ class CliTests(unittest.TestCase):
         observed: list[str] = []
 
         def record_target(target_args: argparse.Namespace) -> int:
-            observed.append(target_args.testcase_suite.identifier)
-            self.assertIsNone(target_args.suite)
-            self.assertIsNone(target_args.testcase)
+            observed.append(target_args.run_target.identifier)
+            self.assertTrue(target_args.run_target.is_declarative_suite)
             return 0
 
         with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
@@ -307,11 +306,11 @@ class CliTests(unittest.TestCase):
         def record_target(target_args: argparse.Namespace) -> int:
             observed.append(
                 (
-                    target_args.testcase_suite.identifier,
+                    target_args.run_target.identifier,
                     target_args.pda_test_device,
                 )
             )
-            self.assertIsNone(target_args.suite)
+            self.assertTrue(target_args.run_target.uses_selected_devices)
             return 0
 
         with patch("aqualinkd_validator.cli._run_one", side_effect=record_target):
@@ -333,7 +332,7 @@ class CliTests(unittest.TestCase):
         def record_target(target_args: argparse.Namespace) -> int:
             observed.append(
                 (
-                    target_args.testcase_suite.identifier,
+                    target_args.run_target.identifier,
                     target_args.pda_test_device,
                 )
             )
@@ -355,8 +354,7 @@ class CliTests(unittest.TestCase):
         testcase_command = build_aqualinkd_command(
             Path("/opt/aqualinkd"),
             Path("/etc/aqualinkd.conf"),
-            None,
-            pda_testcase=True,
+            ("-vv",),
         )
         self.assertEqual(testcase_command[-1], "-vv")
 
@@ -454,17 +452,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(observed, ["America/Chicago"])
 
     def test_multiple_positional_suites_run_sequentially(self) -> None:
-        observed: list[tuple[str | None, str | None, str]] = []
+        observed: list[tuple[str, str, str]] = []
 
         def record_suite(args: argparse.Namespace) -> int:
             observed.append(
                 (
-                    args.suite,
-                    (
-                        args.testcase_suite.identifier
-                        if args.testcase_suite is not None
-                        else None
-                    ),
+                    args.run_target.identifier,
+                    args.run_target.kind,
                     args.label,
                 )
             )
@@ -489,20 +483,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             observed,
             [
-                (None, "pda-live-fast", "live-panel-pda-live-fast"),
-                ("pda-live-long", None, "live-panel-pda-live-long"),
+                ("pda-live-fast", "suite", "live-panel-pda-live-fast"),
+                ("pda-live-long", "composite", "live-panel-pda-live-long"),
             ],
         )
 
     def test_multiple_suites_stop_after_failure(self) -> None:
-        observed: list[str | None] = []
+        observed: list[str] = []
 
         def fail_suite(args: argparse.Namespace) -> int:
-            observed.append(
-                args.testcase_suite.identifier
-                if args.testcase_suite is not None
-                else args.suite
-            )
+            observed.append(args.run_target.identifier)
             return 1
 
         with (

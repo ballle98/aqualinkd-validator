@@ -6,9 +6,8 @@ cleanup are more important than minimizing code.
 
 ## Development setup
 
-The package supports Python 3.11 or newer and has no third-party runtime
-dependencies. Create an editable development environment from the repository
-root:
+The package supports Python 3.11 or newer and uses pinned PyYAML for testcase
+loading. Create an editable development environment from the repository root:
 
 ```sh
 python3 -m venv .venv
@@ -37,7 +36,8 @@ source modules are:
 
 | Module | Responsibility |
 | --- | --- |
-| `cli.py` | Options, safety authorization, suite selection, and run artifacts |
+| `cli.py` | Options, resolved-target execution, safety authorization, and run artifacts |
+| `run_targets.py` | Single registry that normalizes named suites and YAML paths before execution |
 | `supervisor.py` | AqualinkD lifecycle, stdout/stderr fan-out, timing, and process metrics |
 | `interfaces/events.py` | Typed ordered-log and monotonic-timeline boundaries |
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
@@ -45,8 +45,8 @@ source modules are:
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
-| `pda/cases.py` | Stable case identifiers, names, and mutation policy |
-| `pda/suites.py` | Declarative ordering of cases and configuration overrides |
+| `pda/cases.py` | Legacy case identifiers retained for AqualinkD interface-emulator coverage |
+| `pda/suites.py` | Legacy interface-emulator suites and the cross-process long coordinator |
 | `pda_scenario.py` | Current PDA case coordination, protocol log correlation, state validation, and timing |
 | `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
 | `pda_simulator.py` | Client for AqualinkD's AquaPDA interface-emulation WebSocket |
@@ -75,18 +75,25 @@ documentation and code comments, qualify them using the terms above.
 
 ## Adding or changing a test today
 
-Cases and suites are intentionally separate:
+Ordinary cases and process suites are YAML:
 
-1. Add a stable `PdaCaseId` and its mutation policy in `pda/cases.py`.
-2. Implement the operation in the appropriate case module. Until the planned
-   split is complete, PDA operations live in `pda_scenario.py`.
-3. Map the case ID to the operation in `_case_operation()`.
-4. Add the case to one or more ordered suites in `pda/suites.py`.
-5. Add a focused unit test, including timeout and failure behavior.
-6. For a mutating case, prove restoration on success, assertion failure, and
+1. Add or edit a testcase under `testcases/pda/` using existing typed
+   keywords.
+2. Add its relative path to an ordered suite under `testcases/suites/`.
+3. If the behavior needs new protocol logic, add one bounded step model and
+   loader entry, implement one typed keyword in `protocols/pda/keywords.py`,
+   and keep the YAML limited to intent, parameters, and deadlines.
+4. Add focused loader, keyword, failure, and timeout tests.
+5. For a mutating case, prove restoration on success, assertion failure, and
    cancellation.
-7. Run a physical-panel test only after unit tests pass and only with explicit
+6. Run a physical-panel test only after unit tests pass and only with explicit
    `--panel-read-write` authorization.
+
+`run_targets.py` is the only run-target registry. Do not add suite-name
+branches to `cli.py`. The remaining Python catalogs in `pda/cases.py` and
+`pda/suites.py` exist only for interface-emulator cases that have not yet been
+migrated and for the long suite's cross-process boundary; do not add ordinary
+live-panel cases there.
 
 Every wait must have a deadline. Capture the output cursor before an action and
 accept only log events after that cursor. Do not treat HTTP request completion
