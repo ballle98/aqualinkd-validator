@@ -1,24 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 import time
 import unittest
-from pathlib import Path
 from typing import Any
 
-from aqualinkd_validator.domain import EquipmentSnapshot
-from aqualinkd_validator.pda_scenario import (
-    PdaLivePanelScenario,
-    PdaScenarioConfig,
-    ScenarioFailure,
-)
-from aqualinkd_validator.pda_simulator import (
-    AquaPdaSimulator,
+from aqualinkd_validator.aquapda_client import (
+    AquaPdaProtocolError,
+    AquaPdaWebSocketClient,
     PdaScreen,
-    SimulatorProtocolError,
 )
-from aqualinkd_validator.supervisor import OutputMonitor, ScenarioContext, Timeline
+from aqualinkd_validator.protocols.pda.aquapda import (
+    AquaPdaMenuWalkConfig,
+    AquaPdaMenuWalker,
+    AquaPdaTransportConfig,
+    AquaPdaTransportValidator,
+    AquaPdaValidationFailure,
+)
+from aqualinkd_validator.supervisor import OutputMonitor
 
 
 def packet(command: int, *data: int) -> dict[str, Any]:
@@ -29,31 +28,15 @@ def packet(command: int, *data: int) -> dict[str, Any]:
     }
 
 
-class FakeApi:
-    base_url = "http://127.0.0.1:8080"
-
-    async def devices(self) -> EquipmentSnapshot:
-        return EquipmentSnapshot(temp_units="f", devices={})
-
-    async def status(self) -> dict[str, Any]:
-        return {}
-
-    async def set_device(self, identifier: str, enabled: bool) -> None:
-        raise AssertionError("transport test must not change equipment")
-
-    async def set_setpoint(self, identifier: str, value: int) -> None:
-        raise AssertionError("transport test must not change setpoints")
-
-
-class FakeSimulator:
+class FakeAquaPdaClient:
     def __init__(
         self,
-        context: ScenarioContext,
+        events: OutputMonitor,
         *,
         corrupt: bool,
         slow: bool,
     ) -> None:
-        self.context = context
+        self.events = events
         self.corrupt = corrupt
         self.slow = slow
         self.screen = PdaScreen()
@@ -63,13 +46,13 @@ class FakeSimulator:
 
     async def connect(self) -> None:
         if self.corrupt:
-            await self.context.monitor.publish(
+            await self.events.publish(
                 1,
                 "stderr",
                 "RS Serial: Serial read bad Jandy checksum, ignoring",
             )
         if self.slow:
-            await self.context.monitor.publish(
+            await self.events.publish(
                 2,
                 "stdout",
                 "RS Serial: Time from recv to send is 0.019 sec",
@@ -121,7 +104,7 @@ class FakeSimulator:
         self.closed = True
 
 
-class FakeMenuSimulator:
+class FakeAquaPdaMenuClient:
     MENUS = {
         "INIT": [],
         "HOME": ["POOL MODE OFF", "MENU", "EQUIPMENT ON/OFF"],
@@ -193,7 +176,7 @@ class FakeMenuSimulator:
     ) -> str:
         current = self.screen.highlighted_text
         if not current or current == previous:
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 "PDA highlight did not change after a navigation key"
             )
         return current
@@ -249,21 +232,21 @@ class PdaScreenTests(unittest.TestCase):
         self.assertEqual(screen.lines[2:4], ["two", "three"])
 
 
-class SimulatorTransportTests(unittest.IsolatedAsyncioTestCase):
+class AquaPdaTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_screen_settle_ignores_non_display_packets(self) -> None:
-        simulator = AquaPdaSimulator("http://127.0.0.1:8080")
-        simulator.screen_update_count = 1
+        client = AquaPdaWebSocketClient("http://127.0.0.1:8080")
+        client.screen_update_count = 1
 
         async def notify_for_unrelated_packets() -> None:
             for _ in range(10):
                 await asyncio.sleep(0.005)
-                async with simulator._condition:
-                    simulator.packet_count += 1
-                    simulator._condition.notify_all()
+                async with client._condition:
+                    client.packet_count += 1
+                    client._condition.notify_all()
 
         notifier = asyncio.create_task(notify_for_unrelated_packets())
         started = time.monotonic()
-        settled = await simulator.wait_for_screen_settle(
+        settled = await client.wait_for_screen_settle(
             after=0,
             timeout_seconds=0.2,
             idle_seconds=0.02,
@@ -278,81 +261,48 @@ class SimulatorTransportTests(unittest.IsolatedAsyncioTestCase):
         await self._run_transport(corrupt=False, slow=False)
 
     async def test_transport_fails_on_bad_checksum(self) -> None:
-        with self.assertRaisesRegex(ScenarioFailure, "BAD PACKET traffic"):
+        with self.assertRaisesRegex(AquaPdaValidationFailure, "BAD PACKET traffic"):
             await self._run_transport(corrupt=True, slow=False)
 
     async def test_transport_fails_on_slow_ack_path(self) -> None:
-        with self.assertRaisesRegex(ScenarioFailure, "10ms transport budget"):
+        with self.assertRaisesRegex(
+            AquaPdaValidationFailure,
+            "10ms transport budget",
+        ):
             await self._run_transport(corrupt=False, slow=True)
 
     async def _run_transport(self, *, corrupt: bool, slow: bool) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(artifact_dir / "timeline.jsonl", time.monotonic_ns())
-            context = ScenarioContext(
-                artifact_dir=artifact_dir,
-                monitor=OutputMonitor(),
-                timeline=timeline,
-            )
-            simulators: list[FakeSimulator] = []
-
-            def factory(base_url: str) -> FakeSimulator:
-                self.assertEqual(base_url, FakeApi.base_url)
-                simulator = FakeSimulator(
-                    context,
-                    corrupt=corrupt,
-                    slow=slow,
-                )
-                simulators.append(simulator)
-                return simulator
-
-            scenario = PdaLivePanelScenario(
-                FakeApi(),
-                PdaScenarioConfig(
-                    simulator_packet_count=3,
-                    simulator_timeout_seconds=0.1,
-                ),
-                simulator_factory=factory,
-            )
-            try:
-                await scenario._test_simulator_transport(context)
-            finally:
-                timeline.close()
-            self.assertTrue(simulators[0].closed)
+        events = OutputMonitor()
+        client = FakeAquaPdaClient(events, corrupt=corrupt, slow=slow)
+        result = await AquaPdaTransportValidator(
+            client=client,
+            events=events,
+            config=AquaPdaTransportConfig(
+                packet_count=3,
+                timeout_seconds=0.1,
+            ),
+            progress=lambda message: None,
+        ).validate()
+        self.assertEqual(result.report["packets_observed"], 5)
+        self.assertTrue(client.closed)
 
     async def test_menu_walk_visits_each_structural_submenu(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(
-                artifact_dir / "timeline.jsonl", time.monotonic_ns()
-            )
-            context = ScenarioContext(
-                artifact_dir=artifact_dir,
-                monitor=OutputMonitor(),
-                timeline=timeline,
-            )
-            simulator = FakeMenuSimulator()
-            scenario = PdaLivePanelScenario(
-                FakeApi(),
-                PdaScenarioConfig(simulator_timeout_seconds=0.1),
-                simulator_factory=lambda base_url: simulator,
-            )
-            try:
-                await scenario._test_menu_walk(context)
-            finally:
-                timeline.close()
-
-            report = scenario._report["menu_walk"]
-            self.assertEqual(report["screens_visited"], 6)
-            self.assertEqual(
-                [screen["path"] for screen in report["screens"]],
-                [
-                    ["HOME"],
-                    ["HOME", "MENU"],
-                    ["HOME", "MENU", "HELP"],
-                    ["HOME", "MENU", "PROGRAM"],
-                    ["HOME", "MENU", "SET TEMP"],
-                    ["HOME", "EQUIPMENT ON/OFF"],
-                ],
-            )
-            self.assertTrue(simulator.closed)
+        client = FakeAquaPdaMenuClient()
+        result = await AquaPdaMenuWalker(
+            client=client,
+            config=AquaPdaMenuWalkConfig(timeout_seconds=0.1),
+            progress=lambda message: None,
+        ).walk()
+        self.assertEqual(result.report["screens_visited"], 6)
+        self.assertEqual(
+            [screen["path"] for screen in result.report["screens"]],
+            [
+                ["HOME"],
+                ["HOME", "MENU"],
+                ["HOME", "MENU", "HELP"],
+                ["HOME", "MENU", "PROGRAM"],
+                ["HOME", "MENU", "SET TEMP"],
+                ["HOME", "EQUIPMENT ON/OFF"],
+            ],
+        )
+        self.assertTrue(client.closed)

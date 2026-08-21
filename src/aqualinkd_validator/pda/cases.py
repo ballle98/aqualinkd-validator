@@ -13,7 +13,7 @@ class PdaCaseId(StrEnum):
     SLEEP_CYCLE = "sleep-cycle"
     DEVICE_DURING_STATUS_RETRY = "device-during-status-retry"
     DEVICE_AFTER_PROBE = "device-after-probe"
-    SIMULATOR_TRANSPORT = "simulator-transport"
+    AQUAPDA_TRANSPORT = "aquapda-transport"
     MENU_WALK = "menu-walk"
 
 
@@ -65,9 +65,9 @@ CASES: dict[PdaCaseId, PdaCaseDefinition] = {
         name="Device after PDA probing begins",
         mutates_panel=True,
     ),
-    PdaCaseId.SIMULATOR_TRANSPORT: PdaCaseDefinition(
-        id=PdaCaseId.SIMULATOR_TRANSPORT,
-        name="AquaPDA simulator transport integrity",
+    PdaCaseId.AQUAPDA_TRANSPORT: PdaCaseDefinition(
+        id=PdaCaseId.AQUAPDA_TRANSPORT,
+        name="AquaPDA WebSocket transport integrity",
         mutates_panel=False,
     ),
     PdaCaseId.MENU_WALK: PdaCaseDefinition(

@@ -48,7 +48,7 @@ SUITES: dict[str, PdaSuiteDefinition] = {
         ),
         cases=(
             PdaCaseId.INITIALIZATION,
-            PdaCaseId.SIMULATOR_TRANSPORT,
+            PdaCaseId.AQUAPDA_TRANSPORT,
         ),
         config_overrides=(("pda_sleep_mode", "no"),),
         execution_role="awake",
@@ -61,7 +61,7 @@ SUITES: dict[str, PdaSuiteDefinition] = {
         ),
         cases=(
             PdaCaseId.INITIALIZATION,
-            PdaCaseId.SIMULATOR_TRANSPORT,
+            PdaCaseId.AQUAPDA_TRANSPORT,
             PdaCaseId.MENU_WALK,
         ),
         config_overrides=(("pda_sleep_mode", "no"),),
@@ -77,7 +77,7 @@ SUITES: dict[str, PdaSuiteDefinition] = {
         mode="jandy-simulator",
         cases=(
             PdaCaseId.INITIALIZATION,
-            PdaCaseId.SIMULATOR_TRANSPORT,
+            PdaCaseId.AQUAPDA_TRANSPORT,
             PdaCaseId.MENU_WALK,
         ),
         config_overrides=(("pda_sleep_mode", "no"),),

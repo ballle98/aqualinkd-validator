@@ -13,11 +13,11 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 
-class SimulatorProtocolError(RuntimeError):
+class AquaPdaProtocolError(RuntimeError):
     """Raised when the AquaPDA WebSocket protocol is not usable."""
 
 
-class PdaSimulatorClient(Protocol):
+class AquaPdaClient(Protocol):
     screen: PdaScreen
     packet_count: int
     screen_update_count: int
@@ -102,7 +102,7 @@ class JsonWebSocket:
         lines = response.decode("iso-8859-1").split("\r\n")
         if not lines or " 101 " not in lines[0]:
             writer.close()
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 f"WebSocket upgrade failed: {lines[0] if lines else response!r}"
             )
         headers = {
@@ -118,7 +118,7 @@ class JsonWebSocket:
         ).decode("ascii")
         if headers.get("sec-websocket-accept") != expected:
             writer.close()
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 "WebSocket server returned an invalid accept key"
             )
         self._reader = reader
@@ -136,12 +136,12 @@ class JsonWebSocket:
             if opcode == 0x1:
                 value = json.loads(payload.decode("utf-8"))
                 if not isinstance(value, dict):
-                    raise SimulatorProtocolError(
+                    raise AquaPdaProtocolError(
                         "WebSocket JSON message is not an object"
                     )
                 return value
             if opcode == 0x8:
-                raise SimulatorProtocolError("AqualinkD closed the WebSocket")
+                raise AquaPdaProtocolError("AqualinkD closed the WebSocket")
             if opcode == 0x9:
                 await self._send_frame(0xA, payload)
 
@@ -149,7 +149,7 @@ class JsonWebSocket:
         writer = self._writer
         if writer is None:
             return
-        with contextlib.suppress(OSError, SimulatorProtocolError):
+        with contextlib.suppress(OSError, AquaPdaProtocolError):
             await self._send_frame(0x8, b"\x03\xe8")
         writer.close()
         with contextlib.suppress(OSError, TimeoutError):
@@ -159,7 +159,7 @@ class JsonWebSocket:
 
     async def _send_frame(self, opcode: int, payload: bytes) -> None:
         if self._writer is None:
-            raise SimulatorProtocolError("WebSocket is not connected")
+            raise AquaPdaProtocolError("WebSocket is not connected")
         mask = os.urandom(4)
         length = len(payload)
         if length < 126:
@@ -174,7 +174,7 @@ class JsonWebSocket:
 
     async def _read_frame(self) -> tuple[int, bytes]:
         if self._reader is None:
-            raise SimulatorProtocolError("WebSocket is not connected")
+            raise AquaPdaProtocolError("WebSocket is not connected")
         header = await self._reader.readexactly(2)
         final = bool(header[0] & 0x80)
         opcode = header[0] & 0x0F
@@ -191,7 +191,7 @@ class JsonWebSocket:
                 byte ^ mask[index % 4] for index, byte in enumerate(payload)
             )
         if not final or opcode == 0x0:
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 "fragmented WebSocket messages are not supported"
             )
         return opcode, payload
@@ -216,12 +216,12 @@ class PdaScreen:
         if packet.get("type") != "simpacket":
             return False
         if packet.get("simtype") != "aquapda":
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 f"expected aquapda packet, received {packet.get('simtype')!r}"
             )
         raw = packet.get("dec")
         if not isinstance(raw, list) or len(raw) < 4:
-            raise SimulatorProtocolError("simpacket has no usable dec array")
+            raise AquaPdaProtocolError("simpacket has no usable dec array")
         data = [int(value) for value in raw]
         command = data[3]
         changed = False
@@ -277,7 +277,7 @@ class PdaScreen:
                 self.lines[index] = self.lines[index - 1]
 
 
-class AquaPdaSimulator:
+class AquaPdaWebSocketClient:
     KEYS = {
         "page_down": 0x01,
         "back": 0x02,
@@ -319,7 +319,7 @@ class AquaPdaSimulator:
             async with self._condition:
                 while self.packet_count - after < count:
                     if self._reader_error is not None:
-                        raise SimulatorProtocolError(
+                        raise AquaPdaProtocolError(
                             f"AquaPDA receive loop failed: {self._reader_error}"
                         ) from self._reader_error
                     await self._condition.wait()
@@ -328,7 +328,7 @@ class AquaPdaSimulator:
         try:
             return await asyncio.wait_for(wait(), timeout_seconds)
         except TimeoutError as error:
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 f"received only {self.packet_count - after} AquaPDA packet(s); "
                 f"expected {count} within {timeout_seconds:g}s"
             ) from error
@@ -347,7 +347,7 @@ class AquaPdaSimulator:
                     if self.packet_count > after and current and current != previous:
                         return current
                     if self._reader_error is not None:
-                        raise SimulatorProtocolError(
+                        raise AquaPdaProtocolError(
                             f"AquaPDA receive loop failed: {self._reader_error}"
                         ) from self._reader_error
                     await self._condition.wait()
@@ -355,7 +355,7 @@ class AquaPdaSimulator:
         try:
             return await asyncio.wait_for(wait(), timeout_seconds)
         except TimeoutError as error:
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 "PDA highlight did not change after a navigation key"
             ) from error
 
@@ -373,7 +373,7 @@ class AquaPdaSimulator:
                     if self.packet_count > after and current != previous:
                         return current
                     if self._reader_error is not None:
-                        raise SimulatorProtocolError(
+                        raise AquaPdaProtocolError(
                             f"AquaPDA receive loop failed: {self._reader_error}"
                         ) from self._reader_error
                     await self._condition.wait()
@@ -381,7 +381,7 @@ class AquaPdaSimulator:
         try:
             return await asyncio.wait_for(wait(), timeout_seconds)
         except TimeoutError as error:
-            raise SimulatorProtocolError(
+            raise AquaPdaProtocolError(
                 "PDA screen did not change after a navigation key"
             ) from error
 
@@ -398,12 +398,12 @@ class AquaPdaSimulator:
         async with self._condition:
             while True:
                 if self._reader_error is not None:
-                    raise SimulatorProtocolError(
+                    raise AquaPdaProtocolError(
                         f"AquaPDA receive loop failed: {self._reader_error}"
                     ) from self._reader_error
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise SimulatorProtocolError(
+                    raise AquaPdaProtocolError(
                         "PDA screen did not settle after a navigation key"
                     )
                 if self.screen_update_count > after:
@@ -427,7 +427,7 @@ class AquaPdaSimulator:
                     try:
                         await asyncio.wait_for(self._condition.wait(), remaining)
                     except TimeoutError as error:
-                        raise SimulatorProtocolError(
+                        raise AquaPdaProtocolError(
                             "PDA screen did not update after a navigation key"
                         ) from error
 

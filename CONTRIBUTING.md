@@ -53,7 +53,8 @@ source modules are:
 | `pda/suites.py` | Legacy interface-emulator suites and the cross-process long coordinator |
 | `pda_scenario.py` | Current PDA case coordination, panel-state validation, sleep/status behavior, and timing |
 | `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
-| `pda_simulator.py` | Client for AqualinkD's AquaPDA interface-emulation WebSocket |
+| `aquapda_client.py` | Client and screen reconstruction for AqualinkD's AquaPDA WebSocket interface |
+| `protocols/pda/aquapda.py` | AquaPDA transport validation and bounded read-only menu walking |
 
 `pda_scenario.py` still contains too many responsibilities. Restoration policy,
 equipment mutations, PDA programmer correlation, session startup, panel
@@ -75,9 +76,10 @@ AqualinkD is being represented:
 | **physical panel** | A real AquaLink power-center controller connected over RS485. |
 | **capture replay** | Feeding recorded frames and timing into a transport; it is not necessarily a stateful panel emulator. |
 
-Existing public identifiers such as `--mode jandy-simulator`,
-`pda-live-simulator`, and `pda_simulator.py` remain compatible names. In new
-documentation and code comments, qualify them using the terms above.
+Some public suite and mode identifiers still contain legacy `simulator`
+wording while their target-resolution migration is completed. New code and
+documentation use the precise terms above; internal AquaPDA client identifiers
+do not retain compatibility aliases.
 
 ## Adding or changing a test today
 
