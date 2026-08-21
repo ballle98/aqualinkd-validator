@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import re
 import time
@@ -26,6 +25,8 @@ from .pda_simulator import (
     SimulatorProtocolError,
 )
 from .protocols.pda import (
+    PdaEquipmentStatusFailure,
+    PdaEquipmentStatusService,
     PdaPanelIdentityConfig,
     PdaPanelIdentityFailure,
     PdaPanelIdentityResult,
@@ -33,6 +34,7 @@ from .protocols.pda import (
     PdaProgrammerFailure,
     PdaProgrammerObserver,
 )
+from .protocols.pda import equipment_status as pda_equipment_status
 from .protocols.pda import session as pda_session
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
@@ -78,18 +80,8 @@ SPA_HEATER_SETPOINT_ACTIVE_MARKERS = (
     SPA_HEATER_SETPOINT_ACTIVE,
     LEGACY_SPA_HEATER_SETPOINT_ACTIVE,
 )
-STATUS_MENU_PRESENT = "PDA Start new Equiptment loop"
-LEGACY_STATUS_MENU_PRESENT = "PDA Start new Equipment loop"
-STATUS_MENU_PRESENT_MARKERS = (
-    STATUS_MENU_PRESENT,
-    LEGACY_STATUS_MENU_PRESENT,
-)
-STATUS_MENU_FINISHED = "PDA End Equiptment loop"
-LEGACY_STATUS_MENU_FINISHED = "PDA End Equipment loop"
-STATUS_MENU_FINISHED_MARKERS = (
-    STATUS_MENU_FINISHED,
-    LEGACY_STATUS_MENU_FINISHED,
-)
+STATUS_MENU_PRESENT = pda_equipment_status.STATUS_MENU_PRESENT
+LEGACY_STATUS_MENU_PRESENT = pda_equipment_status.LEGACY_STATUS_MENU_PRESENT
 PDA_SLEEPING = "PDA Aqualink daemon in sleep mode"
 PDA_ADDRESS_STATUS = "To 0x60 of type           Status"
 PDA_ADDRESS_PROBE = "To 0x60 of type            Probe"
@@ -100,12 +92,6 @@ _EQUIPMENT_POLL_SECONDS = 0.25
 
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
 _AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
-_STATUS_MESSAGE = re.compile(r"\*\*\* Pass Equiptment msg '([^']*)'")
-_FOUND_STATUS = re.compile(
-    r"Found(?: EQ CTL)? Status for (.+?)\s*=\s*['\"]?(.+?)['\"]?\s*$",
-    re.IGNORECASE,
-)
-_SWG_PERCENT = re.compile(r"AquaPure\s*=\s*(\d+)", re.IGNORECASE)
 _SERIAL_SEND_TIME = re.compile(
     r"Time from recv to (?:blocking )?send is\s+([0-9.]+)\s+sec",
     re.IGNORECASE,
@@ -1486,52 +1472,33 @@ class PdaLivePanelScenario:
 
         cursor = context.monitor.cursor
         wait_started = context.timeline.offset_ns()
-        print(
-            "[ WAIT ] Equipment status: waiting for the PDA home menu "
-            f"(timeout {self._config.status_timeout_seconds:g}s)",
-            flush=True,
+        status_service = PdaEquipmentStatusService(
+            events=context.monitor,
+            wait_for_stable=lambda identifiers, phase, timeout: (
+                self._wait_for_stable_equipment_snapshot(
+                    context,
+                    identifiers,
+                    phase=phase,
+                    timeout_seconds=timeout,
+                )
+            ),
+            status_timeout_seconds=self._config.status_timeout_seconds,
+            state_timeout_seconds=self._config.state_timeout_seconds,
+            progress=lambda message: print(message, flush=True),
         )
-        home = await context.monitor.wait_for(
-            "PDA Menu Line 1 = AIR",
-            after=cursor,
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-        print("[STATE ] PDA returned to the home menu", flush=True)
-        print(
-            "[ WAIT ] Equipment status: waiting for a complete multi-page "
-            f"loop (timeout {self._config.status_timeout_seconds:g}s)",
-            flush=True,
-        )
-        started = await self._wait_for_marker(
-            context,
-            STATUS_MENU_PRESENT_MARKERS,
-            after=home.sequence,
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-        print("[STATE ] EQUIPMENT STATUS loop started", flush=True)
-        finished = await self._wait_for_marker(
-            context,
-            STATUS_MENU_FINISHED_MARKERS,
-            after=started.sequence,
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-        reconciled = await context.monitor.wait_for(
-            "Start new equipment cycle bitmask",
-            after=finished.sequence,
-            timeout_seconds=self._config.state_timeout_seconds,
-        )
-        print(
-            "[STATE ] EQUIPMENT STATUS loop completed and reconciled",
-            flush=True,
-        )
-
-        events = self._status_loop_events(context, started, reconciled)
-        verification = await self._verify_status_loop(
-            context,
-            controls,
-            events,
-            setup_states=setup_states,
-        )
+        loop = await status_service.wait_for_complete_loop(after=cursor)
+        try:
+            result = await status_service.verify(
+                initial_snapshot=self._initial_snapshot,
+                controls=controls,
+                events=loop.events,
+                setup_states=setup_states,
+            )
+        except PdaEquipmentStatusFailure as error:
+            if error.result is not None:
+                self._report["equipment_status"] = error.result.report
+            raise ScenarioFailure(str(error)) from error
+        verification = result.report
         self._report["equipment_status"] = verification
         swg_suffix = (
             f"; SWG {verification['swg']['percent']}%"
@@ -1553,7 +1520,7 @@ class PdaLivePanelScenario:
             requested_value="complete",
             start_offset_ns=wait_started,
             api_ack_offset_ns=None,
-            log_completion_offset_ns=reconciled.offset_ns,
+            log_completion_offset_ns=loop.reconciled.offset_ns,
             state_observed_offset_ns=context.timeline.offset_ns(),
         )
 
@@ -1740,247 +1707,6 @@ class PdaLivePanelScenario:
             offset_ns=context.timeline.offset_ns,
         )
         await exercise.run(self._initial_snapshot)
-
-    def _status_loop_events(
-        self,
-        context: ScenarioContext,
-        started: LineEvent,
-        finished: LineEvent,
-    ) -> list[LineEvent]:
-        history = context.monitor.recent_events()
-        first_sequence = started.sequence
-        for event in reversed(history):
-            if event.sequence >= started.sequence:
-                continue
-            if "Pass Equiptment msg 'EQUIPMENT STATUS" in event.text:
-                first_sequence = event.sequence
-                break
-        return [
-            event
-            for event in history
-            if first_sequence <= event.sequence <= finished.sequence
-        ]
-
-    async def _verify_status_loop(
-        self,
-        context: ScenarioContext,
-        controls: list[str],
-        events: list[LineEvent],
-        *,
-        setup_states: dict[str, dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        assert self._initial_snapshot is not None
-        status_messages: list[str] = []
-        found_names: set[str] = set()
-        found_status: dict[str, str] = {}
-        heater_ids: set[str] = set()
-        swg_percent: int | None = None
-        for event in events:
-            message = _STATUS_MESSAGE.search(event.text)
-            if message is not None:
-                status_messages.append(message.group(1).strip())
-            found = _FOUND_STATUS.search(event.text)
-            if found is not None:
-                normalized = self._normalize_status_name(found.group(1))
-                found_names.add(normalized)
-                found_status[normalized] = found.group(2).strip()
-            lowered = event.text.casefold()
-            if "pool hearter is enabled" in lowered:
-                heater_ids.add("Pool_Heater")
-            if "spa hearter is enabled" in lowered:
-                heater_ids.add("Spa_Heater")
-            percent = _SWG_PERCENT.search(event.text)
-            if percent is not None:
-                swg_percent = int(percent.group(1))
-
-        missing: list[str] = []
-        verified: list[str] = []
-        for identifier in controls:
-            device = self._initial_snapshot.devices[identifier]
-            name = self._normalize_status_name(str(device.get("name", "")))
-            if identifier in heater_ids or name in found_names:
-                verified.append(identifier)
-            else:
-                missing.append(identifier)
-
-        snapshot = await self._wait_for_stable_equipment_snapshot(
-            context,
-            controls,
-            phase="devices.status_menu.verification",
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-        incorrect_states = [
-            identifier
-            for identifier in controls
-            if not self._device_enabled(self._require_device(snapshot, identifier))
-        ]
-        swg_devices = [
-            device
-            for device in snapshot.devices.values()
-            if device.get("type") == "setpoint_swg"
-        ]
-        swg_present = bool(swg_devices)
-        swg_observed = (
-            any(
-                any(
-                    marker in message.casefold()
-                    for marker in ("aquapure", "salt", "boost")
-                )
-                for message in status_messages
-            )
-            or swg_percent is not None
-        )
-        swg_api_percent: int | None = None
-        if swg_devices:
-            with contextlib.suppress(KeyError, TypeError, ValueError):
-                swg_api_percent = round(float(swg_devices[0]["spvalue"]))
-
-        heater_states: dict[str, dict[str, Any]] = {}
-        for identifier in controls:
-            device = self._require_device(snapshot, identifier)
-            if device.get("type") != "setpoint_thermo":
-                continue
-            details = self._device_state_details(device)
-            candidates = {
-                self._normalize_status_name(identifier),
-                self._normalize_status_name(str(device.get("name", ""))),
-            }
-            if identifier == POOL_HEATER:
-                candidates.update({"poolheat", "poolheater"})
-            elif identifier == "Spa_Heater":
-                candidates.update({"spaheat", "spaheater"})
-            pda_lines = [
-                message
-                for message in status_messages
-                if any(
-                    self._normalize_status_name(message).startswith(candidate)
-                    for candidate in candidates
-                    if candidate
-                )
-            ]
-            pda_lines.extend(
-                status
-                for name, status in found_status.items()
-                if name in candidates and status not in pda_lines
-            )
-            normalized_lines = [
-                self._normalize_status_name(message) for message in pda_lines
-            ]
-            pda_enabled: bool | None = None
-            pda_active: bool | None = None
-            for line in normalized_lines:
-                if line.endswith("off"):
-                    pda_enabled = False
-                    pda_active = False
-                elif line.endswith(("ena", "enabled")):
-                    pda_enabled = True
-                    pda_active = False
-                elif line.endswith("on") or line in candidates:
-                    pda_enabled = True
-                    pda_active = True
-            heater_states[identifier] = {
-                **details,
-                "pda_status_lines": pda_lines,
-                "pda_enabled": pda_enabled,
-                "pda_active": pda_active,
-                "pda_enabled_marker": identifier in heater_ids,
-                "found_status": found_status.get(
-                    self._normalize_status_name(str(device.get("name", "")))
-                ),
-            }
-
-        heater_enabled_mismatches = [
-            identifier
-            for identifier, state in heater_states.items()
-            if state["pda_enabled"] is not None
-            and state["pda_enabled"] != state["enabled"]
-        ]
-        heater_active_mismatches = [
-            identifier
-            for identifier, state in heater_states.items()
-            if state["pda_active"] is not None
-            and state["pda_active"] != state["active"]
-        ]
-
-        failures: list[str] = []
-        if missing:
-            failures.append("missing status entries for " + ", ".join(missing))
-        if incorrect_states:
-            failures.append(
-                "API marked expected-on devices off after status processing: "
-                + ", ".join(incorrect_states)
-            )
-        if heater_enabled_mismatches:
-            failures.append(
-                "PDA heater enabled status disagreed with the API: "
-                + ", ".join(heater_enabled_mismatches)
-            )
-        if heater_active_mismatches:
-            failures.append(
-                "PDA heater active status disagreed with the API: "
-                + ", ".join(heater_active_mismatches)
-            )
-        if swg_present and not swg_observed:
-            failures.append("SWG is present but no SWG status was captured")
-        if (
-            swg_percent is not None
-            and swg_api_percent is not None
-            and swg_percent != swg_api_percent
-        ):
-            failures.append(
-                f"SWG status reported {swg_percent}% but API reported "
-                f"{swg_api_percent}%"
-            )
-
-        verification = {
-            "setup_states": setup_states or {},
-            "expected_devices": controls,
-            "verified_devices": verified,
-            "missing_devices": missing,
-            "incorrect_api_states": incorrect_states,
-            "status_messages": status_messages,
-            "heater_states": heater_states,
-            "heater_enabled_mismatches": heater_enabled_mismatches,
-            "heater_active_mismatches": heater_active_mismatches,
-            "swg": {
-                "present": swg_present,
-                "observed": swg_observed,
-                "percent": swg_percent,
-                "api_percent": swg_api_percent,
-            },
-        }
-        for identifier, state in heater_states.items():
-            pda_enabled_state = (
-                "enabled"
-                if state["pda_enabled"] is True
-                else "disabled"
-                if state["pda_enabled"] is False
-                else "not reported"
-            )
-            pda_active_state = (
-                "active"
-                if state["pda_active"] is True
-                else "inactive"
-                if state["pda_active"] is False
-                else "not reported"
-            )
-            print(
-                f"[STATE ] {identifier}: "
-                f"{'enabled' if state['enabled'] else 'disabled'}, "
-                f"{'actively heating' if state['active'] else 'not actively heating'}, "
-                f"PDA {pda_enabled_state}/{pda_active_state}",
-                flush=True,
-            )
-        if failures:
-            self._report["equipment_status"] = verification
-            raise ScenarioFailure("; ".join(failures))
-        return verification
-
-    @staticmethod
-    def _normalize_status_name(value: str) -> str:
-        return "".join(
-            character for character in value.casefold() if character.isalnum()
-        )
 
     async def _test_consecutive_devices(
         self,

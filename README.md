@@ -1107,9 +1107,10 @@ PDA organization now resolves through one execution path:
   behavior, and `protocols/pda/session.py` owns PDA_INIT, daemon identity,
   firmware-screen capture, and HTTP endpoint discovery.
   `protocols/pda/identity.py` owns configured/reported panel comparison and
-  bounded panel-clock validation. `pda_scenario.py` still contains equipment
-  status, sleep, and interface-emulator coordination awaiting further cohesive
-  extraction.
+  bounded panel-clock validation, while `protocols/pda/equipment_status.py`
+  owns complete multi-page status-loop parsing and reconciliation.
+  `pda_scenario.py` still contains equipment setup policy, sleep, and
+  interface-emulator coordination awaiting further cohesive extraction.
 
 The old general-purpose suite compatibility layer has been removed. The
 remaining `pda/cases.py` and `pda/suites.py` catalog entries are limited to the
