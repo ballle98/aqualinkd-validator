@@ -34,7 +34,7 @@ from .metadata import (
     collect_source_metadata,
 )
 from .metrics import summarize_metrics
-from .pda_scenario import PdaLivePanelScenario, PdaScenarioConfig
+from .pda_scenario import PdaScenarioConfig, PdaScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
 from .supervisor import supervise
@@ -470,7 +470,7 @@ def _run_process(args: argparse.Namespace) -> int:
         else binary.parent
     )
     target: ResolvedRunTarget | None = getattr(args, "run_target", None)
-    scenario: PdaLivePanelScenario | None = None
+    scenario: PdaScenarioRuntime | None = None
     api_base_url: str | None = None
     suite_test_devices: list[str] = []
     if target is not None:
@@ -486,7 +486,7 @@ def _run_process(args: argparse.Namespace) -> int:
             if args.api_base_url is not None
             else None
         )
-        scenario = PdaLivePanelScenario(
+        scenario = PdaScenarioRuntime(
             None,
             PdaScenarioConfig(
                 suite_name=target.identifier,
@@ -553,7 +553,7 @@ def _run_in_artifact(
     source_tree: Path | None,
     workdir: Path,
     target: ResolvedRunTarget | None,
-    scenario: PdaLivePanelScenario | None,
+    scenario: PdaScenarioRuntime | None,
     api_base_url: str | None,
     suite_test_devices: list[str],
 ) -> int:

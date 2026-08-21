@@ -50,7 +50,7 @@ source modules are:
 | `protocols/pda/sleep.py` | Natural sleep/wake duty-cycle observation, post-wake refresh timing, and STATUS-retry/probe transition validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
-| `pda_scenario.py` | Current PDA case coordination, panel-state validation, sleep/status behavior, and timing |
+| `pda_scenario.py` | `PdaScenarioRuntime`, the remaining PDA lifecycle and keyword coordinator |
 | `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
 | `aquapda_client.py` | Client and screen reconstruction for AqualinkD's AquaPDA WebSocket interface |
 | `protocols/pda/aquapda.py` | AquaPDA transport validation and bounded read-only menu walking |

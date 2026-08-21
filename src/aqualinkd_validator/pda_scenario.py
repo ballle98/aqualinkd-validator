@@ -134,7 +134,7 @@ class ScenarioFailure(RuntimeError):
     """Raised when an expected PDA state transition does not complete."""
 
 
-class PdaLivePanelScenario:
+class PdaScenarioRuntime:
     def __init__(
         self,
         api: AqualinkApi | None,
@@ -2046,4 +2046,4 @@ class PdaLivePanelScenario:
         device: DeviceState | Mapping[str, Any],
         enabled: bool,
     ) -> str:
-        return PdaLivePanelScenario._device_state(device).requested_state_label(enabled)
+        return PdaScenarioRuntime._device_state(device).requested_state_label(enabled)

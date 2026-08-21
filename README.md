@@ -1114,8 +1114,9 @@ PDA organization now resolves through one execution path:
   `protocols/pda/sleep.py` owns natural duty-cycle timing and STATUS-retry/probe
   transition validation. `aquapda_client.py` owns the AquaPDA WebSocket and
   screen reconstruction, while `protocols/pda/aquapda.py` owns transport
-  validation and bounded read-only menu walking. `pda_scenario.py` retains the
-  small case-dispatch boundary for that interface coverage. This extraction
+  validation and bounded read-only menu walking. `PdaScenarioRuntime` in
+  `pda_scenario.py` retains the small case-dispatch boundary for that interface
+  coverage. This extraction
   intentionally renames the artifact report object from `simulator` to
   `aquapda_transport`; existing performance measurement names are unchanged.
 
