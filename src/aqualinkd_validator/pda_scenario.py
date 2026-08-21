@@ -22,7 +22,6 @@ from .engine import (
 )
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
-from .pda.cases import CASES, PdaCaseDefinition, PdaCaseId
 from .protocols.pda import (
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusService,
@@ -48,6 +47,7 @@ from .protocols.pda.aquapda import (
 )
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
+from .run_targets import RUNTIME_CASES, RuntimeCaseDefinition, RuntimeCaseId
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 from .testcases import (
     ExerciseDiscoveredDevicesStep,
@@ -108,7 +108,6 @@ _TestResult = TypeVar("_TestResult")
 @dataclass(frozen=True)
 class PdaScenarioConfig:
     suite_name: str = "pda-live-fast"
-    include_state_waits: bool = False
     execution_phase: Literal["single", "awake", "sleep"] = "single"
     activation_timeout_seconds: float = 130.0
     action_timeout_seconds: float = 90.0
@@ -124,7 +123,7 @@ class PdaScenarioConfig:
     panel_timezone: str = "UTC"
     panel_time_tolerance_seconds: float = 120.0
     spa_fill_seconds: float | None = None
-    case_ids: tuple[PdaCaseId, ...] = ()
+    case_ids: tuple[RuntimeCaseId, ...] = ()
     aquapda_packet_count: int = 20
     aquapda_timeout_seconds: float = 20.0
 
@@ -214,7 +213,11 @@ class PdaLivePanelScenario:
                         if config.test_devices
                         else (
                             "all_discovered_switches"
-                            if PdaCaseId.CONSECUTIVE_DEVICES in self._case_ids
+                            if any(
+                                isinstance(step, ExerciseDiscoveredDevicesStep)
+                                for testcase in self._testcases
+                                for step in testcase.steps
+                            )
                             else "auto_last_switch"
                         )
                     )
@@ -285,7 +288,7 @@ class PdaLivePanelScenario:
         cancelled = False
         case_failures: list[str] = []
         for case_id in self._case_ids:
-            case = CASES[case_id]
+            case = RUNTIME_CASES[case_id]
             self._restoration.begin_case()
             case_started = time.monotonic()
             case_error: BaseException | None = None
@@ -334,7 +337,7 @@ class PdaLivePanelScenario:
                 break
             if case_error is not None:
                 case_failures.append(case.id.value)
-                if case.id == PdaCaseId.INITIALIZATION:
+                if case.id == RuntimeCaseId.INITIALIZATION:
                     status = "failed"
                     reason = "initialization_failed"
                     self._report["error"] = self._format_exception(case_error)
@@ -547,47 +550,10 @@ class PdaLivePanelScenario:
         )
 
     @staticmethod
-    def _resolve_case_ids(config: PdaScenarioConfig) -> tuple[PdaCaseId, ...]:
-        if config.case_ids:
-            return config.case_ids
-        case_ids = [
-            PdaCaseId.INITIALIZATION,
-            PdaCaseId.FILTER_AFTER_INIT,
-            PdaCaseId.POOL_HEATER,
-        ]
-        if config.include_state_waits and config.execution_phase != "sleep":
-            case_ids.extend(
-                (
-                    PdaCaseId.EQUIPMENT_STATUS,
-                    PdaCaseId.CONSECUTIVE_DEVICES,
-                )
-            )
-        if config.include_state_waits and config.execution_phase != "awake":
-            case_ids.extend(
-                (
-                    PdaCaseId.SLEEP_CYCLE,
-                    PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-                    PdaCaseId.DEVICE_AFTER_PROBE,
-                )
-            )
-        if config.execution_phase == "sleep":
-            case_ids = [
-                PdaCaseId.INITIALIZATION,
-                PdaCaseId.SLEEP_CYCLE,
-                PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-                PdaCaseId.DEVICE_AFTER_PROBE,
-            ]
-        return tuple(case_ids)
+    def _resolve_case_ids(config: PdaScenarioConfig) -> tuple[RuntimeCaseId, ...]:
+        return config.case_ids
 
     def _uses_selected_devices(self) -> bool:
-        legacy_uses_selected_devices = any(
-            case_id in self._case_ids
-            for case_id in (
-                PdaCaseId.CONSECUTIVE_DEVICES,
-                PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-                PdaCaseId.DEVICE_AFTER_PROBE,
-            )
-        )
         declarative_uses_selected_devices = any(
             isinstance(
                 step,
@@ -600,38 +566,19 @@ class PdaLivePanelScenario:
             for testcase in self._testcases
             for step in testcase.steps
         )
-        return legacy_uses_selected_devices or declarative_uses_selected_devices
+        return declarative_uses_selected_devices
 
     def _case_operation(
         self,
-        case_id: PdaCaseId,
+        case_id: RuntimeCaseId,
         context: ScenarioContext,
     ) -> Callable[[], Awaitable[None]]:
-        operations: dict[PdaCaseId, Callable[[], Awaitable[None]]] = {
-            PdaCaseId.INITIALIZATION: lambda: self._initialize(context),
-            PdaCaseId.FILTER_AFTER_INIT: lambda: (
-                self._toggle_round_trip_unless_disabled(
-                    context,
-                    FILTER_PUMP,
-                    phase="devices.after_init",
-                )
-            ),
-            PdaCaseId.POOL_HEATER: lambda: self._test_pool_heater(context),
-            PdaCaseId.EQUIPMENT_STATUS: lambda: self._test_with_status_menu(context),
-            PdaCaseId.CONSECUTIVE_DEVICES: lambda: self._test_consecutive_devices(
+        operations: dict[RuntimeCaseId, Callable[[], Awaitable[None]]] = {
+            RuntimeCaseId.INITIALIZATION: lambda: self._initialize(context),
+            RuntimeCaseId.AQUAPDA_TRANSPORT: lambda: self._test_aquapda_transport(
                 context
             ),
-            PdaCaseId.SLEEP_CYCLE: lambda: self._test_sleep_wake_cycle(context),
-            PdaCaseId.DEVICE_DURING_STATUS_RETRY: lambda: (
-                self._test_device_during_status_retry(context)
-            ),
-            PdaCaseId.DEVICE_AFTER_PROBE: lambda: self._test_device_after_probe(
-                context
-            ),
-            PdaCaseId.AQUAPDA_TRANSPORT: lambda: self._test_aquapda_transport(
-                context
-            ),
-            PdaCaseId.MENU_WALK: lambda: self._test_menu_walk(context),
+            RuntimeCaseId.AQUAPDA_MENU_WALK: lambda: self._test_menu_walk(context),
         }
         return operations[case_id]
 
@@ -669,7 +616,7 @@ class PdaLivePanelScenario:
     async def _restore_after_case(
         self,
         context: ScenarioContext,
-        case: PdaCaseDefinition,
+        case: RuntimeCaseDefinition,
     ) -> list[str]:
         if not case.mutates_panel:
             return []
@@ -1594,8 +1541,7 @@ class PdaLivePanelScenario:
             identifiers,
             key=self._sleep_device_priority,
         )
-        if PdaCaseId.CONSECUTIVE_DEVICES not in self._case_ids:
-            self._report["device_selection"]["resolved"] = [identifier]
+        self._report["device_selection"]["resolved"] = [identifier]
         return identifier
 
     def _sleep_device_priority(self, identifier: str) -> tuple[int, int, str]:

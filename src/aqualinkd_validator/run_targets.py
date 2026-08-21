@@ -1,27 +1,59 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-from .pda.cases import PdaCaseId
-from .pda.suites import SUITES as LEGACY_SUITES
 from .testcases import (
     TestcaseDefinition,
     TestcaseSuiteDefinition,
     load_testcase_document,
 )
 
-RunMode = Literal["live-panel", "jandy-simulator"]
-TargetKind = Literal["testcase", "suite", "composite", "legacy-suite"]
+RunMode = Literal["live-panel", "jandy-power-center"]
+TargetKind = Literal["testcase", "suite", "composite", "python-suite"]
 
-_DEVICE_SELECTION_CASES = frozenset(
-    {
-        PdaCaseId.CONSECUTIVE_DEVICES,
-        PdaCaseId.DEVICE_DURING_STATUS_RETRY,
-        PdaCaseId.DEVICE_AFTER_PROBE,
-    }
-)
+
+class RuntimeCaseId(StrEnum):
+    INITIALIZATION = "initialization"
+    AQUAPDA_TRANSPORT = "aquapda-transport"
+    AQUAPDA_MENU_WALK = "aquapda-menu-walk"
+
+
+@dataclass(frozen=True)
+class RuntimeCaseDefinition:
+    id: RuntimeCaseId
+    name: str
+    mutates_panel: bool = False
+
+
+RUNTIME_CASES = {
+    RuntimeCaseId.INITIALIZATION: RuntimeCaseDefinition(
+        RuntimeCaseId.INITIALIZATION,
+        "PDA initialization, identity, and clock",
+    ),
+    RuntimeCaseId.AQUAPDA_TRANSPORT: RuntimeCaseDefinition(
+        RuntimeCaseId.AQUAPDA_TRANSPORT,
+        "AquaPDA WebSocket transport integrity",
+    ),
+    RuntimeCaseId.AQUAPDA_MENU_WALK: RuntimeCaseDefinition(
+        RuntimeCaseId.AQUAPDA_MENU_WALK,
+        "AquaPDA read-only menu walk",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class PythonTargetDefinition:
+    identifier: str
+    description: str
+    mode: RunMode = "live-panel"
+    cases: tuple[RuntimeCaseId, ...] = ()
+    config_overrides: tuple[tuple[str, str], ...] = ()
+    members: tuple[str, ...] = ()
+    execution_role: Literal["single", "awake", "sleep"] = "single"
+    artifact_suffix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +75,7 @@ class ResolvedRunTarget:
     access: Literal["read-only", "read-write"] | None = None
     testcase: TestcaseDefinition | None = None
     testcases: tuple[TestcaseDefinition, ...] = ()
-    case_ids: tuple[PdaCaseId, ...] = ()
+    case_ids: tuple[RuntimeCaseId, ...] = ()
     members: tuple[str, ...] = ()
 
     @property
@@ -65,12 +97,17 @@ class ResolvedRunTarget:
 class RunTargetRegistry:
     """Resolve built-in names and user-provided YAML through one path."""
 
-    def __init__(self, declarative_suites: dict[str, Path]) -> None:
+    def __init__(
+        self,
+        declarative_suites: dict[str, Path],
+        python_targets: dict[str, PythonTargetDefinition],
+    ) -> None:
         self._declarative_suites = declarative_suites
+        self._python_targets = python_targets
 
     @property
     def names(self) -> tuple[str, ...]:
-        return tuple((*self._declarative_suites, *LEGACY_SUITES))
+        return tuple((*self._declarative_suites, *self._python_targets))
 
     def resolve(self, value: str) -> ResolvedRunTarget:
         if Path(value).suffix.casefold() in {".yaml", ".yml"}:
@@ -80,17 +117,17 @@ class RunTargetRegistry:
         if declarative_source is not None:
             return self._from_document(declarative_source)
         try:
-            suite = LEGACY_SUITES[value]
+            target = self._python_targets[value]
         except KeyError as error:
             raise ValueError(f"unknown run target {value!r}") from error
 
-        if suite.is_composite:
-            members = tuple(self.resolve(member) for member in suite.members)
+        if target.members:
+            members = tuple(self.resolve(member) for member in target.members)
             return ResolvedRunTarget(
-                identifier=suite.name,
-                description=suite.description,
+                identifier=target.identifier,
+                description=target.description,
                 kind="composite",
-                mode=_run_mode(suite.mode),
+                mode=target.mode,
                 mutates_panel=any(member.mutates_panel for member in members),
                 uses_selected_devices=any(
                     member.uses_selected_devices for member in members
@@ -98,23 +135,21 @@ class RunTargetRegistry:
                 aqualinkd_args=(),
                 config_overrides=(),
                 execution_role="single",
-                members=suite.members,
+                members=target.members,
             )
 
         return ResolvedRunTarget(
-            identifier=suite.name,
-            description=suite.description,
-            kind="legacy-suite",
-            mode=_run_mode(suite.mode),
-            mutates_panel=suite.mutates_panel,
-            uses_selected_devices=any(
-                case_id in _DEVICE_SELECTION_CASES for case_id in suite.cases
-            ),
-            aqualinkd_args=suite.aqualinkd_args,
-            config_overrides=suite.config_overrides,
-            execution_role=suite.execution_role,
-            artifact_suffix=suite.artifact_suffix,
-            case_ids=suite.cases,
+            identifier=target.identifier,
+            description=target.description,
+            kind="python-suite",
+            mode=target.mode,
+            mutates_panel=False,
+            uses_selected_devices=False,
+            aqualinkd_args=("-vv",),
+            config_overrides=target.config_overrides,
+            execution_role=target.execution_role,
+            artifact_suffix=target.artifact_suffix,
+            case_ids=target.cases,
         )
 
     def _from_document(self, source: Path) -> ResolvedRunTarget:
@@ -169,11 +204,53 @@ RUN_TARGETS = RunTargetRegistry(
             "pda-live-sleep",
             "pda-live-spa",
         )
-    }
+    },
+    {
+        "pda-live-long": PythonTargetDefinition(
+            identifier="pda-live-long",
+            description="Composite awake and sleep PDA live-panel validation",
+            members=("pda-live-awake", "pda-live-sleep"),
+        ),
+        "aquapda-websocket-transport": PythonTargetDefinition(
+            identifier="aquapda-websocket-transport",
+            description=(
+                "AquaPDA WebSocket and RS485 transport regressions for "
+                "ballle98/AqualinkD#94 and ballle98/AqualinkD#95"
+            ),
+            cases=(
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.AQUAPDA_TRANSPORT,
+            ),
+            config_overrides=(("pda_sleep_mode", "no"),),
+            execution_role="awake",
+            artifact_suffix="aquapda-websocket",
+        ),
+        "aquapda-live-panel-menu-walk": PythonTargetDefinition(
+            identifier="aquapda-live-panel-menu-walk",
+            description="Read-only AquaPDA traversal against a physical panel",
+            cases=(
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.AQUAPDA_TRANSPORT,
+                RuntimeCaseId.AQUAPDA_MENU_WALK,
+            ),
+            config_overrides=(("pda_sleep_mode", "no"),),
+            execution_role="awake",
+            artifact_suffix="aquapda-live-panel-menu-walk",
+        ),
+        "aquapda-power-center-menu-walk": PythonTargetDefinition(
+            identifier="aquapda-power-center-menu-walk",
+            description=(
+                "Read-only AquaPDA traversal with the Jandy Power Center emulator"
+            ),
+            mode="jandy-power-center",
+            cases=(
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.AQUAPDA_TRANSPORT,
+                RuntimeCaseId.AQUAPDA_MENU_WALK,
+            ),
+            config_overrides=(("pda_sleep_mode", "no"),),
+            execution_role="awake",
+            artifact_suffix="aquapda-power-center-menu-walk",
+        ),
+    },
 )
-
-
-def _run_mode(value: str) -> RunMode:
-    if value not in {"live-panel", "jandy-simulator"}:
-        raise ValueError(f"unsupported run mode {value!r}")
-    return cast(RunMode, value)

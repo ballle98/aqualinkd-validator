@@ -280,9 +280,9 @@ one composite suite:
 | `pda-live-sleep` | Sleep-state diagnostics or focused reruns | Initialization, one natural sleep/wake duty cycle, and switch round trips during STATUS retries and after probing begins |
 | `pda-live-long` | Complete state-dependent regression | Composite suite that serially runs `pda-live-awake` and `pda-live-sleep` in separate AqualinkD processes |
 | `pda-live-spa` | Explicit hydraulic/heating validation | Site-configured Pool-mode fill, Spa-mode entry, active Spa Heater demand, cooldown/lockout, and full restoration; not included in `pda-live-long` |
-| `pda-live-simulator` | AquaPDA interface transport regression on a physical panel | Opens the same northbound AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
-| `pda-live-simulator-menu-walk` | Extensive AquaPDA interface-emulator navigation against a physical panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
-| `pda-powercenter-simulator-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
+| `aquapda-websocket-transport` | AquaPDA interface transport regression on a physical panel | Opens the same northbound AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
+| `aquapda-live-panel-menu-walk` | Extensive AquaPDA interface-emulator navigation against a physical panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
+| `aquapda-power-center-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
 
 Multiple positional suites are serialized. For example,
 `run --panel-read-write pda-live-fast pda-live-long` completes the fast suite,
@@ -338,7 +338,7 @@ The focused transport regression for
 read-only and require only panel-access authorization:
 
 ```bash
-.venv/bin/aqualinkd-validator run --panel pda-live-simulator
+.venv/bin/aqualinkd-validator run --panel aquapda-websocket-transport
 ```
 
 The test opens `simulator/aquapda` directly, without launching a browser. It
@@ -353,7 +353,7 @@ physical panel, run the read-only menu walk:
 ```bash
 .venv/bin/aqualinkd-validator run \
   --panel \
-  pda-live-simulator-menu-walk
+  aquapda-live-panel-menu-walk
 ```
 
 For the corresponding southbound panel-emulation test, connect AqualinkD's
@@ -361,9 +361,9 @@ serial port to the Jandy **Power Center emulator**, then run:
 
 ```bash
 .venv/bin/aqualinkd-validator run \
-  --mode jandy-simulator \
+  --mode jandy-power-center \
   --panel \
-  pda-powercenter-simulator-menu-walk
+  aquapda-power-center-menu-walk
 ```
 
 The AquaPDA WebSocket is the northbound key/display interface; the Jandy Power
@@ -790,13 +790,13 @@ override must match that configuration.
 
 ### Jandy Power Center emulator mode
 
-The implemented `jandy-simulator` compatibility mode supervises AqualinkD while
+The `jandy-power-center` mode supervises AqualinkD while
 it is connected to Jandy's legacy Alwin32 Power Center emulator through an
 externally managed virtual or physical serial link. The
-`pda-powercenter-simulator-menu-walk` suite uses AqualinkD's AquaPDA WebSocket
+`aquapda-power-center-menu-walk` suite uses AqualinkD's AquaPDA WebSocket
 to drive PDA keys and reconstruct the screen while the Windows application
 supplies the controller-facing serial conversation. The separate
-`pda-live-simulator-menu-walk` suite uses that same AqualinkD AquaPDA
+`aquapda-live-panel-menu-walk` suite uses that same AqualinkD AquaPDA
 interface-emulation protocol with a physical panel on the southbound serial
 connection.
 
@@ -811,8 +811,8 @@ The word *simulator* is otherwise too ambiguous for this project. Documentation
 uses **Jandy Power Center emulator** for Alwin32 `Pwrcntr.exe`, **AqualinkD
 interface emulator** for the AquaPDA, AllButton, and OneTouch browser/WebSocket
 interfaces, and **RS485 panel emulator** for the planned Python component that
-will replay captures or model a panel through a PTY. Existing CLI, suite, and
-module names containing `simulator` remain compatibility identifiers.
+will replay captures or model a panel through a PTY. Ambiguous pre-refactor
+CLI, suite, module, and class names do not retain compatibility aliases.
 
 ### Panel-free mode
 
@@ -1117,10 +1117,9 @@ PDA organization now resolves through one execution path:
   intentionally renames the artifact report object from `simulator` to
   `aquapda_transport`; existing performance measurement names are unchanged.
 
-The old general-purpose suite compatibility layer has been removed. The
-remaining `pda/cases.py` and `pda/suites.py` catalog entries are limited to the
-AqualinkD interface-emulator tests and the long suite's required process
-boundary; ordinary physical-panel coverage is authored in YAML.
+The old Python case/suite catalogs have been removed. `run_targets.py` retains
+only the long suite's required process boundary and the AquaPDA interface
+targets; ordinary physical-panel coverage is authored in YAML.
 
 [GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
 tracks the initial panel-free end-to-end milestone. Its isolated configuration

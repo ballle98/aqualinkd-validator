@@ -49,8 +49,7 @@ source modules are:
 | `protocols/pda/sleep.py` | Natural sleep/wake duty-cycle observation, post-wake refresh timing, and STATUS-retry/probe transition validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
-| `pda/cases.py` | Legacy case identifiers retained for AqualinkD interface-emulator coverage |
-| `pda/suites.py` | Legacy interface-emulator suites and the cross-process long coordinator |
+| `run_targets.py` | Single registry for declarative suites, the long composite, and AquaPDA interface targets |
 | `pda_scenario.py` | Current PDA case coordination, panel-state validation, sleep/status behavior, and timing |
 | `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
 | `aquapda_client.py` | Client and screen reconstruction for AqualinkD's AquaPDA WebSocket interface |
@@ -76,10 +75,9 @@ AqualinkD is being represented:
 | **physical panel** | A real AquaLink power-center controller connected over RS485. |
 | **capture replay** | Feeding recorded frames and timing into a transport; it is not necessarily a stateful panel emulator. |
 
-Some public suite and mode identifiers still contain legacy `simulator`
-wording while their target-resolution migration is completed. New code and
-documentation use the precise terms above; internal AquaPDA client identifiers
-do not retain compatibility aliases.
+Public suite, mode, module, and client identifiers use the precise terms above;
+the pre-refactor ambiguous `simulator` names do not retain compatibility
+aliases.
 
 ## Adding or changing a test today
 
@@ -98,10 +96,9 @@ Ordinary cases and process suites are YAML:
    `--panel-read-write` authorization.
 
 `run_targets.py` is the only run-target registry. Do not add suite-name
-branches to `cli.py`. The remaining Python catalogs in `pda/cases.py` and
-`pda/suites.py` exist only for interface-emulator cases that have not yet been
-migrated and for the long suite's cross-process boundary; do not add ordinary
-live-panel cases there.
+branches to `cli.py`. Its small Python target definitions cover only AquaPDA
+interface cases and the long suite's cross-process boundary; ordinary
+physical-panel test intent belongs in YAML.
 
 Every wait must have a deadline. Capture the output cursor before an action and
 accept only log events after that cursor. Do not treat HTTP request completion

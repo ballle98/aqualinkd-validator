@@ -14,7 +14,6 @@ from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 from aqualinkd_validator.domain import EquipmentSnapshot
-from aqualinkd_validator.pda.cases import PdaCaseId
 from aqualinkd_validator.pda_scenario import (
     DEVICE_ACTIVE,
     DEVICE_FINISHED,
@@ -22,7 +21,6 @@ from aqualinkd_validator.pda_scenario import (
     INIT_FINISHED,
     LEGACY_POOL_HEATER_SETPOINT_ACTIVE,
     LEGACY_POOL_HEATER_SETPOINT_FINISHED,
-    LEGACY_STATUS_MENU_PRESENT,
     PDA_ADDRESS_PROBE,
     PDA_ADDRESS_STATUS,
     PDA_SLEEPING,
@@ -39,6 +37,7 @@ from aqualinkd_validator.pda_scenario import (
     PdaScenarioConfig,
     ScenarioFailure,
 )
+from aqualinkd_validator.run_targets import RuntimeCaseId
 from aqualinkd_validator.supervisor import (
     OutputMonitor,
     ScenarioContext,
@@ -294,7 +293,6 @@ class PdaScenarioTests(unittest.TestCase):
             None,
             PdaScenarioConfig(
                 suite_name="pda-live-long",
-                include_state_waits=True,
                 disabled_button_numbers=(4, 5, 8, 9, 12),
             ),
         )
@@ -361,34 +359,6 @@ class PdaScenarioTests(unittest.TestCase):
             scenario._sleep_test_device(phase="devices.sleep.test"),
             "Aux_3",
         )
-
-    def test_scenario_rejects_panel_clock_outside_tolerance(self) -> None:
-        asyncio.run(self._run_bad_clock_scenario())
-
-    def test_scenario_times_actions_and_restores_original_state(self) -> None:
-        asyncio.run(self._run_scenario())
-
-    def test_awake_phase_excludes_sleep_test(self) -> None:
-        asyncio.run(self._run_scenario(execution_phase="awake"))
-
-    def test_sleep_phase_excludes_awake_only_tests(self) -> None:
-        asyncio.run(self._run_scenario(execution_phase="sleep"))
-
-    def test_devices_configured_as_none_are_skipped(self) -> None:
-        asyncio.run(self._run_scenario(disabled_button_numbers=(3,)))
-
-    def test_legacy_status_menu_marker_is_supported(self) -> None:
-        asyncio.run(
-            self._run_scenario(
-                status_menu_marker=LEGACY_STATUS_MENU_PRESENT,
-            )
-        )
-
-    def test_fast_scenario_does_not_wait_for_panel_states(self) -> None:
-        asyncio.run(self._run_fast_scenario(timestamped=True))
-
-    def test_legacy_scenario_without_millisecond_logging(self) -> None:
-        asyncio.run(self._run_fast_scenario(timestamped=False))
 
     def test_single_exception_group_reports_underlying_failure(self) -> None:
         error = ExceptionGroup(
@@ -656,9 +626,9 @@ class PdaScenarioTests(unittest.TestCase):
                 PdaScenarioConfig(
                     suite_name="continuation-test",
                     case_ids=(
-                        PdaCaseId.INITIALIZATION,
-                        PdaCaseId.FILTER_AFTER_INIT,
-                        PdaCaseId.POOL_HEATER,
+                        RuntimeCaseId.INITIALIZATION,
+                        RuntimeCaseId.AQUAPDA_TRANSPORT,
+                        RuntimeCaseId.AQUAPDA_MENU_WALK,
                     ),
                 ),
             )
@@ -672,7 +642,7 @@ class PdaScenarioTests(unittest.TestCase):
                         temp_units="f",
                         devices={},
                     )
-                if name == "Filter pump after initialization":
+                if name == "AquaPDA WebSocket transport integrity":
                     raise ScenarioFailure("injected assertion failure")
 
             async def restore_case(context: Any, case: Any) -> list[str]:
@@ -821,7 +791,6 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(
                     suite_name="pda-live-long",
-                    include_state_waits=True,
                     execution_phase=execution_phase,
                     disabled_button_numbers=disabled_button_numbers,
                     action_timeout_seconds=0.5,
@@ -1075,7 +1044,6 @@ class PdaScenarioTests(unittest.TestCase):
                 None,
                 PdaScenarioConfig(
                     suite_name="pda-live-fast",
-                    include_state_waits=False,
                     action_timeout_seconds=0.5,
                     init_timeout_seconds=1.0,
                     panel_timezone="UTC",

@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--terminate-grace", type=_positive_float, default=10.0)
     run.add_argument(
         "--mode",
-        choices=("live-panel", "jandy-simulator"),
+        choices=("live-panel", "jandy-power-center"),
         default="live-panel",
     )
     run.add_argument(

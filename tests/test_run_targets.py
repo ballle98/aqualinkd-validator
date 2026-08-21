@@ -27,10 +27,10 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertTrue(target.uses_selected_devices)
         self.assertEqual(target.members, ("pda-live-awake", "pda-live-sleep"))
 
-    def test_legacy_simulator_suite_uses_same_resolved_model(self) -> None:
-        target = RUN_TARGETS.resolve("pda-live-simulator-menu-walk")
+    def test_aquapda_python_suite_uses_same_resolved_model(self) -> None:
+        target = RUN_TARGETS.resolve("aquapda-live-panel-menu-walk")
 
-        self.assertEqual(target.kind, "legacy-suite")
+        self.assertEqual(target.kind, "python-suite")
         self.assertFalse(target.mutates_panel)
         self.assertEqual(target.aqualinkd_args, ("-vv",))
         self.assertEqual(len(target.case_ids), 3)

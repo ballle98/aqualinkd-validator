@@ -25,16 +25,16 @@ from aqualinkd_validator.run_targets import RUN_TARGETS
 
 
 class CliTests(unittest.TestCase):
-    def test_read_only_simulator_suites_do_not_require_panel_write(self) -> None:
+    def test_read_only_aquapda_suites_do_not_require_panel_write(self) -> None:
         invocations = (
-            ["run", "--panel", "pda-live-simulator"],
-            ["run", "--panel", "pda-live-simulator-menu-walk"],
+            ["run", "--panel", "aquapda-websocket-transport"],
+            ["run", "--panel", "aquapda-live-panel-menu-walk"],
             [
                 "run",
                 "--mode",
-                "jandy-simulator",
+                "jandy-power-center",
                 "--panel",
-                "pda-powercenter-simulator-menu-walk",
+                "aquapda-power-center-menu-walk",
             ],
         )
         for invocation in invocations:
@@ -358,7 +358,7 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(testcase_command[-1], "-vv")
 
-    def test_pda_live_panel_suite_rejects_simulator_mode(self) -> None:
+    def test_pda_live_panel_suite_rejects_power_center_mode(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             mock = root / "mock-aqualinkd"
@@ -373,7 +373,7 @@ class CliTests(unittest.TestCase):
                     [
                         "run",
                         "--mode",
-                        "jandy-simulator",
+                        "jandy-power-center",
                         "--panel-read-write",
                         "--serial-device",
                         "/dev/null",
