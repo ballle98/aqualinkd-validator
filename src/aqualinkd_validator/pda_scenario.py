@@ -17,6 +17,9 @@ from .engine import (
     EquipmentActionFailure,
     EquipmentActions,
     EquipmentActionTimeouts,
+    EquipmentStabilityConfig,
+    EquipmentStabilityFailure,
+    EquipmentStabilityService,
     ProgrammerMarkers,
     RestorationSession,
 )
@@ -97,7 +100,6 @@ PDA_ADDRESS_STATUS = pda_sleep.PDA_ADDRESS_STATUS
 PDA_ADDRESS_PROBE = pda_sleep.PDA_ADDRESS_PROBE
 WAKE_INIT_ACTIVE = pda_sleep.WAKE_INIT_ACTIVE
 WAKE_INIT_FINISHED = pda_sleep.WAKE_INIT_FINISHED
-_EQUIPMENT_STABLE_SECONDS = 0.5
 _EQUIPMENT_POLL_SECONDS = 0.25
 
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
@@ -907,108 +909,27 @@ class PdaLivePanelScenario:
         timeout_seconds: float,
         initial_snapshot: EquipmentSnapshot | None = None,
     ) -> EquipmentSnapshot:
-        selected = tuple(identifiers)
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-        stable_since: float | None = None
-        previous_signature: tuple[tuple[str, int, str, str], ...] | None = None
-        recorded_signature: tuple[tuple[str, int, str, str], ...] | None = None
-        snapshot = initial_snapshot
-        print(
-            f"[ WAIT ] Equipment state: waiting for {phase} to stabilize "
-            f"(timeout {timeout_seconds:g}s)",
-            flush=True,
+        service = EquipmentStabilityService(
+            api=self._api_client,
+            timeline=context.timeline,
+            config=EquipmentStabilityConfig(
+                stable_seconds=0.5,
+                poll_seconds=_EQUIPMENT_POLL_SECONDS,
+            ),
+            record_observation=(
+                self._report["equipment_state_observations"].append
+            ),
+            progress=lambda message: print(message, flush=True),
         )
-        while asyncio.get_running_loop().time() < deadline:
-            if snapshot is None:
-                snapshot = await self._api_client.devices()
-            states = {
-                identifier: self._device_state_details(
-                    self._require_device(snapshot, identifier)
-                )
-                for identifier in selected
-            }
-            signature = tuple(
-                (
-                    identifier,
-                    state["int_status"],
-                    state["state"],
-                    state["status"],
-                )
-                for identifier, state in states.items()
+        try:
+            return await service.wait(
+                identifiers,
+                phase=phase,
+                timeout_seconds=timeout_seconds,
+                initial_snapshot=initial_snapshot,
             )
-            pending = [
-                identifier
-                for identifier, state in states.items()
-                if state["transitioning"]
-            ]
-            now = asyncio.get_running_loop().time()
-            if pending or signature != previous_signature:
-                stable_since = None if pending else now
-            elif stable_since is None:
-                stable_since = now
-
-            if signature != recorded_signature:
-                await self._record_equipment_observation(
-                    context,
-                    phase=phase,
-                    states=states,
-                    pending=pending,
-                    stable=False,
-                )
-                recorded_signature = signature
-
-            if (
-                not pending
-                and stable_since is not None
-                and now - stable_since >= _EQUIPMENT_STABLE_SECONDS
-            ):
-                await self._record_equipment_observation(
-                    context,
-                    phase=phase,
-                    states=states,
-                    pending=[],
-                    stable=True,
-                )
-                print(
-                    f"[STATE ] Equipment state stable for {phase}",
-                    flush=True,
-                )
-                return snapshot
-
-            previous_signature = signature
-            snapshot = None
-            await asyncio.sleep(_EQUIPMENT_POLL_SECONDS)
-
-        pending_text = ", ".join(pending) if pending else "state kept changing"
-        raise ScenarioFailure(
-            f"Equipment state did not stabilize for {phase} within "
-            f"{timeout_seconds:g}s ({pending_text})"
-        )
-
-    async def _record_equipment_observation(
-        self,
-        context: ScenarioContext,
-        *,
-        phase: str,
-        states: dict[str, dict[str, Any]],
-        pending: list[str],
-        stable: bool,
-    ) -> None:
-        observation = {
-            "offset_ns": context.timeline.offset_ns(),
-            "phase": phase,
-            "stable": stable,
-            "pending": pending,
-            "devices": states,
-        }
-        self._report["equipment_state_observations"].append(observation)
-        await context.timeline.write(
-            "equipment_state_observation",
-            phase=phase,
-            stable=stable,
-            pending=pending,
-            devices=states,
-        )
+        except EquipmentStabilityFailure as error:
+            raise ScenarioFailure(str(error)) from error
 
     @staticmethod
     def _parse_menu_line(text: str) -> tuple[int, str] | None:

@@ -1104,8 +1104,10 @@ PDA organization now resolves through one execution path:
   built-in suite names, explicit YAML paths, the cross-process long suite, and
   the remaining interface-emulator suites.
 - `protocols/pda/keywords.py` binds small declarative steps to typed Python
-  behavior, and `protocols/pda/session.py` owns PDA_INIT, daemon identity,
-  firmware-screen capture, and HTTP endpoint discovery.
+  behavior. `engine/equipment_stability.py` owns typed transition detection,
+  stable-state polling, and equipment-state observations, while
+  `protocols/pda/session.py` owns PDA_INIT, daemon identity, firmware-screen
+  capture, and HTTP endpoint discovery.
   `protocols/pda/identity.py` owns configured/reported panel comparison and
   bounded panel-clock validation, while `protocols/pda/equipment_status.py`
   owns complete multi-page status-loop parsing and reconciliation.

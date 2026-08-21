@@ -6,6 +6,11 @@ from .equipment_actions import (
     EquipmentActionTimeouts,
     ProgrammerMarkers,
 )
+from .equipment_stability import (
+    EquipmentStabilityConfig,
+    EquipmentStabilityFailure,
+    EquipmentStabilityService,
+)
 from .restoration import (
     RestorationAction,
     RestorationResult,
@@ -19,5 +24,8 @@ __all__ = [
     "EquipmentActionFailure",
     "EquipmentActions",
     "EquipmentActionTimeouts",
+    "EquipmentStabilityConfig",
+    "EquipmentStabilityFailure",
+    "EquipmentStabilityService",
     "ProgrammerMarkers",
 ]
