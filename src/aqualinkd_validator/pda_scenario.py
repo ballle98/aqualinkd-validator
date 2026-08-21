@@ -33,9 +33,13 @@ from .protocols.pda import (
     PdaPanelIdentityValidator,
     PdaProgrammerFailure,
     PdaProgrammerObserver,
+    PdaSleepWakeConfig,
+    PdaSleepWakeFailure,
+    PdaSleepWakeService,
 )
 from .protocols.pda import equipment_status as pda_equipment_status
 from .protocols.pda import session as pda_session
+from .protocols.pda import sleep as pda_sleep
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
@@ -82,11 +86,11 @@ SPA_HEATER_SETPOINT_ACTIVE_MARKERS = (
 )
 STATUS_MENU_PRESENT = pda_equipment_status.STATUS_MENU_PRESENT
 LEGACY_STATUS_MENU_PRESENT = pda_equipment_status.LEGACY_STATUS_MENU_PRESENT
-PDA_SLEEPING = "PDA Aqualink daemon in sleep mode"
-PDA_ADDRESS_STATUS = "To 0x60 of type           Status"
-PDA_ADDRESS_PROBE = "To 0x60 of type            Probe"
-WAKE_INIT_ACTIVE = "is active (PDA init after wake)"
-WAKE_INIT_FINISHED = "(PDA init after wake) finished"
+PDA_SLEEPING = pda_sleep.PDA_SLEEPING
+PDA_ADDRESS_STATUS = pda_sleep.PDA_ADDRESS_STATUS
+PDA_ADDRESS_PROBE = pda_sleep.PDA_ADDRESS_PROBE
+WAKE_INIT_ACTIVE = pda_sleep.WAKE_INIT_ACTIVE
+WAKE_INIT_FINISHED = pda_sleep.WAKE_INIT_FINISHED
 _EQUIPMENT_STABLE_SECONDS = 0.5
 _EQUIPMENT_POLL_SECONDS = 0.25
 
@@ -1796,144 +1800,11 @@ class PdaLivePanelScenario:
         )
 
     async def _test_sleep_wake_cycle(self, context: ScenarioContext) -> None:
-        cursor = context.monitor.cursor
-        started = context.timeline.offset_ns()
-        event = await context.monitor.wait_for(
-            PDA_SLEEPING,
-            after=cursor,
-            timeout_seconds=self._config.sleep_timeout_seconds,
-        )
-        self._append_measurement(
-            name="pda.sleep.enter",
-            category="state_wait",
-            phase="devices.sleeping",
-            target="pda_sleep",
-            requested_value=True,
-            start_offset_ns=started,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=event.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        print(
-            "[STATE ] PDA entered sleep; observing one natural wake cycle",
-            flush=True,
-        )
-
-        wake_active = await self._wait_for_task_active(
-            context,
-            task_name="PDA init after wake",
-            marker=WAKE_INIT_ACTIVE,
-            after=event.sequence,
-            requested_offset_ns=event.offset_ns,
-            timeout_seconds=self._config.sleep_timeout_seconds,
-            wait_reason="waiting for the natural PDA wake",
-        )
-        wake_finished = await self._wait_for_task_completion(
-            context,
-            task_name="PDA init after wake",
-            marker=WAKE_INIT_FINISHED,
-            active=wake_active,
-            timeout_seconds=self._config.action_timeout_seconds,
-        )
-        print(
-            "[STATE ] Post-wake equipment status refresh complete; "
-            "waiting for PDA sleep",
-            flush=True,
-        )
         try:
-            returned_to_sleep = await context.monitor.wait_for(
-                PDA_SLEEPING,
-                after=wake_finished.sequence,
-                timeout_seconds=self._config.sleep_timeout_seconds,
-            )
-        except TimeoutError as error:
-            raise ScenarioFailure(
-                "PDA did not return to sleep within "
-                f"{self._config.sleep_timeout_seconds:g}s after the "
-                "post-wake status refresh"
-            ) from error
-
-        asleep_ns = wake_active.offset_ns - event.offset_ns
-        status_refresh_ns = wake_finished.offset_ns - wake_active.offset_ns
-        return_to_sleep_ns = returned_to_sleep.offset_ns - wake_finished.offset_ns
-        awake_ns = returned_to_sleep.offset_ns - wake_active.offset_ns
-        cycle_ns = returned_to_sleep.offset_ns - event.offset_ns
-        awake_percent = 100 * awake_ns / cycle_ns
-        sleep_percent = 100 * asleep_ns / cycle_ns
-        self._report["sleep_cycle"] = {
-            "sleep_ms": round(asleep_ns / 1_000_000, 3),
-            "status_refresh_ms": round(status_refresh_ns / 1_000_000, 3),
-            "return_to_sleep_ms": round(return_to_sleep_ns / 1_000_000, 3),
-            "awake_ms": round(awake_ns / 1_000_000, 3),
-            "cycle_ms": round(cycle_ns / 1_000_000, 3),
-            "awake_percent": round(awake_percent, 3),
-            "sleep_percent": round(sleep_percent, 3),
-        }
-        self._append_measurement(
-            name="pda.sleep.duration",
-            category="sleep_cycle",
-            phase="devices.sleeping",
-            target="pda_sleep",
-            requested_value=True,
-            start_offset_ns=event.offset_ns,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=wake_active.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        self._append_measurement(
-            name="pda.after_wake.status_refresh",
-            category="sleep_cycle",
-            phase="devices.sleeping",
-            target="pda_status",
-            requested_value=True,
-            start_offset_ns=wake_active.offset_ns,
-            api_ack_offset_ns=None,
-            task_active_offset_ns=wake_active.offset_ns,
-            log_completion_offset_ns=wake_finished.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        self._append_measurement(
-            name="pda.after_wake.return_to_sleep",
-            category="sleep_cycle",
-            phase="devices.sleeping",
-            target="pda_sleep",
-            requested_value=True,
-            start_offset_ns=wake_finished.offset_ns,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=returned_to_sleep.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        self._append_measurement(
-            name="pda.wake.duration",
-            category="sleep_cycle",
-            phase="devices.sleeping",
-            target="pda_awake",
-            requested_value=True,
-            start_offset_ns=wake_active.offset_ns,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=returned_to_sleep.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        self._append_measurement(
-            name="pda.sleep_wake.cycle",
-            category="sleep_cycle",
-            phase="devices.sleeping",
-            target="pda_sleep_wake_cycle",
-            requested_value=True,
-            start_offset_ns=event.offset_ns,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=returned_to_sleep.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        print(
-            "[STATE ] PDA returned to sleep: "
-            f"asleep {asleep_ns / 1_000_000_000:.3f}s, "
-            f"status refresh {status_refresh_ns / 1_000_000_000:.3f}s, "
-            f"post-status awake {return_to_sleep_ns / 1_000_000_000:.3f}s, "
-            f"cycle {cycle_ns / 1_000_000_000:.3f}s, "
-            f"awake {awake_percent:.1f}% / sleep {sleep_percent:.1f}%",
-            flush=True,
-        )
+            result = await self._sleep_wake_service(context).observe_natural_cycle()
+        except PdaSleepWakeFailure as error:
+            raise ScenarioFailure(str(error)) from error
+        self._report["sleep_cycle"] = result.report
 
     def _sleep_test_device(self, *, phase: str) -> str | None:
         assert self._initial_snapshot is not None
@@ -1987,32 +1858,27 @@ class PdaLivePanelScenario:
         button_number = self._button_number_by_identifier.get(identifier, 0)
         return (1, button_number, identifier)
 
-    async def _wait_for_sleep(
+    def _sleep_wake_service(
         self,
         context: ScenarioContext,
-        *,
-        phase: str,
-        measurement_name: str,
-    ) -> LineEvent:
-        cursor = context.monitor.cursor
-        started = context.timeline.offset_ns()
-        event = await context.monitor.wait_for(
-            PDA_SLEEPING,
-            after=cursor,
-            timeout_seconds=self._config.sleep_timeout_seconds,
+    ) -> PdaSleepWakeService:
+        return PdaSleepWakeService(
+            events=context.monitor,
+            timeline=context.timeline,
+            programmer=self._programmer,
+            config=PdaSleepWakeConfig(
+                sleep_timeout_seconds=self._config.sleep_timeout_seconds,
+                action_timeout_seconds=self._config.action_timeout_seconds,
+                status_retry_delay_seconds=(
+                    self._config.status_retry_command_delay_seconds
+                ),
+                probe_command_min_delay_seconds=(
+                    self._config.probe_command_min_delay_seconds
+                ),
+            ),
+            record_measurement=self._append_measurement,
+            progress=lambda message: print(message, flush=True),
         )
-        self._append_measurement(
-            name=measurement_name,
-            category="state_wait",
-            phase=phase,
-            target="pda_sleep",
-            requested_value=True,
-            start_offset_ns=started,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=event.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        return event
 
     async def _test_device_during_status_retry(
         self,
@@ -2022,42 +1888,18 @@ class PdaLivePanelScenario:
         identifier = self._sleep_test_device(phase=phase)
         if identifier is None:
             return
-        sleep_event = await self._wait_for_sleep(
-            context,
-            phase=phase,
-            measurement_name="pda.sleep.status_retry.command_ready",
-        )
-        delay = self._config.status_retry_command_delay_seconds
+        try:
+            window = await self._sleep_wake_service(
+                context
+            ).wait_for_status_retry_window()
+        except PdaSleepWakeFailure as error:
+            raise ScenarioFailure(str(error)) from error
         print(
-            f"[ WAIT ] PDA STATUS retry phase: delaying {delay:g}s after sleep begins",
+            f"[STATE ] Observed {window.retry_count} repeated PDA STATUS "
+            f"packet(s); toggling {identifier}",
             flush=True,
         )
-        await asyncio.sleep(delay)
-        events = [
-            event
-            for event in context.monitor.recent_events()
-            if event.sequence > sleep_event.sequence
-        ]
-        if any(PDA_ADDRESS_PROBE in event.text for event in events):
-            raise ScenarioFailure(
-                "PDA address probing began before the STATUS-retry command was sent"
-            )
-        retry_count = sum(PDA_ADDRESS_STATUS in event.text for event in events)
-        if retry_count == 0:
-            raise ScenarioFailure(
-                "No repeated PDA STATUS packet was observed before the "
-                "STATUS-retry command"
-            )
-        print(
-            f"[STATE ] Observed {retry_count} repeated PDA STATUS packet(s); "
-            f"toggling {identifier}",
-            flush=True,
-        )
-        await self._toggle_round_trip(
-            context,
-            identifier,
-            phase=phase,
-        )
+        await self._toggle_round_trip(context, identifier, phase=phase)
 
     async def _test_device_after_probe(
         self,
@@ -2067,50 +1909,19 @@ class PdaLivePanelScenario:
         identifier = self._sleep_test_device(phase=phase)
         if identifier is None:
             return
-        sleep_event = await self._wait_for_sleep(
-            context,
-            phase=phase,
-            measurement_name="pda.sleep.probe.command_ready",
-        )
-        print(
-            "[ WAIT ] PDA probe phase: waiting for a probe to address 0x60 "
-            f"(timeout {self._config.sleep_timeout_seconds:g}s)",
-            flush=True,
-        )
         try:
-            probe = await context.monitor.wait_for(
-                PDA_ADDRESS_PROBE,
-                after=sleep_event.sequence,
-                timeout_seconds=self._config.sleep_timeout_seconds,
-            )
-        except TimeoutError as error:
-            raise ScenarioFailure(
-                "Panel did not begin probing PDA address 0x60 after sleep"
-            ) from error
-        probe_delay = (probe.offset_ns - sleep_event.offset_ns) / 1_000_000_000
-        remaining_delay = max(
-            0.0,
-            self._config.probe_command_min_delay_seconds - probe_delay,
-        )
-        if remaining_delay:
-            print(
-                f"[ WAIT ] Probe observed early; delaying "
-                f"{remaining_delay:.3f}s so the command is at least "
-                f"{self._config.probe_command_min_delay_seconds:g}s after "
-                "sleep began",
-                flush=True,
-            )
-            await asyncio.sleep(remaining_delay)
+            window = await self._sleep_wake_service(
+                context
+            ).wait_for_probe_window()
+        except PdaSleepWakeFailure as error:
+            raise ScenarioFailure(str(error)) from error
         print(
-            f"[STATE ] PDA address probe observed {probe_delay:.3f}s after "
-            f"sleep began; toggling {identifier}",
+            f"[STATE ] PDA address probe observed "
+            f"{window.probe_delay_seconds:.3f}s after sleep began; "
+            f"toggling {identifier}",
             flush=True,
         )
-        await self._toggle_round_trip(
-            context,
-            identifier,
-            phase=phase,
-        )
+        await self._toggle_round_trip(context, identifier, phase=phase)
 
     async def _toggle_round_trip_unless_disabled(
         self,

@@ -14,6 +14,14 @@ from .identity import (
 )
 from .programmer import PdaProgrammerFailure, PdaProgrammerObserver
 from .session import PdaSessionFailure, PdaSessionInitializer, PdaStartupResult
+from .sleep import (
+    PdaProbeWindow,
+    PdaSleepCycleResult,
+    PdaSleepWakeConfig,
+    PdaSleepWakeFailure,
+    PdaSleepWakeService,
+    PdaStatusRetryWindow,
+)
 
 __all__ = [
     "PdaEquipmentStatusFailure",
@@ -29,4 +37,10 @@ __all__ = [
     "PdaSessionFailure",
     "PdaSessionInitializer",
     "PdaStartupResult",
+    "PdaProbeWindow",
+    "PdaSleepCycleResult",
+    "PdaSleepWakeConfig",
+    "PdaSleepWakeFailure",
+    "PdaSleepWakeService",
+    "PdaStatusRetryWindow",
 ]
