@@ -7,9 +7,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Literal, TypeVar
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
 from .engine import (
@@ -27,7 +25,14 @@ from .pda_simulator import (
     PdaSimulatorClient,
     SimulatorProtocolError,
 )
-from .protocols.pda import PdaProgrammerFailure, PdaProgrammerObserver
+from .protocols.pda import (
+    PdaPanelIdentityConfig,
+    PdaPanelIdentityFailure,
+    PdaPanelIdentityResult,
+    PdaPanelIdentityValidator,
+    PdaProgrammerFailure,
+    PdaProgrammerObserver,
+)
 from .protocols.pda import session as pda_session
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
@@ -1145,176 +1150,43 @@ class PdaLivePanelScenario:
         self,
         init_screen: dict[str, str],
     ) -> None:
-        status = await self._api_client.status()
-        initial_identity = self._api_identity(status)
-        self._report["panel"] = {
-            "init_screen": init_screen,
-            "api_status_after_init": initial_identity,
-        }
         daemon_identity = self._report.get("aqualinkd")
         configured_panel = (
             daemon_identity.get("configured_panel_type")
             if isinstance(daemon_identity, dict)
             else None
         )
-        reported_panel = init_screen["panel_type"]
-        reported_signature = self._panel_signature(reported_panel)
-        self._reported_panel_size = reported_signature[1]
-        self._reported_panel_combo = reported_signature[2]
+        try:
+            result = await PdaPanelIdentityValidator(
+                api=self._api_client,
+                config=PdaPanelIdentityConfig(
+                    timezone=self._config.panel_timezone,
+                    time_tolerance_seconds=(
+                        self._config.panel_time_tolerance_seconds
+                    ),
+                    timeout_seconds=self._config.init_timeout_seconds,
+                ),
+                progress=lambda message: print(message, flush=True),
+            ).validate(
+                init_screen=init_screen,
+                configured_panel=configured_panel,
+            )
+        except PdaPanelIdentityFailure as error:
+            self._record_panel_identity_result(error.result)
+            raise ScenarioFailure(str(error)) from error
+        self._record_panel_identity_result(result)
+
+    def _record_panel_identity_result(
+        self,
+        result: PdaPanelIdentityResult,
+    ) -> None:
+        self._report["panel"] = result.panel
+        self._report["checks"].extend(result.checks)
+        self._reported_panel_size = result.reported_panel_size
+        self._reported_panel_combo = result.reported_panel_combo
         self._report["device_selection"]["reported_panel_size"] = (
             self._reported_panel_size
         )
-        print(
-            f"[INFO  ] Panel reported: {reported_panel}; "
-            f"firmware {init_screen['firmware']}",
-            flush=True,
-        )
-        panel_type_check = self._panel_type_check(
-            configured_panel,
-            reported_panel,
-        )
-        self._report["checks"].append(panel_type_check)
-        if panel_type_check["status"] == "warning":
-            print(
-                "[ WARN ] Configured panel type does not match the "
-                f"physical panel: configured {configured_panel}; "
-                f"reported {reported_panel}",
-                flush=True,
-            )
-
-        try:
-            timezone = ZoneInfo(self._config.panel_timezone)
-        except ZoneInfoNotFoundError as error:
-            raise ScenarioFailure(
-                f"Unknown panel timezone: {self._config.panel_timezone}"
-            ) from error
-        deadline = asyncio.get_running_loop().time() + self._config.init_timeout_seconds
-        wait_started = time.monotonic()
-        announced_wait = False
-        while True:
-            panel_time, now, difference = self._panel_time_difference(
-                status,
-                timezone,
-            )
-            if difference <= self._config.panel_time_tolerance_seconds:
-                passed = True
-                break
-            if not announced_wait:
-                print(
-                    "[ WAIT ] Panel clock: waiting for initialization-time "
-                    f"synchronization (timeout "
-                    f"{self._config.init_timeout_seconds:g}s)",
-                    flush=True,
-                )
-                announced_wait = True
-            if asyncio.get_running_loop().time() >= deadline:
-                passed = False
-                break
-            await asyncio.sleep(0.25)
-            status = await self._api_client.status()
-
-        waited_seconds = time.monotonic() - wait_started
-        final_identity = self._api_identity(status)
-        if final_identity != initial_identity:
-            self._report["panel"]["api_status_after_clock_sync"] = final_identity
-        self._report["checks"].append(
-            {
-                "name": "panel.time",
-                "status": "passed" if passed else "failed",
-                "panel_time": panel_time.strip(),
-                "system_time": now.isoformat(),
-                "timezone": self._config.panel_timezone,
-                "difference_seconds": difference,
-                "waited_seconds": round(waited_seconds, 3),
-                "tolerance_seconds": (self._config.panel_time_tolerance_seconds),
-            }
-        )
-        if not passed:
-            raise ScenarioFailure(
-                f"Panel time differs from {self._config.panel_timezone} "
-                f"system time by {difference}s; tolerance is "
-                f"{self._config.panel_time_tolerance_seconds:g}s"
-            )
-
-    @classmethod
-    def _panel_type_check(
-        cls,
-        configured: str | None,
-        reported: str,
-    ) -> dict[str, Any]:
-        configured_signature = cls._panel_signature(configured)
-        reported_signature = cls._panel_signature(reported)
-        comparable = (
-            configured_signature[0] is not None
-            and reported_signature[0] is not None
-            and configured_signature[1] is not None
-            and reported_signature[1] is not None
-        )
-        matches = comparable and configured_signature == reported_signature
-        return {
-            "name": "panel.type",
-            "status": "passed" if matches else "warning",
-            "configured": configured,
-            "reported": reported,
-            "configured_signature": list(configured_signature),
-            "reported_signature": list(reported_signature),
-            "reason": (
-                None
-                if matches
-                else "Configured panel identity differs from panel screen"
-            ),
-        }
-
-    @staticmethod
-    def _panel_signature(
-        value: str | None,
-    ) -> tuple[str | None, int | None, bool | None]:
-        if value is None:
-            return (None, None, None)
-        normalized = value.upper()
-        family = "PDA" if "PDA" in normalized else None
-        capacity_match = re.search(r"PDA-(?:PS)?(\d+)", normalized)
-        capacity = int(capacity_match.group(1)) if capacity_match else None
-        combo = "COMBO" in normalized if family is not None else None
-        return (family, capacity, combo)
-
-    @staticmethod
-    def _api_identity(status: dict[str, Any]) -> dict[str, Any]:
-        return {
-            key: status.get(key)
-            for key in (
-                "panel_type_full",
-                "panel_type",
-                "version",
-                "date",
-                "time",
-            )
-        }
-
-    @staticmethod
-    def _panel_time_difference(
-        status: dict[str, Any],
-        timezone: ZoneInfo,
-    ) -> tuple[str, datetime, int]:
-        panel_time = status.get("time")
-        if not isinstance(panel_time, str):
-            raise ScenarioFailure("/api/status did not contain panel time")
-        try:
-            parsed = datetime.strptime(
-                panel_time.strip().upper(),
-                "%I:%M%p",
-            )
-        except ValueError as error:
-            raise ScenarioFailure(
-                f"Could not parse panel time {panel_time!r}"
-            ) from error
-
-        now = datetime.now(timezone)
-        panel_seconds = parsed.hour * 3600 + parsed.minute * 60
-        host_seconds = now.hour * 3600 + now.minute * 60 + now.second
-        difference = abs(panel_seconds - host_seconds)
-        difference = min(difference, 24 * 3600 - difference)
-        return panel_time.strip(), now, difference
 
     async def _wait_for_api(self) -> EquipmentSnapshot:
         deadline = asyncio.get_running_loop().time() + (

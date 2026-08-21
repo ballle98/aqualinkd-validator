@@ -44,6 +44,7 @@ source modules are:
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `protocols/pda/session.py` | PDA_INIT coordination, startup identity parsing, firmware-screen capture, and HTTP endpoint discovery |
+| `protocols/pda/identity.py` | Configured/reported panel comparison, API identity capture, and bounded panel-clock validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `pda/cases.py` | Legacy case identifiers retained for AqualinkD interface-emulator coverage |
@@ -53,10 +54,10 @@ source modules are:
 | `pda_simulator.py` | Client for AqualinkD's AquaPDA interface-emulation WebSocket |
 
 `pda_scenario.py` still contains too many responsibilities. Restoration policy,
-equipment mutations, PDA programmer correlation, and PDA session startup now
-live behind focused engine and protocol classes. New work should prefer
-extracting a cohesive parser, state model, or case module rather than making
-that coordinator larger.
+equipment mutations, PDA programmer correlation, session startup, and panel
+identity/clock validation now live behind focused engine and protocol classes.
+New work should prefer extracting a cohesive parser, state model, or case
+module rather than making that coordinator larger.
 
 ## Terminology
 
