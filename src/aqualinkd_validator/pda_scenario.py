@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 
 from .adapters import AqualinkHttpApi, AquaPdaWebSocketClient
 from .domain import EquipmentSnapshot
 from .engine import (
-    EquipmentActions,
     ProgrammerMarkers,
 )
 from .engine.runtime_cases import RuntimeCaseRunner
@@ -17,17 +16,8 @@ from .interfaces import (
 )
 from .protocols.pda import (
     PdaDeviceSelectionConfig,
-    PdaDeviceSelectionFailure,
     PdaDeviceSelector,
-    PdaEquipmentStatusExercise,
-    PdaEquipmentStatusFailure,
-    PdaEquipmentStatusService,
-    PdaProgrammerObserver,
-    PdaSleepWakeConfig,
-    PdaSleepWakeFailure,
-    PdaSleepWakeService,
 )
-from .protocols.pda import runtime_config as pda_runtime_config
 from .protocols.pda.aquapda import (
     AquaPdaMenuWalkConfig,
     AquaPdaMenuWalker,
@@ -35,29 +25,23 @@ from .protocols.pda.aquapda import (
     AquaPdaTransportValidator,
     AquaPdaValidationFailure,
 )
-from .protocols.pda.equipment_control import (
-    PdaEquipmentController,
-)
-from .protocols.pda.equipment_setup import (
-    PdaEquipmentSetupConfig,
-    PdaEquipmentSetupFailure,
-    PdaEquipmentStatusSetup,
-)
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
+from .protocols.pda.live_exercises import (
+    PdaLiveExercises,
+)
 from .protocols.pda.run_report import PdaRunReport, PdaRunReportConfig
-from .protocols.pda.run_session import PdaRunSession, PdaRunSessionFailure
+from .protocols.pda.run_session import PdaRunSession
 from .protocols.pda.runtime_config import (
     DEVICE_ACTIVE,
     DEVICE_FINISHED,
-    EQUIPMENT_POLL_SECONDS,
     POOL_HEATER,
     POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
     POOL_HEATER_SETPOINT_FINISHED_MARKERS,
     SPA_HEATER,
     SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
     SPA_HEATER_SETPOINT_FINISHED_MARKERS,
+    PdaScenarioConfig,
 )
-from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .run_targets import RuntimeCaseId
 from .testcases import (
     DeclarativeScenarioRunner,
@@ -67,28 +51,6 @@ from .testcases import (
     TestcaseDefinition,
 )
 
-INIT_ACTIVE = pda_runtime_config.INIT_ACTIVE
-INIT_FINISHED = pda_runtime_config.INIT_FINISHED
-LEGACY_POOL_HEATER_SETPOINT_ACTIVE = (
-    pda_runtime_config.LEGACY_POOL_HEATER_SETPOINT_ACTIVE
-)
-LEGACY_POOL_HEATER_SETPOINT_FINISHED = (
-    pda_runtime_config.LEGACY_POOL_HEATER_SETPOINT_FINISHED
-)
-LEGACY_STATUS_MENU_PRESENT = pda_runtime_config.LEGACY_STATUS_MENU_PRESENT
-PDA_ADDRESS_PROBE = pda_runtime_config.PDA_ADDRESS_PROBE
-PDA_ADDRESS_STATUS = pda_runtime_config.PDA_ADDRESS_STATUS
-PDA_SLEEPING = pda_runtime_config.PDA_SLEEPING
-POOL_HEATER_SETPOINT_ACTIVE = pda_runtime_config.POOL_HEATER_SETPOINT_ACTIVE
-POOL_HEATER_SETPOINT_FINISHED = (
-    pda_runtime_config.POOL_HEATER_SETPOINT_FINISHED
-)
-PdaScenarioConfig = pda_runtime_config.PdaScenarioConfig
-SPA_HEATER_SETPOINT_ACTIVE = pda_runtime_config.SPA_HEATER_SETPOINT_ACTIVE
-SPA_HEATER_SETPOINT_FINISHED = pda_runtime_config.SPA_HEATER_SETPOINT_FINISHED
-STATUS_MENU_PRESENT = pda_runtime_config.STATUS_MENU_PRESENT
-WAKE_INIT_ACTIVE = pda_runtime_config.WAKE_INIT_ACTIVE
-WAKE_INIT_FINISHED = pda_runtime_config.WAKE_INIT_FINISHED
 
 class ScenarioFailure(RuntimeError):
     """Raised when an expected PDA state transition does not complete."""
@@ -110,11 +72,9 @@ class PdaScenarioRuntime:
     ) -> None:
         self._aquapda_client_factory = aquapda_client_factory
         self._config = config
-        self._testcase = testcase
         if testcase is not None and testcases:
             raise ValueError("specify testcase or testcases, not both")
         self._testcases = testcases or ((testcase,) if testcase is not None else ())
-        self._programmer = PdaProgrammerObserver()
         self._case_ids = self._resolve_case_ids(config)
         endpoint_source = (
             "injected"
@@ -184,35 +144,31 @@ class PdaScenarioRuntime:
             report=self._run_report,
             device_selector=device_selector,
         )
-        self._report = self._session.report
-        self._recorder = self._session.recorder
-        self._restoration = self._session.restoration
-        self._device_selector = self._session.device_selector
-        self._programmer = self._session.programmer
+        self._exercises = PdaLiveExercises(self._session)
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         if self._testcases:
             return await DeclarativeScenarioRunner(
                 suite_name=self._config.suite_name,
                 testcases=self._testcases,
-                report=self._report,
-                recorder=self._recorder,
-                restoration=self._restoration,
+                report=self._session.report,
+                recorder=self._session.recorder,
+                restoration=self._session.restoration,
                 keywords=lambda testcase_id: self._testcase_keywords(
                     context,
                     testcase_id,
                 ),
-                restore=self._restore_with_progress,
+                restore=self._session.restore_with_progress,
                 initialized=lambda: self._session.initial_snapshot is not None,
             ).run(context)
         return await RuntimeCaseRunner(
             suite_name=self._config.suite_name,
             case_ids=self._case_ids,
-            report=self._report,
-            recorder=self._recorder,
-            restoration=self._restoration,
+            report=self._session.report,
+            recorder=self._session.recorder,
+            restoration=self._session.restoration,
             operation=lambda case_id: self._case_operation(case_id, context)(),
-            restore=lambda name: self._restore_with_progress(context, name),
+            restore=lambda name: self._session.restore_with_progress(context, name),
             initialized=lambda: self._session.initial_snapshot is not None,
         ).run(context)
 
@@ -225,8 +181,8 @@ class PdaScenarioRuntime:
             identifiers: tuple[str, ...],
             timeout_seconds: float,
         ) -> EquipmentSnapshot:
-            initial = await self._api_client.devices()
-            return await self._wait_for_stable_equipment_snapshot(
+            initial = await self._session.api_client.devices()
+            return await self._session.wait_for_stable(
                 context,
                 identifiers,
                 phase=f"testcase.{testcase_id}.stable",
@@ -236,14 +192,14 @@ class PdaScenarioRuntime:
 
         async def restore(timeout_seconds: float) -> None:
             del timeout_seconds
-            errors = await self._restore_original_state(context)
+            errors = await self._session.restore(context)
             if errors:
                 raise ScenarioFailure("; ".join(errors))
 
         return PdaTestcaseKeywords(
             events=context.monitor,
-            actions=lambda: self._equipment_actions(context),
-            restoration=self._restoration,
+            actions=lambda: self._session.equipment_actions(context),
+            restoration=self._session.restoration,
             markers=PdaKeywordMarkers(
                 device=ProgrammerMarkers(
                     "Switch PDA device on/off",
@@ -263,18 +219,24 @@ class PdaScenarioRuntime:
                     ),
                 },
             ),
-            initialize=lambda: self._initialize(context),
+            initialize=lambda: self._session.initialize(context),
             wait_for_stable=wait_for_stable,
             restore=restore,
-            verify_status=lambda: self._test_with_status_menu(context),
-            exercise_devices=lambda: self._test_consecutive_devices(context),
-            exercise_spa_heating=lambda: self._test_spa_heating(context),
-            observe_sleep=lambda: self._test_sleep_wake_cycle(context),
-            exercise_status_retry=lambda: self._test_device_during_status_retry(
+            verify_status=lambda: self._exercises.verify_equipment_status(context),
+            exercise_devices=lambda: self._exercises.exercise_consecutive_devices(
                 context
             ),
-            exercise_probe_transition=lambda: self._test_device_after_probe(context),
-            record_skip=self._recorder.skip,
+            exercise_spa_heating=lambda: self._exercises.exercise_spa_heating(
+                context
+            ),
+            observe_sleep=lambda: self._exercises.observe_sleep_cycle(context),
+            exercise_status_retry=lambda: self._exercises.exercise_status_retry(
+                context
+            ),
+            exercise_probe_transition=lambda: (
+                self._exercises.exercise_probe_transition(context)
+            ),
+            record_skip=self._session.recorder.skip,
             phase_prefix=f"testcase.{testcase_id}",
         )
 
@@ -303,7 +265,7 @@ class PdaScenarioRuntime:
         context: ScenarioContext,
     ) -> Callable[[], Awaitable[None]]:
         operations: dict[RuntimeCaseId, Callable[[], Awaitable[None]]] = {
-            RuntimeCaseId.INITIALIZATION: lambda: self._initialize(context),
+            RuntimeCaseId.INITIALIZATION: lambda: self._session.initialize(context),
             RuntimeCaseId.AQUAPDA_TRANSPORT: lambda: self._test_aquapda_transport(
                 context
             ),
@@ -317,7 +279,9 @@ class PdaScenarioRuntime:
     ) -> None:
         try:
             result = await AquaPdaTransportValidator(
-                client=self._aquapda_client_factory(self._api_client.base_url),
+                client=self._aquapda_client_factory(
+                    self._session.api_client.base_url
+                ),
                 events=context.monitor,
                 config=AquaPdaTransportConfig(
                     packet_count=self._config.aquapda_packet_count,
@@ -327,12 +291,14 @@ class PdaScenarioRuntime:
             ).validate()
         except AquaPdaValidationFailure as error:
             raise ScenarioFailure(str(error)) from error
-        self._report["aquapda_transport"] = result.report
+        self._session.report["aquapda_transport"] = result.report
 
     async def _test_menu_walk(self, context: ScenarioContext) -> None:
         try:
             result = await AquaPdaMenuWalker(
-                client=self._aquapda_client_factory(self._api_client.base_url),
+                client=self._aquapda_client_factory(
+                    self._session.api_client.base_url
+                ),
                 config=AquaPdaMenuWalkConfig(
                     timeout_seconds=self._config.aquapda_timeout_seconds
                 ),
@@ -340,413 +306,4 @@ class PdaScenarioRuntime:
             ).walk()
         except AquaPdaValidationFailure as error:
             raise ScenarioFailure(str(error)) from error
-        self._report["menu_walk"] = result.report
-
-    async def _restore_with_progress(
-        self,
-        context: ScenarioContext,
-        name: str,
-    ) -> list[str]:
-        return await self._session.restore_with_progress(context, name)
-
-    async def _initialize(self, context: ScenarioContext) -> None:
-        try:
-            await self._session.initialize(context)
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    @property
-    def _api_client(self) -> AqualinkApi:
-        return self._session.api_client
-
-    async def _wait_for_stable_equipment_snapshot(
-        self,
-        context: ScenarioContext,
-        identifiers: Sequence[str],
-        *,
-        phase: str,
-        timeout_seconds: float,
-        initial_snapshot: EquipmentSnapshot | None = None,
-    ) -> EquipmentSnapshot:
-        try:
-            return await self._session.wait_for_stable(
-                context,
-                identifiers,
-                phase=phase,
-                timeout_seconds=timeout_seconds,
-                initial_snapshot=initial_snapshot,
-            )
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    async def _toggle_round_trip(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        *,
-        phase: str,
-    ) -> None:
-        initial = self._initial_device_enabled(identifier)
-        await self._set_device(
-            context,
-            identifier,
-            not initial,
-            phase=phase,
-        )
-        await self._set_device(
-            context,
-            identifier,
-            initial,
-            phase=phase,
-        )
-
-    async def _test_with_status_menu(self, context: ScenarioContext) -> None:
-        assert self._session.initial_snapshot is not None
-        candidates = self._device_selector.status_candidates(
-            phase="devices.status_menu.setup"
-        )
-        status_service = PdaEquipmentStatusService(
-            events=context.monitor,
-            wait_for_stable=lambda identifiers, phase, timeout: (
-                self._wait_for_stable_equipment_snapshot(
-                    context,
-                    identifiers,
-                    phase=phase,
-                    timeout_seconds=timeout,
-                )
-            ),
-            status_timeout_seconds=self._config.status_timeout_seconds,
-            state_timeout_seconds=self._config.state_timeout_seconds,
-            progress=lambda message: print(message, flush=True),
-        )
-        try:
-            result = await PdaEquipmentStatusExercise(
-                events=context.monitor,
-                timeline=context.timeline,
-                setup=self._equipment_status_setup(context),
-                status=status_service,
-                record_skip=self._recorder.skip,
-                record_measurement=self._recorder.append_measurement,
-                progress=lambda message: print(message, flush=True),
-            ).run(
-                initial_snapshot=self._session.initial_snapshot,
-                candidates=candidates,
-            )
-        except PdaEquipmentSetupFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        except PdaEquipmentStatusFailure as error:
-            if error.result is not None:
-                self._report["equipment_status"] = error.result.report
-            raise ScenarioFailure(str(error)) from error
-        if result.verification is not None:
-            self._report["equipment_status"] = result.verification.report
-
-    def _equipment_status_setup(
-        self,
-        context: ScenarioContext,
-    ) -> PdaEquipmentStatusSetup:
-        async def set_heater_setpoint(
-            identifier: str,
-            value: int,
-            phase: str,
-        ) -> None:
-            active, completed = self._heater_setpoint_markers(identifier)
-            await self._set_setpoint(
-                context,
-                identifier,
-                value,
-                phase=phase,
-                active_marker=active,
-                completion_marker=completed,
-                category="heater_safety",
-            )
-
-        return PdaEquipmentStatusSetup(
-            api=self._api_client,
-            events=context.monitor,
-            config=PdaEquipmentSetupConfig(
-                status_timeout_seconds=self._config.status_timeout_seconds,
-                restoration_timeout_seconds=(
-                    self._config.restoration_timeout_seconds
-                ),
-                poll_seconds=EQUIPMENT_POLL_SECONDS,
-            ),
-            set_device=lambda identifier, enabled, phase, timeout: (
-                self._set_device(
-                    context,
-                    identifier,
-                    enabled,
-                    phase=phase,
-                    state_timeout_seconds=timeout,
-                )
-            ),
-            set_setpoint=set_heater_setpoint,
-            wait_for_stable=lambda identifiers, phase, timeout: (
-                self._wait_for_stable_equipment_snapshot(
-                    context,
-                    identifiers,
-                    phase=phase,
-                    timeout_seconds=timeout,
-                )
-            ),
-            record_skip=self._recorder.skip,
-            progress=lambda message: print(message, flush=True),
-        )
-
-    @staticmethod
-    def _heater_setpoint_markers(
-        identifier: str,
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        markers = {
-            POOL_HEATER: (
-                POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
-                POOL_HEATER_SETPOINT_FINISHED_MARKERS,
-            ),
-            SPA_HEATER: (
-                SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
-                SPA_HEATER_SETPOINT_FINISHED_MARKERS,
-            ),
-        }.get(identifier)
-        if markers is None:
-            raise ScenarioFailure(
-                f"No PDA heater setpoint markers for {identifier}"
-            )
-        return markers
-
-    async def _test_spa_heating(self, context: ScenarioContext) -> None:
-        assert self._session.initial_snapshot is not None
-        fill_seconds = self._config.spa_fill_seconds
-        if fill_seconds is None:
-            raise ScenarioFailure(
-                "pda-live-spa requires spa.fill_time in "
-                "aqualinkd-validator.yaml beside aqualinkd.conf"
-            )
-        exercise = PdaSpaExercise(
-            api=self._api_client,
-            config=SpaExerciseConfig(
-                fill_seconds=fill_seconds,
-                active_timeout_seconds=self._config.status_timeout_seconds,
-                transition_timeout_seconds=self._config.restoration_timeout_seconds,
-            ),
-            set_device=lambda identifier, enabled, phase, timeout: self._set_device(
-                context,
-                identifier,
-                enabled,
-                phase=phase,
-                state_timeout_seconds=timeout,
-            ),
-            set_setpoint=lambda identifier, value, phase: self._set_setpoint(
-                context,
-                identifier,
-                value,
-                phase=phase,
-                active_marker=SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
-                completion_marker=SPA_HEATER_SETPOINT_FINISHED_MARKERS,
-                category="spa_heating",
-            ),
-            record_measurement=self._recorder.append_measurement,
-            record_skip=self._recorder.skip,
-            offset_ns=context.timeline.offset_ns,
-        )
-        await exercise.run(self._session.initial_snapshot)
-
-    async def _test_consecutive_devices(
-        self,
-        context: ScenarioContext,
-    ) -> None:
-        assert self._session.initial_snapshot is not None
-        try:
-            identifiers = list(
-                self._device_selector.consecutive_switches(
-                    phase="devices.consecutive"
-                )
-            )
-        except PdaDeviceSelectionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        self._report["device_selection"]["resolved"] = identifiers
-        if not identifiers:
-            return
-
-        for identifier in identifiers:
-            await self._set_device(
-                context,
-                identifier,
-                not self._initial_device_enabled(identifier),
-                phase="devices.consecutive",
-            )
-        for identifier in reversed(identifiers):
-            await self._set_device(
-                context,
-                identifier,
-                self._initial_device_enabled(identifier),
-                phase="devices.consecutive.restore",
-            )
-
-    async def _test_sleep_wake_cycle(self, context: ScenarioContext) -> None:
-        try:
-            result = await self._sleep_wake_service(context).observe_natural_cycle()
-        except PdaSleepWakeFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        self._report["sleep_cycle"] = result.report
-
-    def _sleep_test_device(self, *, phase: str) -> str | None:
-        try:
-            identifier = self._device_selector.sleep_switch(phase=phase)
-        except PdaDeviceSelectionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        if identifier is None:
-            return None
-        self._report["device_selection"]["resolved"] = [identifier]
-        return identifier
-
-    def _sleep_wake_service(
-        self,
-        context: ScenarioContext,
-    ) -> PdaSleepWakeService:
-        return PdaSleepWakeService(
-            events=context.monitor,
-            timeline=context.timeline,
-            programmer=self._programmer,
-            config=PdaSleepWakeConfig(
-                sleep_timeout_seconds=self._config.sleep_timeout_seconds,
-                action_timeout_seconds=self._config.action_timeout_seconds,
-                status_retry_delay_seconds=(
-                    self._config.status_retry_command_delay_seconds
-                ),
-                probe_command_min_delay_seconds=(
-                    self._config.probe_command_min_delay_seconds
-                ),
-            ),
-            record_measurement=self._recorder.append_measurement,
-            progress=lambda message: print(message, flush=True),
-        )
-
-    async def _test_device_during_status_retry(
-        self,
-        context: ScenarioContext,
-    ) -> None:
-        phase = "devices.sleep.status_retry"
-        identifier = self._sleep_test_device(phase=phase)
-        if identifier is None:
-            return
-        try:
-            window = await self._sleep_wake_service(
-                context
-            ).wait_for_status_retry_window()
-        except PdaSleepWakeFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        print(
-            f"[STATE ] Observed {window.retry_count} repeated PDA STATUS "
-            f"packet(s); toggling {identifier}",
-            flush=True,
-        )
-        await self._toggle_round_trip(context, identifier, phase=phase)
-
-    async def _test_device_after_probe(
-        self,
-        context: ScenarioContext,
-    ) -> None:
-        phase = "devices.sleep.probing"
-        identifier = self._sleep_test_device(phase=phase)
-        if identifier is None:
-            return
-        try:
-            window = await self._sleep_wake_service(
-                context
-            ).wait_for_probe_window()
-        except PdaSleepWakeFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        print(
-            f"[STATE ] PDA address probe observed "
-            f"{window.probe_delay_seconds:.3f}s after sleep began; "
-            f"toggling {identifier}",
-            flush=True,
-        )
-        await self._toggle_round_trip(context, identifier, phase=phase)
-
-    def _equipment_actions(
-        self,
-        context: ScenarioContext,
-    ) -> EquipmentActions:
-        return self._session.equipment_actions(context)
-
-    def _equipment_control(
-        self,
-        context: ScenarioContext,
-    ) -> PdaEquipmentController:
-        return self._session.equipment_control(context)
-
-    async def _set_device(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        enabled: bool,
-        *,
-        phase: str,
-        state_timeout_seconds: float | None = None,
-    ) -> None:
-        try:
-            await self._session.set_device(
-                context,
-                identifier,
-                enabled,
-                phase=phase,
-                state_timeout_seconds=state_timeout_seconds,
-            )
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    async def _set_setpoint(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        value: int,
-        *,
-        phase: str,
-        active_marker: str | tuple[str, ...],
-        completion_marker: str | tuple[str, ...],
-        category: str,
-    ) -> None:
-        try:
-            await self._session.set_setpoint(
-                context,
-                identifier,
-                value,
-                phase=phase,
-                category=category,
-                active_marker=active_marker,
-                completion_marker=completion_marker,
-            )
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    async def _wait_for_device_state(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        enabled: bool,
-        *,
-        timeout_seconds: float | None = None,
-    ) -> int:
-        timeout = timeout_seconds or self._config.state_timeout_seconds
-        try:
-            return await self._session.wait_for_device_state(
-                context,
-                identifier,
-                enabled,
-                timeout_seconds=timeout,
-            )
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    def _initial_device_enabled(self, identifier: str) -> bool:
-        return self._session.initial_device_enabled(identifier)
-
-    async def _restore_original_state(
-        self,
-        context: ScenarioContext,
-    ) -> list[str]:
-        try:
-            return await self._session.restore(context)
-        except PdaRunSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
+        self._session.report["menu_walk"] = result.report

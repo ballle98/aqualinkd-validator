@@ -15,6 +15,11 @@ from aqualinkd_validator.domain import DeviceState, EquipmentSnapshot
 from aqualinkd_validator.engine import ScenarioRecorder
 from aqualinkd_validator.interfaces import ScenarioContext
 from aqualinkd_validator.pda_scenario import (
+    PdaScenarioRuntime,
+    ScenarioFailure,
+)
+from aqualinkd_validator.protocols.pda.run_session import PdaRunSessionFailure
+from aqualinkd_validator.protocols.pda.runtime_config import (
     DEVICE_ACTIVE,
     DEVICE_FINISHED,
     INIT_ACTIVE,
@@ -28,8 +33,6 @@ from aqualinkd_validator.pda_scenario import (
     SPA_HEATER_SETPOINT_ACTIVE,
     SPA_HEATER_SETPOINT_FINISHED,
     PdaScenarioConfig,
-    PdaScenarioRuntime,
-    ScenarioFailure,
 )
 from aqualinkd_validator.testcases import load_testcase, load_testcase_suite
 
@@ -346,10 +349,10 @@ class PdaScenarioTests(unittest.TestCase):
             )
             try:
                 with self.assertRaisesRegex(
-                    ScenarioFailure,
+                    PdaRunSessionFailure,
                     "did not become on",
                 ):
-                    await scenario._wait_for_device_state(
+                    await scenario._session.wait_for_device_state(
                         context,
                         "Filter_Pump",
                         True,
@@ -401,13 +404,13 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(
+            scenario._session.restoration.capture_initial(
                 scenario._session.initial_snapshot
             )
             for identifier in identifiers:
-                scenario._restoration.touch_device(identifier)
+                scenario._session.restoration.touch_device(identifier)
             try:
-                errors = await scenario._restore_original_state(context)
+                errors = await scenario._session.restore(context)
             finally:
                 timeline.close()
 
@@ -458,12 +461,12 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(
+            scenario._session.restoration.capture_initial(
                 scenario._session.initial_snapshot
             )
-            scenario._restoration.touch_device("Filter_Pump")
+            scenario._session.restoration.touch_device("Filter_Pump")
             try:
-                errors = await scenario._restore_original_state(context)
+                errors = await scenario._session.restore(context)
             finally:
                 timeline.close()
 
@@ -510,14 +513,14 @@ class PdaScenarioTests(unittest.TestCase):
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(
+            scenario._session.restoration.capture_initial(
                 scenario._session.initial_snapshot
             )
-            scenario._restoration.touch_device("Spa_Mode")
-            first_errors = await scenario._restore_original_state(context)
+            scenario._session.restoration.touch_device("Spa_Mode")
+            first_errors = await scenario._session.restore(context)
             api._pending_polls["Spa_Mode"] = 1
             try:
-                second_errors = await scenario._restore_original_state(context)
+                second_errors = await scenario._session.restore(context)
             finally:
                 timeline.close()
 
@@ -674,10 +677,10 @@ class PdaScenarioTests(unittest.TestCase):
             )
             initial = await api.devices()
             scenario._session.initial_snapshot = initial
-            scenario._restoration.capture_initial(initial)
+            scenario._session.restoration.capture_initial(initial)
             try:
-                await scenario._test_spa_heating(context)
-                errors = await scenario._restore_original_state(context)
+                await scenario._exercises.exercise_spa_heating(context)
+                errors = await scenario._session.restore(context)
             finally:
                 context.timeline.close()
 
@@ -688,7 +691,8 @@ class PdaScenarioTests(unittest.TestCase):
             self.assertFalse(restored.devices[SPA_HEATER].enabled)
             self.assertEqual(restored.devices[SPA_HEATER].setpoint, 78)
             measurement_names = {
-                measurement["name"] for measurement in scenario._report["measurements"]
+                measurement["name"]
+                for measurement in scenario._session.report["measurements"]
             }
             self.assertIn("spa.pool_mode_fill", measurement_names)
             self.assertIn("spa.heater.active", measurement_names)

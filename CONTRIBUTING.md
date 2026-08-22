@@ -64,18 +64,17 @@ source modules are:
 | `protocols/pda/restoration.py` | PDA transition-aware restoration execution, pending-transition waits, and duplicate-toggle suppression |
 | `protocols/pda/sleep.py` | Natural sleep/wake duty-cycle observation, post-wake refresh timing, and STATUS-retry/probe transition validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
+| `protocols/pda/run_session.py` | One-run API discovery, initialization snapshot, common equipment control, restoration, and report state |
+| `protocols/pda/live_exercises.py` | Equipment-status, spa, consecutive-device, and sleep/wake live-panel exercises |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `testcases/lifecycle.py` | Serialized declarative testcase/suite execution, final safety restoration, result aggregation, and timeline finalization |
 | `testing/fakes.py` | Reusable deterministic API, event, timeline, artifact, clock, serial, AquaPDA, and process adapters for focused unit tests |
-| `pda_scenario.py` | `PdaScenarioRuntime`, the remaining PDA lifecycle and keyword coordinator |
+| `pda_scenario.py` | Small `PdaScenarioRuntime` composition, keyword binding, and Python-only AquaPDA dispatch boundary |
 | `protocols/pda/aquapda.py` | AquaPDA transport validation and bounded read-only menu walking |
 
-`pda_scenario.py` still contains too many responsibilities. Restoration policy,
-equipment mutations, stable-state observation, PDA programmer correlation,
-session startup, panel identity/clock validation, device-selection policy,
-equipment-status reconciliation, and sleep/wake observation now live behind
-focused engine and protocol classes. New work should prefer extracting a
-cohesive parser, state model, or case module rather than making that
+`PdaScenarioRuntime` composes `PdaRunSession` and `PdaLiveExercises`; it does
+not own physical-panel state or protocol policy. New work should extend the
+focused engine or protocol class that owns the behavior rather than making the
 coordinator larger.
 
 ## Terminology

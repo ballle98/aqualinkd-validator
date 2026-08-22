@@ -1157,7 +1157,10 @@ PDA organization now resolves through one execution path:
   restoration session to PDA transitions, including bounded pending-state
   waits and duplicate-toggle suppression.
   `protocols/pda/sleep.py` owns natural duty-cycle timing and STATUS-retry/probe
-  transition validation. `adapters/aquapda.py` owns the AquaPDA WebSocket and
+  transition validation. `protocols/pda/run_session.py` owns the mutable
+  one-run API, snapshot, control, reporting, and restoration state;
+  `protocols/pda/live_exercises.py` composes the higher-level physical-panel
+  exercises from the focused services. `adapters/aquapda.py` owns the AquaPDA WebSocket and
   screen reconstruction, while `protocols/pda/aquapda.py` owns transport
   validation and bounded read-only menu walking. `PdaScenarioRuntime` in
   `pda_scenario.py` retains the small case-dispatch boundary for that interface

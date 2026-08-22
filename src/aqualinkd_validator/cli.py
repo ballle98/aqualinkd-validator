@@ -36,7 +36,8 @@ from .metadata import (
 )
 from .metrics import summarize_metrics
 from .panel_free import run_panel_free_testcase
-from .pda_scenario import PdaScenarioConfig, PdaScenarioRuntime
+from .pda_scenario import PdaScenarioRuntime
+from .protocols.pda.runtime_config import PdaScenarioConfig
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
 from .testcases import (
