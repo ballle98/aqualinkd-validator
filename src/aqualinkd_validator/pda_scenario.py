@@ -29,8 +29,6 @@ from .protocols.pda import (
     PdaPanelIdentityFailure,
     PdaPanelIdentityResult,
     PdaProgrammerObserver,
-    PdaRestorationConfig,
-    PdaRestorationService,
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
@@ -58,6 +56,10 @@ from .protocols.pda.equipment_setup import (
     PdaEquipmentStatusSetup,
 )
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
+from .protocols.pda.restoration_coordinator import (
+    PdaRestorationCoordinator,
+    PdaRestorationCoordinatorConfig,
+)
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .run_targets import RuntimeCaseId
 from .testcases import (
@@ -937,79 +939,32 @@ class PdaScenarioRuntime:
             return []
         restoration["attempted"] = True
 
-        async def restore_setpoint(identifier: str, original: int) -> None:
-            markers = {
-                POOL_HEATER: (
-                    POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
-                    POOL_HEATER_SETPOINT_FINISHED_MARKERS,
-                ),
-                SPA_HEATER: (
-                    SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
-                    SPA_HEATER_SETPOINT_FINISHED_MARKERS,
-                ),
-            }.get(identifier)
-            if markers is None:
-                raise ScenarioFailure(
-                    f"No restoration programmer markers for {identifier}"
-                )
-            await self._set_setpoint(
-                context,
-                identifier,
-                original,
-                phase="restoration.setpoint",
-                active_marker=markers[0],
-                completion_marker=markers[1],
-                category="restoration",
-            )
-
-        async def wait_for_stable(
-            identifiers: Sequence[str],
-            phase: str,
-            timeout: float,
-            initial: EquipmentSnapshot,
-        ) -> EquipmentSnapshot:
-            return await self._wait_for_stable_equipment_snapshot(
-                context,
-                identifiers,
-                phase=phase,
-                timeout_seconds=timeout,
-                initial_snapshot=initial,
-            )
-
-        async def wait_for_device_state(
-            identifier: str,
-            expected: bool,
-            timeout: float,
-        ) -> None:
-            await self._wait_for_device_state(
-                context,
-                identifier,
-                expected,
-                timeout_seconds=timeout,
-            )
-
-        result = await PdaRestorationService(
+        result = await PdaRestorationCoordinator(
             api=self._api_client,
             session=self._restoration,
-            config=PdaRestorationConfig(
-                timeout_seconds=self._config.restoration_timeout_seconds
+            control=self._equipment_control(context),
+            config=PdaRestorationCoordinatorConfig(
+                timeout_seconds=self._config.restoration_timeout_seconds,
+                device_markers=ProgrammerMarkers(
+                    "Switch PDA device on/off",
+                    DEVICE_ACTIVE,
+                    DEVICE_FINISHED,
+                ),
+                setpoint_markers={
+                    POOL_HEATER: ProgrammerMarkers(
+                        "Set PDA Pool Heater",
+                        POOL_HEATER_SETPOINT_ACTIVE_MARKERS,
+                        POOL_HEATER_SETPOINT_FINISHED_MARKERS,
+                    ),
+                    SPA_HEATER: ProgrammerMarkers(
+                        "Set PDA Spa Heater",
+                        SPA_HEATER_SETPOINT_ACTIVE_MARKERS,
+                        SPA_HEATER_SETPOINT_FINISHED_MARKERS,
+                    ),
+                },
             ),
-            set_device=lambda identifier, enabled, phase, timeout: (
-                self._set_device(
-                    context,
-                    identifier,
-                    enabled,
-                    phase=phase,
-                    state_timeout_seconds=timeout,
-                )
-            ),
-            set_setpoint=restore_setpoint,
-            wait_for_stable=wait_for_stable,
-            wait_for_device_state=wait_for_device_state,
             progress=lambda message: print(message, flush=True),
-        ).restore(
-            self._initial_snapshot,
-        )
+        ).restore(self._initial_snapshot)
         restoration["actions"].extend(
             {
                 "target": action.target,
