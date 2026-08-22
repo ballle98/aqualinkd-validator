@@ -55,6 +55,9 @@ mode: rs485-panel-emulator
 access: read-only
 requires:
   protocol: rs485
+fixture:
+  panel_type: RS-4 Combo
+  device_id: "0x0a"
 steps:
   - assert_log:
       contains: ready

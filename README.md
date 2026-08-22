@@ -875,55 +875,50 @@ AqualinkD runtime dependencies.
 
 ## Scenario format
 
-Scenarios are expected to be declarative YAML with explicit timeouts. A
-possible PDA scenario might look like:
+Scenarios are declarative YAML with explicit timeouts. Panel-free testcases
+declare the AqualinkD panel identity used to generate the isolated config and
+use raw serial bytes for the initial bounded protocol work:
 
 ```yaml
-name: pda-wakes-for-filter-pump-request
-mode: replay
-panel: pda
-capture: captures/pda/idle/serial.pcapng
+schema: 1
+id: rs485.probe-ack
+description: Send a panel probe and expect the AqualinkD response
+mode: rs485-panel-emulator
+access: read-write
+requires: {protocol: rs485}
+fixture:
+  panel_type: PDA-PS4 Combo
+  device_id: "0x60"
 
 steps:
-  - wait_http_ready:
-      timeout: 10s
-
-  - wait_log:
-      contains: "Got probe"
-      timeout: 10s
-
-  - wait:
-      duration: 31s
-      reason: Allow the PDA interface to enter sleep mode
-
-  - http:
-      method: PUT
-      path: /api/Filter_Pump/set
-      value: 1
-
+  - serial_send:
+      bytes: "10 02 60 00 72 10 03"
+      timeout: 100ms
   - expect_serial:
-      command: PDA_KEY
-      key: SELECT
-      timeout: 5s
-
-  - wait_status:
-      path: Filter_Pump
-      equals: "on"
-      timeout: 15s
-
-  - assert_no_log:
-      level: error
+      bytes: "10 02 00 01 40 00 53 10 03"
+      timeout: 2s
 ```
 
-The schema will evolve as real scenarios expose which primitives are useful.
-Initial support should favor a small set of composable steps rather than
-protocol-specific behavior embedded directly in the scenario runner.
+Validate the document without starting AqualinkD, then run it with:
+
+```bash
+aqualinkd-validator validate-testcase testcases/rs485/probe-ack.yaml
+aqualinkd-validator run-panel-free \
+  --aqualinkd ~/git/AqualinkD/release/aqualinkd \
+  --web-directory ~/git/AqualinkD/web \
+  testcases/rs485/probe-ack.yaml
+```
+
+`run-panel-free` automatically creates a private PTY and configuration, waits
+for AqualinkD's HTTP API, captures both directions of serial traffic, and
+cleans up the child process. HTTP action keywords and a reusable stateful
+probe/ACK panel fixture are still follow-on work.
 
 ## Capture bundle and formats
 
-The PTY capture writer and generated configuration artifact are implemented.
-The panel-free CLI still needs to compose them with the process supervisor and
-YAML keywords to produce the complete versioned bundle:
+The panel-free CLI composes the generated configuration, PTY capture, process
+supervisor, HTTP readiness check, and serial YAML keywords into one run. It
+produces this versioned bundle:
 
 ```text
 run-<id>/
@@ -933,8 +928,8 @@ run-<id>/
 ├── stdout.log
 ├── stderr.log
 ├── scenario.json
-├── http.jsonl
 ├── effective-aqualinkd.conf
+├── testcase.yaml
 └── result.json
 ```
 
@@ -1166,8 +1161,9 @@ targets; ordinary physical-panel coverage is authored in YAML.
 [GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
 tracks the initial panel-free end-to-end milestone. Its isolated configuration
 builder, PTY transport, bidirectional serial timeline, and PCAPNG writer are
-implemented as tested components. The panel-free CLI composition, low-level
-YAML serial/HTTP keywords, HTTP history, and probe/ACK smoke scenario remain.
+implemented as tested components. The panel-free CLI composition and low-level
+YAML serial keywords are also implemented. HTTP action/history keywords and a
+stateful panel fixture for the end-to-end HTTP-action milestone remain.
 The PDA live-panel work was developed ahead of that panel-free milestone and
 does not close the issue.
 

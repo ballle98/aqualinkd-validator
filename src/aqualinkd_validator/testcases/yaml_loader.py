@@ -20,6 +20,7 @@ from .model import (
     ExerciseStatusRetryStep,
     ExpectSerialStep,
     ObserveSleepCycleStep,
+    PanelFixtureDefinition,
     RestoreOriginalStateStep,
     SerialSendStep,
     SetDeviceStep,
@@ -40,6 +41,7 @@ from .model import (
 
 _DURATION = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>ms|s|m)$")
 _IDENTIFIER = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+_CONFIG_KEY = re.compile(r"^[A-Za-z0-9_]+$")
 _DEVICE_STATES = {
     "on",
     "off",
@@ -243,7 +245,7 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         document,
         source,
         required={"schema", "id", "description", "mode", "access", "requires", "steps"},
-        optional={"finally"},
+        optional={"finally", "fixture"},
     )
     schema = _integer(document["schema"], f"{source}.schema")
     if schema != 1:
@@ -262,6 +264,11 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         {"read-only", "read-write"},
     )
     requirements = _requirements(document["requires"], f"{source}.requires")
+    fixture = (
+        _panel_fixture(document["fixture"], f"{source}.fixture")
+        if "fixture" in document
+        else None
+    )
     steps = _steps(document["steps"], f"{source}.steps")
     finally_steps = _steps(document.get("finally", []), f"{source}.finally")
     serial_steps = tuple(
@@ -278,6 +285,14 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     if requirements.protocol == "pda" and mode_value != "physical-panel":
         raise TestcaseValidationError(
             f"{source}.mode: pda protocol requires 'physical-panel'"
+        )
+    if requirements.protocol == "rs485" and fixture is None:
+        raise TestcaseValidationError(
+            f"{source}.fixture: rs485 testcases require a panel fixture"
+        )
+    if requirements.protocol == "pda" and fixture is not None:
+        raise TestcaseValidationError(
+            f"{source}.fixture: panel fixtures are only valid for rs485 testcases"
         )
     if any(isinstance(step, SerialSendStep) for step in steps) and access_value != (
         "read-write"
@@ -328,6 +343,7 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         requirements=requirements,
         steps=steps,
         finally_steps=finally_steps,
+        fixture=fixture,
     )
 
 
@@ -336,6 +352,35 @@ def _requirements(raw: object, path: str) -> TestcaseRequirements:
     _keys(value, path, required={"protocol"})
     protocol = _choice(value["protocol"], f"{path}.protocol", {"pda", "rs485"})
     return TestcaseRequirements(protocol=cast(TestcaseProtocol, protocol))
+
+
+def _panel_fixture(raw: object, path: str) -> PanelFixtureDefinition:
+    value = _mapping(raw, path)
+    _keys(
+        value,
+        path,
+        required={"panel_type", "device_id"},
+        optional={"rssa_device_id", "extended_device_id", "overrides"},
+    )
+    raw_overrides = _mapping(value.get("overrides", {}), f"{path}.overrides")
+    overrides: list[tuple[str, str]] = []
+    for key, raw_value in raw_overrides.items():
+        if not _CONFIG_KEY.fullmatch(key):
+            raise TestcaseValidationError(
+                f"{path}.overrides: invalid configuration key {key!r}"
+            )
+        overrides.append((key, _string(raw_value, f"{path}.overrides.{key}")))
+    return PanelFixtureDefinition(
+        panel_type=_string(value["panel_type"], f"{path}.panel_type"),
+        device_id=_string(value["device_id"], f"{path}.device_id"),
+        rssa_device_id=_optional_string(
+            value.get("rssa_device_id"), f"{path}.rssa_device_id"
+        ),
+        extended_device_id=_optional_string(
+            value.get("extended_device_id"), f"{path}.extended_device_id"
+        ),
+        overrides=tuple(overrides),
+    )
 
 
 def _suite_config(raw: object, path: str) -> TestcaseSuiteConfig:

@@ -141,6 +141,9 @@ description: Send a panel probe and expect an ACK
 mode: rs485-panel-emulator
 access: read-write
 requires: {protocol: rs485}
+fixture:
+  panel_type: RS-4 Combo
+  device_id: "0x0a"
 steps:
   - serial_send:
       bytes: "10 02 60 00 72 10 03"
@@ -160,6 +163,9 @@ steps:
         self.assertEqual(testcase.steps[0].payload.hex(), "10026000721003")
         self.assertEqual(testcase.steps[0].timeout_seconds, 0.1)
         self.assertEqual(testcase.steps[1].timeout_seconds, 2)
+        self.assertIsNotNone(testcase.fixture)
+        assert testcase.fixture is not None
+        self.assertEqual(testcase.fixture.panel_type, "RS-4 Combo")
 
     def test_rejects_serial_steps_outside_rs485_runtime(self) -> None:
         error = self._load_error(

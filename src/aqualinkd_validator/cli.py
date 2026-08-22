@@ -35,6 +35,7 @@ from .metadata import (
     collect_source_metadata,
 )
 from .metrics import summarize_metrics
+from .panel_free import run_panel_free_testcase
 from .pda_scenario import PdaScenarioConfig, PdaScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
@@ -67,6 +68,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate declarative testcase YAML without starting AqualinkD",
     )
     validate.add_argument("paths", nargs="+", type=Path, metavar="TESTCASE")
+
+    panel_free = subparsers.add_parser(
+        "run-panel-free",
+        help="Run one RS485 YAML testcase against an isolated AqualinkD process",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    panel_free.add_argument("testcase", type=Path)
+    panel_free.add_argument(
+        "--aqualinkd", type=Path, default=Path("/usr/local/bin/aqualinkd")
+    )
+    panel_free.add_argument(
+        "--web-directory", type=Path, default=Path("/var/www/aqualinkd")
+    )
+    panel_free.add_argument(
+        "--artifacts",
+        type=Path,
+        default=Path("/tmp/aqualinkd-validator-artifacts"),
+    )
+    panel_free.add_argument("--label", default="panel-free")
+    panel_free.add_argument("--duration", type=_positive_float, default=60.0)
+    panel_free.add_argument(
+        "--http-ready-timeout", type=_positive_float, default=10.0
+    )
+    panel_free.add_argument("--sample-interval", type=_positive_float, default=1.0)
+    panel_free.add_argument("--terminate-grace", type=_positive_float, default=10.0)
 
     run = subparsers.add_parser(
         "run",
@@ -232,6 +258,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _compare(args.artifact_dirs, args.as_json)
         elif args.command == "validate-testcase":
             exit_code = _validate_testcases(args.paths)
+        elif args.command == "run-panel-free":
+            exit_code = _run_panel_free(args)
         elif args.command == "run":
             exit_code = _run(args)
         else:
@@ -290,6 +318,42 @@ def _validate_testcases(paths: list[Path]) -> int:
                 f"Valid: {path} ({document.identifier}, {len(document.steps)} step(s))"
             )
     return 0
+
+
+def _run_panel_free(args: argparse.Namespace) -> int:
+    document = load_testcase_document(args.testcase)
+    if isinstance(document, TestcaseSuiteDefinition):
+        raise ConfigurationError("run-panel-free currently requires one testcase")
+    artifact_dir = _new_artifact_dir(args.artifacts, args.label)
+    (artifact_dir / "testcase.yaml").write_text(
+        args.testcase.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    print(f"Artifacts: {artifact_dir}", flush=True)
+    print(f"AqualinkD: {args.aqualinkd}", flush=True)
+    print(f"Testcase: {document.identifier}", flush=True)
+    result = asyncio.run(
+        run_panel_free_testcase(
+            testcase=document,
+            aqualinkd=args.aqualinkd,
+            web_directory=args.web_directory,
+            artifact_dir=artifact_dir,
+            duration_seconds=args.duration,
+            http_ready_timeout_seconds=args.http_ready_timeout,
+            sample_interval_seconds=args.sample_interval,
+            terminate_grace_seconds=args.terminate_grace,
+        )
+    )
+    _write_json(
+        artifact_dir / "result.json",
+        {**asdict(result), "finished_at": datetime.now(UTC).isoformat()},
+    )
+    print(
+        f"Result: {result.status} ({result.reason}), "
+        f"child return code {result.child_returncode}",
+        flush=True,
+    )
+    return 0 if result.status == "passed" else 1
 
 
 def _run(args: argparse.Namespace) -> int:

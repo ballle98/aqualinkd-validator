@@ -23,6 +23,15 @@ class TestcaseRequirements:
 
 
 @dataclass(frozen=True)
+class PanelFixtureDefinition:
+    panel_type: str
+    device_id: str
+    rssa_device_id: str | None = None
+    extended_device_id: str | None = None
+    overrides: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class WaitForStep:
     condition: str
     timeout_seconds: float
@@ -176,6 +185,7 @@ class TestcaseDefinition:
     requirements: TestcaseRequirements
     steps: tuple[TestcaseStep, ...]
     finally_steps: tuple[TestcaseStep, ...]
+    fixture: PanelFixtureDefinition | None = None
 
 
 @dataclass(frozen=True)
