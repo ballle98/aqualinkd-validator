@@ -6,7 +6,7 @@ import io
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 
 from ..domain import EquipmentSnapshot
 from ..interfaces import (
@@ -183,10 +183,22 @@ class _MemoryText(io.StringIO):
         super().close()
 
 
+class _MemoryBytes(io.BytesIO):
+    def __init__(self, save: Callable[[bytes], None]) -> None:
+        super().__init__()
+        self._save = save
+
+    def close(self) -> None:
+        if not self.closed:
+            self._save(self.getvalue())
+        super().close()
+
+
 class MemoryArtifactStore:
     def __init__(self) -> None:
         self._root = Path("/memory-artifacts")
         self.values: dict[str, str] = {}
+        self.binary_values: dict[str, bytes] = {}
 
     @property
     def root(self) -> Path:
@@ -194,6 +206,9 @@ class MemoryArtifactStore:
 
     def open_text(self, name: str) -> TextIO:
         return _MemoryText(lambda value: self.write_text(name, value))
+
+    def open_binary(self, name: str) -> BinaryIO:
+        return _MemoryBytes(lambda value: self.binary_values.__setitem__(name, value))
 
     def write_text(self, name: str, value: str) -> None:
         self.values[name] = value

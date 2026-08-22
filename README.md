@@ -816,9 +816,11 @@ CLI, suite, module, and class names do not retain compatibility aliases.
 
 ### Panel-free mode
 
-The planned panel-free mode creates a pseudo-terminal (PTY) pair and configures
-AqualinkD to use the slave PTY as its `serial_port`. A panel driver uses the
-master side to:
+The panel-free infrastructure creates a pseudo-terminal (PTY) pair and a
+minimal private AqualinkD configuration in a unique temporary directory. The
+configuration uses the slave PTY as `serial_port`, reserves an unused loopback
+HTTP port, disables scheduling and external integrations by default, and is
+copied into the run artifacts. A future panel driver uses the master side to:
 
 - inject captured or scripted RS485 packets;
 - preserve, scale, or deliberately perturb packet timing;
@@ -917,9 +919,11 @@ The schema will evolve as real scenarios expose which primitives are useful.
 Initial support should favor a small set of composable steps rather than
 protocol-specific behavior embedded directly in the scenario runner.
 
-## Planned capture bundle and formats
+## Capture bundle and formats
 
-Future capture-enabled validation runs should produce a versioned bundle:
+The PTY capture writer and generated configuration artifact are implemented.
+The panel-free CLI still needs to compose them with the process supervisor and
+YAML keywords to produce the complete versioned bundle:
 
 ```text
 run-<id>/
@@ -936,16 +940,32 @@ run-<id>/
 
 `serial.pcapng` is the canonical serial-analysis artifact. Each complete
 RS485 frame is represented as a timestamped packet with a small versioned
-pseudo-header containing direction, capture point, and framing/checksum
-status. PCAPNG provides a path to Wireshark inspection while retaining the
+pseudo-header containing direction, capture point, and fidelity status.
+PCAPNG provides a path to Wireshark inspection while retaining the
 unmodified RS485 frame as packet data.
+
+The current private `AQV1` pseudo-header uses `LINKTYPE_USER0` (147) and is 12
+bytes, little-endian:
+
+| Field | Size | Meaning |
+| --- | ---: | --- |
+| Magic | 4 | ASCII `AQV1` |
+| Version | 1 | `1` |
+| Direction | 1 | `1` panel-to-AqualinkD, `2` AqualinkD-to-panel |
+| Capture point | 1 | `1` validator PTY master |
+| Status flags | 1 | Complete frame, exact framing, exact direction, exact timing |
+| Frame length | 4 | Length of the following unmodified RS485 bytes |
+
+PCAPNG uses a nanosecond interface resolution and derives display timestamps
+from wall-clock start plus the monotonic offset. Replay uses the corresponding
+`timeline.jsonl` `offset_ns`; it never depends on wall-clock timestamps.
 
 `timeline.jsonl` remains the inspectable and diffable view that combines
 serial traffic with HTTP requests, process output, and scenario events:
 
 ```json
-{"offset_ns":0,"direction":"panel_to_aqualinkd","data":"1002600200621003"}
-{"offset_ns":28000000,"direction":"aqualinkd_to_panel","data":"00100200010000131003"}
+{"offset_ns":0,"kind":"serial_frame","direction":"panel_to_aqualinkd","capture_point":"pty_master","framing":"exact","bytes_hex":"1002600200621003","byte_count":8}
+{"offset_ns":28000000,"kind":"serial_frame","direction":"aqualinkd_to_panel","capture_point":"pty_master","framing":"exact","bytes_hex":"100200010000131003","byte_count":9}
 ```
 
 Capture timestamps should originate from a monotonic clock. Replay uses
@@ -1145,10 +1165,11 @@ targets; ordinary physical-panel coverage is authored in YAML.
 
 [GitHub issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1)
 tracks the initial panel-free end-to-end milestone. Its isolated configuration
-builder, PTY transport, bidirectional serial timeline and PCAPNG writer,
-generic YAML scenario runner, HTTP history, and probe/ACK smoke scenario are
-not implemented yet. The PDA live-panel work was developed ahead of that
-panel-free milestone and does not close the issue.
+builder, PTY transport, bidirectional serial timeline, and PCAPNG writer are
+implemented as tested components. The panel-free CLI composition, low-level
+YAML serial/HTTP keywords, HTTP history, and probe/ACK smoke scenario remain.
+The PDA live-panel work was developed ahead of that panel-free milestone and
+does not close the issue.
 
 Contributions and examples of existing AqualinkD validation workflows are
 welcome, especially reusable packet captures with documented panel models and

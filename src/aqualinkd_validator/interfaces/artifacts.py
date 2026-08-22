@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import Any, BinaryIO, Protocol, TextIO
 
 
 class ArtifactStore(Protocol):
@@ -11,6 +11,8 @@ class ArtifactStore(Protocol):
     def root(self) -> Path: ...
 
     def open_text(self, name: str) -> TextIO: ...
+
+    def open_binary(self, name: str) -> BinaryIO: ...
 
     def write_text(self, name: str, value: str) -> None: ...
 

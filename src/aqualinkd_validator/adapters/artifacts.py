@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, BinaryIO, TextIO
 
 
 class FileArtifactStore:
@@ -18,6 +18,9 @@ class FileArtifactStore:
 
     def open_text(self, name: str) -> TextIO:
         return self._path(name).open("w", encoding="utf-8")
+
+    def open_binary(self, name: str) -> BinaryIO:
+        return self._path(name).open("wb")
 
     def write_text(self, name: str, value: str) -> None:
         self._path(name).write_text(value, encoding="utf-8")
