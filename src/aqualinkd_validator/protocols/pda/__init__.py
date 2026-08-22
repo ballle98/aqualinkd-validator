@@ -1,5 +1,11 @@
 """PDA protocol services."""
 
+from .device_selection import (
+    PdaDeviceConstraints,
+    PdaDeviceSelectionConfig,
+    PdaDeviceSelectionFailure,
+    PdaDeviceSelector,
+)
 from .equipment_setup import (
     PdaEquipmentSetupConfig,
     PdaEquipmentSetupFailure,
@@ -30,6 +36,10 @@ from .sleep import (
 )
 
 __all__ = [
+    "PdaDeviceConstraints",
+    "PdaDeviceSelectionConfig",
+    "PdaDeviceSelectionFailure",
+    "PdaDeviceSelector",
     "PdaEquipmentStatusFailure",
     "PdaEquipmentStatusLoop",
     "PdaEquipmentStatusResult",

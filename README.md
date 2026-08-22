@@ -1109,8 +1109,10 @@ PDA organization now resolves through one execution path:
   `protocols/pda/session.py` owns PDA_INIT, daemon identity, firmware-screen
   capture, and HTTP endpoint discovery.
   `protocols/pda/identity.py` owns configured/reported panel comparison and
-  bounded panel-clock validation. `protocols/pda/equipment_setup.py` owns safe
-  non-heating control setup and emergency heat shutdown, while
+  bounded panel-clock validation. `protocols/pda/device_selection.py` owns
+  panel-size/button constraints, configured `NONE` exclusions, and safe device
+  selection. `protocols/pda/equipment_setup.py` owns safe non-heating control
+  setup and emergency heat shutdown, while
   `protocols/pda/equipment_status.py` owns complete multi-page status-loop
   parsing and reconciliation.
   `protocols/pda/sleep.py` owns natural duty-cycle timing and STATUS-retry/probe

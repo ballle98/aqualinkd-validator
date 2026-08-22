@@ -26,6 +26,9 @@ from .engine import (
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
 from .protocols.pda import (
+    PdaDeviceSelectionConfig,
+    PdaDeviceSelectionFailure,
+    PdaDeviceSelector,
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusService,
     PdaPanelIdentityConfig,
@@ -108,7 +111,6 @@ WAKE_INIT_FINISHED = pda_sleep.WAKE_INIT_FINISHED
 _EQUIPMENT_POLL_SECONDS = 0.25
 
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
-_AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
 _TestResult = TypeVar("_TestResult")
 
 
@@ -244,8 +246,13 @@ class PdaScenarioRuntime:
         }
         self._initial_snapshot: EquipmentSnapshot | None = None
         self._restoration = RestorationSession()
-        self._button_number_by_identifier: dict[str, int] = {}
-        self._excluded_device_ids: set[str] = set()
+        self._device_selector = PdaDeviceSelector(
+            PdaDeviceSelectionConfig(
+                requested=config.test_devices,
+                disabled_button_numbers=config.disabled_button_numbers,
+            ),
+            record_skip=self._skip,
+        )
         self._reported_panel_size: int | None = None
         self._reported_panel_combo: bool | None = None
 
@@ -660,7 +667,14 @@ class PdaScenarioRuntime:
         )
         self._restoration.capture_initial(self._initial_snapshot)
         await self._record_panel_identity_and_check_time(init_screen)
-        self._record_device_constraints()
+        constraints = self._device_selector.configure(
+            self._initial_snapshot,
+            reported_panel_size=self._reported_panel_size,
+            reported_panel_combo=self._reported_panel_combo,
+        )
+        self._report["device_selection"]["excluded"] = list(
+            constraints.excluded
+        )
         self._require_device(self._initial_snapshot, FILTER_PUMP)
 
     async def _run_test(
@@ -966,17 +980,9 @@ class PdaScenarioRuntime:
 
     async def _test_with_status_menu(self, context: ScenarioContext) -> None:
         assert self._initial_snapshot is not None
-        excluded_hydraulic_controls = {"Spa", "Spa_Mode", "Solar_Heater"}
-        candidates = [
-            identifier
-            for identifier, device in self._initial_snapshot.devices.items()
-            if device.get("type") in {"switch", "setpoint_thermo"}
-            and identifier not in excluded_hydraulic_controls
-            and not self._skip_unactionable_device(
-                identifier,
-                phase="devices.status_menu.setup",
-            )
-        ]
+        candidates = self._device_selector.status_candidates(
+            phase="devices.status_menu.setup"
+        )
         try:
             setup = await self._equipment_status_setup(context).prepare(
                 self._initial_snapshot,
@@ -986,16 +992,6 @@ class PdaScenarioRuntime:
             raise ScenarioFailure(str(error)) from error
         controls = list(setup.controls)
         setup_states = setup.states
-        deferred_controls = sorted(
-            excluded_hydraulic_controls & self._initial_snapshot.devices.keys()
-        )
-        if deferred_controls:
-            self._skip(
-                "devices.status_menu.spa_hydraulics",
-                "Left unchanged because the general status test must not route "
-                "water or demand solar heat: " + ", ".join(deferred_controls),
-            )
-
         if not controls:
             self._skip(
                 "devices.status_menu",
@@ -1171,43 +1167,16 @@ class PdaScenarioRuntime:
         context: ScenarioContext,
     ) -> None:
         assert self._initial_snapshot is not None
-        requested = list(dict.fromkeys(self._config.test_devices))
-        if requested:
-            identifiers = requested
-            for identifier in identifiers:
-                device = self._require_device(
-                    self._initial_snapshot,
-                    identifier,
-                )
-                if device.get("type") != "switch":
-                    raise ScenarioFailure(f"{identifier} is not a switch device")
-        else:
-            identifiers = [
-                identifier
-                for identifier, device in self._initial_snapshot.devices.items()
-                if device.get("type") == "switch"
-            ]
-
-        identifiers = [
-            identifier
-            for identifier in identifiers
-            if (
-                not self._skip_spa_mode_for_general_suite(
-                    identifier,
-                    phase="devices.consecutive",
-                )
-                and not self._skip_unactionable_device(
-                    identifier,
-                    phase="devices.consecutive",
+        try:
+            identifiers = list(
+                self._device_selector.consecutive_switches(
+                    phase="devices.consecutive"
                 )
             )
-        ]
+        except PdaDeviceSelectionFailure as error:
+            raise ScenarioFailure(str(error)) from error
         self._report["device_selection"]["resolved"] = identifiers
         if not identifiers:
-            self._skip(
-                "devices.consecutive",
-                "No switch devices were discovered in /api/devices",
-            )
             return
 
         for identifier in identifiers:
@@ -1227,7 +1196,7 @@ class PdaScenarioRuntime:
 
     async def _test_pool_heater(self, context: ScenarioContext) -> None:
         assert self._initial_snapshot is not None
-        if self._skip_unactionable_device(
+        if self._device_selector.skip_unactionable(
             POOL_HEATER,
             phase="heater",
         ):
@@ -1261,55 +1230,14 @@ class PdaScenarioRuntime:
         self._report["sleep_cycle"] = result.report
 
     def _sleep_test_device(self, *, phase: str) -> str | None:
-        assert self._initial_snapshot is not None
-        requested = list(dict.fromkeys(self._config.test_devices))
-        if requested:
-            identifiers = requested
-            for identifier in identifiers:
-                device = self._require_device(
-                    self._initial_snapshot,
-                    identifier,
-                )
-                if device.get("type") != "switch":
-                    raise ScenarioFailure(f"{identifier} is not a switch device")
-        else:
-            identifiers = [
-                identifier
-                for identifier, device in self._initial_snapshot.devices.items()
-                if device.get("type") == "switch"
-            ]
-
-        identifiers = [
-            identifier
-            for identifier in identifiers
-            if not self._skip_unactionable_device(identifier, phase=phase)
-        ]
-        if not identifiers:
-            self._skip(
-                phase,
-                "No actionable switch devices were discovered",
-            )
+        try:
+            identifier = self._device_selector.sleep_switch(phase=phase)
+        except PdaDeviceSelectionFailure as error:
+            raise ScenarioFailure(str(error)) from error
+        if identifier is None:
             return None
-
-        # Exercise the deepest configured equipment entry without depending
-        # on the API's object ordering. Even the smallest pool-only panel has
-        # auxiliary circuits; Filter Pump remains the universal fallback for
-        # configurations that deliberately disable every auxiliary.
-        identifier = max(
-            identifiers,
-            key=self._sleep_device_priority,
-        )
         self._report["device_selection"]["resolved"] = [identifier]
         return identifier
-
-    def _sleep_device_priority(self, identifier: str) -> tuple[int, int, str]:
-        auxiliary = _AUX_IDENTIFIER.fullmatch(identifier)
-        if auxiliary is not None:
-            return (2, int(auxiliary.group(1)), identifier)
-        if identifier == FILTER_PUMP:
-            return (0, 0, identifier)
-        button_number = self._button_number_by_identifier.get(identifier, 0)
-        return (1, button_number, identifier)
 
     def _sleep_wake_service(
         self,
@@ -1383,81 +1311,9 @@ class PdaScenarioRuntime:
         *,
         phase: str,
     ) -> None:
-        if self._skip_unactionable_device(identifier, phase=phase):
+        if self._device_selector.skip_unactionable(identifier, phase=phase):
             return
         await self._toggle_round_trip(context, identifier, phase=phase)
-
-    def _record_device_constraints(self) -> None:
-        assert self._initial_snapshot is not None
-        self._button_number_by_identifier = {
-            identifier: number
-            for identifier in self._initial_snapshot.devices
-            if (number := self._button_number(identifier)) is not None
-        }
-        disabled = set(self._config.disabled_button_numbers)
-        excluded: list[dict[str, Any]] = []
-        for identifier, device in self._initial_snapshot.devices.items():
-            if device.get("type") not in {"switch", "setpoint_thermo"}:
-                continue
-            reasons: list[str] = []
-            button_number = self._button_number_by_identifier.get(identifier)
-            if button_number is not None and button_number in disabled:
-                reasons.append(
-                    f"button_{button_number:02d}_label is configured as NONE"
-                )
-            api_name = str(device.get("name", "")).strip()
-            if api_name.casefold() == "none":
-                reasons.append("API device name is NONE")
-            auxiliary = _AUX_IDENTIFIER.fullmatch(identifier)
-            if auxiliary is not None and self._reported_panel_size is not None:
-                auxiliary_number = int(auxiliary.group(1))
-                if auxiliary_number >= self._reported_panel_size:
-                    reasons.append(
-                        f"Aux_{auxiliary_number} is beyond reported "
-                        f"panel size {self._reported_panel_size}"
-                    )
-            if not reasons:
-                continue
-            self._excluded_device_ids.add(identifier)
-            excluded.append(
-                {
-                    "button": button_number,
-                    "identifier": identifier,
-                    "name": api_name,
-                    "reasons": reasons,
-                }
-            )
-        self._report["device_selection"]["excluded"] = excluded
-
-    def _button_number(self, identifier: str) -> int | None:
-        if identifier == FILTER_PUMP:
-            return 1
-        if self._is_spa_mode(identifier):
-            return 2 if self._reported_panel_combo else None
-        auxiliary = _AUX_IDENTIFIER.fullmatch(identifier)
-        if auxiliary is None:
-            return None
-        offset = 2 if self._reported_panel_combo else 1
-        return int(auxiliary.group(1)) + offset
-
-    def _skip_unactionable_device(
-        self,
-        identifier: str,
-        *,
-        phase: str,
-    ) -> bool:
-        if identifier not in self._excluded_device_ids:
-            return False
-        excluded = next(
-            item
-            for item in self._report["device_selection"]["excluded"]
-            if item["identifier"] == identifier
-        )
-        self._skip(
-            f"{phase}.{identifier}",
-            "; ".join(excluded["reasons"]),
-        )
-        return True
 
     def _equipment_actions(
         self,
@@ -1628,24 +1484,6 @@ class PdaScenarioRuntime:
         restoration["errors"].extend(result.errors)
         restoration["status"] = "passed" if result.passed else "failed"
         return list(result.errors)
-
-    @staticmethod
-    def _is_spa_mode(identifier: str) -> bool:
-        return identifier in {"Spa", "Spa_Mode"}
-
-    def _skip_spa_mode_for_general_suite(
-        self,
-        identifier: str,
-        *,
-        phase: str,
-    ) -> bool:
-        if not self._is_spa_mode(identifier):
-            return False
-        self._skip(
-            f"{phase}.{identifier}",
-            "Spa mode changes water routing and is covered by pda-live-spa",
-        )
-        return True
 
     async def _restore_device_state(
         self,
