@@ -7,6 +7,7 @@ from typing import Literal, TypeAlias
 TestcaseMode: TypeAlias = Literal["physical-panel", "rs485-panel-emulator"]
 TestcaseAccess: TypeAlias = Literal["read-only", "read-write"]
 TestcaseProtocol: TypeAlias = Literal["pda", "rs485"]
+HttpMethod: TypeAlias = Literal["GET", "PUT"]
 DeviceTargetState: TypeAlias = Literal[
     "on",
     "off",
@@ -50,6 +51,15 @@ class ExpectSerialStep:
     payload: bytes
     timeout_seconds: float
     keyword: str = "expect_serial"
+
+
+@dataclass(frozen=True)
+class HttpRequestStep:
+    method: HttpMethod
+    path: str
+    value: str | None
+    timeout_seconds: float
+    keyword: str = "http_request"
 
 
 @dataclass(frozen=True)
@@ -158,6 +168,7 @@ TestcaseStep: TypeAlias = (
     WaitForStep
     | SerialSendStep
     | ExpectSerialStep
+    | HttpRequestStep
     | SetDeviceStep
     | SetSetpointStep
     | ExerciseHeaterStep

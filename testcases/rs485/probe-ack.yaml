@@ -14,3 +14,7 @@ steps:
   - expect_serial:
       bytes: "10 02 00 01 40 00 53 10 03"
       timeout: 2s
+  - http_request:
+      method: GET
+      path: /api/status
+      timeout: 2s

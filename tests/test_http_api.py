@@ -73,6 +73,12 @@ class HttpApiTests(unittest.TestCase):
         status = await api.status()
         await api.set_device("Filter_Pump", True)
         await api.set_setpoint("Pool_Heater", 79)
+        await api.request(
+            "PUT",
+            "/api/Spa_Mode/set",
+            value="1",
+            timeout_seconds=2,
+        )
 
         self.assertEqual(snapshot.temp_units, "f")
         self.assertEqual(status["temp_units"], "f")
@@ -81,6 +87,8 @@ class HttpApiTests(unittest.TestCase):
         self.assertIn(b"GET /api/status HTTP/1.1", requests[1].data)
         self.assertTrue(requests[2].data.endswith(b"value=1"))
         self.assertTrue(requests[3].data.endswith(b"value=79"))
+        self.assertIn(b"PUT /api/Spa_Mode/set HTTP/1.1", requests[4].data)
+        self.assertTrue(requests[4].data.endswith(b"value=1"))
 
 
 if __name__ == "__main__":

@@ -71,6 +71,9 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(transport.is_open)
         self.assertEqual(artifacts.json("scenario.json")["status"], "passed")
         self.assertTrue(artifacts.binary_values["serial.pcapng"])
+        history = artifacts.values["http.jsonl"].splitlines()
+        self.assertEqual(len(history), 1)
+        self.assertEqual(json.loads(history[0])["purpose"], "readiness")
 
 
 class PanelFreeCompositionTests(unittest.TestCase):

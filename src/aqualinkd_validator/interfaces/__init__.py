@@ -5,6 +5,7 @@ from .aquapda import AquaPdaClient, PdaScreenView
 from .artifacts import ArtifactStore
 from .clock import MonotonicClock
 from .events import EventTimeline, LineEvent, OrderedLogEvents
+from .http import HttpTransport
 from .process import (
     ProcessRunner,
     RunResult,
@@ -19,6 +20,7 @@ __all__ = [
     "AquaPdaClient",
     "ArtifactStore",
     "EventTimeline",
+    "HttpTransport",
     "LineEvent",
     "MonotonicClock",
     "OrderedLogEvents",

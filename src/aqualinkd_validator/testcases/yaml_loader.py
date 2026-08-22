@@ -19,6 +19,8 @@ from .model import (
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
     ExpectSerialStep,
+    HttpMethod,
+    HttpRequestStep,
     ObserveSleepCycleStep,
     PanelFixtureDefinition,
     RestoreOriginalStateStep,
@@ -271,12 +273,14 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     )
     steps = _steps(document["steps"], f"{source}.steps")
     finally_steps = _steps(document.get("finally", []), f"{source}.finally")
-    serial_steps = tuple(
-        step for step in steps if isinstance(step, (SerialSendStep, ExpectSerialStep))
+    panel_free_steps = tuple(
+        step
+        for step in steps
+        if isinstance(step, (SerialSendStep, ExpectSerialStep, HttpRequestStep))
     )
-    if serial_steps and requirements.protocol != "rs485":
+    if panel_free_steps and requirements.protocol != "rs485":
         raise TestcaseValidationError(
-            f"{source}.requires.protocol: serial steps require 'rs485'"
+            f"{source}.requires.protocol: serial and HTTP steps require 'rs485'"
         )
     if requirements.protocol == "rs485" and mode_value != "rs485-panel-emulator":
         raise TestcaseValidationError(
@@ -294,11 +298,14 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         raise TestcaseValidationError(
             f"{source}.fixture: panel fixtures are only valid for rs485 testcases"
         )
-    if any(isinstance(step, SerialSendStep) for step in steps) and access_value != (
-        "read-write"
-    ):
+    writes_panel = any(
+        isinstance(step, SerialSendStep)
+        or (isinstance(step, HttpRequestStep) and step.method == "PUT")
+        for step in steps
+    )
+    if writes_panel and access_value != "read-write":
         raise TestcaseValidationError(
-            f"{source}.access: serial_send requires read-write access"
+            f"{source}.access: serial_send and HTTP PUT require read-write access"
         )
     invalid_cleanup = [
         step.keyword
@@ -477,6 +484,33 @@ def _expect_serial(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _http_request(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"method", "path", "timeout"}, optional={"value"})
+    method = _choice(value["method"], f"{path}.method", {"GET", "PUT"})
+    request_path = _string(value["path"], f"{path}.path")
+    if not request_path.startswith("/api/") or any(
+        character.isspace() for character in request_path
+    ):
+        raise TestcaseValidationError(
+            f"{path}.path: expected an absolute /api/ path without whitespace"
+        )
+    request_value = (
+        _scalar_string(value["value"], f"{path}.value")
+        if "value" in value
+        else None
+    )
+    if method == "PUT" and request_value is None:
+        raise TestcaseValidationError(f"{path}.value: PUT requires a value")
+    if method == "GET" and request_value is not None:
+        raise TestcaseValidationError(f"{path}.value: GET does not accept a value")
+    return HttpRequestStep(
+        cast(HttpMethod, method),
+        request_path,
+        request_value,
+        _duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
 def _set_device(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(
         value,
@@ -649,6 +683,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
+    "http_request": _http_request,
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
     "exercise_heater": _exercise_heater,
@@ -711,6 +746,14 @@ def _serial_bytes(raw: object, path: str) -> bytes:
         return parse_hex_bytes(value)
     except ValueError as error:
         raise TestcaseValidationError(f"{path}: {error}") from error
+
+
+def _scalar_string(raw: object, path: str) -> str:
+    if isinstance(raw, bool):
+        return "1" if raw else "0"
+    if isinstance(raw, (int, float, str)) and str(raw).strip():
+        return str(raw).strip()
+    raise TestcaseValidationError(f"{path}: expected a scalar string or number")
 
 
 def _integer(raw: object, path: str) -> int:

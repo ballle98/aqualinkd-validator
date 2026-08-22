@@ -49,6 +49,29 @@ class AqualinkHttpApi:
     async def status(self) -> dict[str, Any]:
         return await self._request_json("/api/status")
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        value: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        normalized_method = method.upper()
+        if normalized_method not in {"GET", "PUT"}:
+            raise ValueError(f"unsupported HTTP method: {method}")
+        if not path.startswith("/api/"):
+            raise ValueError(f"HTTP path must begin with /api/: {path}")
+        body = b""
+        if value is not None:
+            body = urlencode({"value": value}).encode("ascii")
+        return await self._request(
+            normalized_method,
+            path,
+            body,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def set_device(self, identifier: str, enabled: bool) -> None:
         path = f"/api/{quote(identifier, safe='')}/set"
         await self._put_value(path, int(enabled))
@@ -76,7 +99,10 @@ class AqualinkHttpApi:
         method: str,
         path: str,
         body: bytes = b"",
+        *,
+        timeout_seconds: float | None = None,
     ) -> str:
+        timeout = timeout_seconds or self._timeout_seconds
         target = f"{self._base_path}{path}" or "/"
         host_header = self._host
         if ":" in host_header and not host_header.startswith("["):
@@ -102,26 +128,26 @@ class AqualinkHttpApi:
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self._host, self._port),
-                self._timeout_seconds,
+                timeout,
             )
             assert writer is not None
             writer.write(payload)
-            await asyncio.wait_for(writer.drain(), self._timeout_seconds)
+            await asyncio.wait_for(writer.drain(), timeout)
             raw_headers = await asyncio.wait_for(
                 reader.readuntil(b"\r\n\r\n"),
-                self._timeout_seconds,
+                timeout,
             )
             status, response_headers = self._parse_headers(raw_headers)
             content_length = response_headers.get("content-length")
             if content_length is not None:
                 response_body = await asyncio.wait_for(
                     reader.readexactly(int(content_length)),
-                    self._timeout_seconds,
+                    timeout,
                 )
             else:
                 response_body = await asyncio.wait_for(
                     reader.read(),
-                    self._timeout_seconds,
+                    timeout,
                 )
         except (OSError, TimeoutError, asyncio.IncompleteReadError) as error:
             raise ApiError(
@@ -136,7 +162,7 @@ class AqualinkHttpApi:
                 ):
                     await asyncio.wait_for(
                         writer.wait_closed(),
-                        self._timeout_seconds,
+                        timeout,
                     )
 
         text = response_body.decode("utf-8", errors="replace")

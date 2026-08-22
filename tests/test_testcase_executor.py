@@ -9,6 +9,7 @@ from aqualinkd_validator.testcases import (
     AssertNoLogStep,
     ExerciseHeaterStep,
     ExpectSerialStep,
+    HttpRequestStep,
     RestoreOriginalStateStep,
     SerialSendStep,
     SetDeviceStep,
@@ -43,6 +44,9 @@ class RecordingKeywords(UnsupportedTestcaseKeywords):
         await self._record(step.keyword)
 
     async def expect_serial(self, step: ExpectSerialStep) -> None:
+        await self._record(step.keyword)
+
+    async def http_request(self, step: HttpRequestStep) -> None:
         await self._record(step.keyword)
 
     async def set_device(self, step: SetDeviceStep) -> None:
@@ -181,14 +185,18 @@ class TestcaseExecutorTests(unittest.TestCase):
             steps=(
                 SerialSendStep(bytes.fromhex("100260001003"), 1),
                 ExpectSerialStep(bytes.fromhex("1002000100031003"), 1),
+                HttpRequestStep("PUT", "/api/Filter_Pump/set", "1", 2),
             ),
             finally_steps=(),
         )
         result = await DeclarativeExecutor(keywords).execute(testcase)
-        self.assertEqual(keywords.calls, ["serial_send", "expect_serial"])
+        self.assertEqual(
+            keywords.calls,
+            ["serial_send", "expect_serial", "http_request"],
+        )
         self.assertEqual(
             [execution.keyword for execution in result.steps],
-            ["serial_send", "expect_serial"],
+            ["serial_send", "expect_serial", "http_request"],
         )
 
 

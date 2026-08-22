@@ -13,6 +13,7 @@ from aqualinkd_validator.testcases import (
     ExerciseProbeTransitionStep,
     ExerciseStatusRetryStep,
     ExpectSerialStep,
+    HttpRequestStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
     SerialSendStep,
@@ -151,6 +152,11 @@ steps:
   - expect_serial:
       bytes: "100200010000131003"
       timeout: 2s
+  - http_request:
+      method: PUT
+      path: /api/Filter_Pump/set
+      value: 1
+      timeout: 2s
 """,
                 encoding="utf-8",
             )
@@ -158,11 +164,14 @@ steps:
 
         self.assertIsInstance(testcase.steps[0], SerialSendStep)
         self.assertIsInstance(testcase.steps[1], ExpectSerialStep)
+        self.assertIsInstance(testcase.steps[2], HttpRequestStep)
         assert isinstance(testcase.steps[0], SerialSendStep)
         assert isinstance(testcase.steps[1], ExpectSerialStep)
         self.assertEqual(testcase.steps[0].payload.hex(), "10026000721003")
         self.assertEqual(testcase.steps[0].timeout_seconds, 0.1)
         self.assertEqual(testcase.steps[1].timeout_seconds, 2)
+        assert isinstance(testcase.steps[2], HttpRequestStep)
+        self.assertEqual(testcase.steps[2].value, "1")
         self.assertIsNotNone(testcase.fixture)
         assert testcase.fixture is not None
         self.assertEqual(testcase.fixture.panel_type, "RS-4 Combo")
@@ -180,7 +189,27 @@ steps:
   - serial_send: {bytes: "1002", timeout: 1s}
 """
         )
-        self.assertIn("serial steps require 'rs485'", str(error))
+        self.assertIn("serial and HTTP steps require 'rs485'", str(error))
+
+    def test_rejects_http_put_in_read_only_testcase(self) -> None:
+        error = self._load_error(
+            """
+schema: 1
+id: rs485.bad-http
+description: Unsafe HTTP action
+mode: rs485-panel-emulator
+access: read-only
+requires: {protocol: rs485}
+fixture: {panel_type: RS-4 Combo, device_id: "0x0a"}
+steps:
+  - http_request:
+      method: PUT
+      path: /api/Filter_Pump/set
+      value: 1
+      timeout: 1s
+"""
+        )
+        self.assertIn("HTTP PUT require read-write access", str(error))
 
     def test_suite_rejects_member_access_above_suite_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -11,6 +11,7 @@ from .equipment_stability import (
     EquipmentStabilityFailure,
     EquipmentStabilityService,
 )
+from .http_actions import HttpActionFailure, HttpActions
 from .reporting import ScenarioRecorder
 from .restoration import (
     RestorationAction,
@@ -33,5 +34,7 @@ __all__ = [
     "ScenarioRecorder",
     "SerialActionFailure",
     "SerialActions",
+    "HttpActionFailure",
+    "HttpActions",
     "parse_hex_bytes",
 ]

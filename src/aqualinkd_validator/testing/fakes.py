@@ -152,6 +152,7 @@ class FakeAqualinkApi:
         self.status_value = status or {}
         self.device_calls: list[tuple[str, bool]] = []
         self.setpoint_calls: list[tuple[str, int]] = []
+        self.http_calls: list[tuple[str, str, str | None]] = []
 
     async def devices(self) -> EquipmentSnapshot:
         return EquipmentSnapshot(
@@ -170,6 +171,18 @@ class FakeAqualinkApi:
 
     async def set_setpoint(self, identifier: str, value: int) -> None:
         self.setpoint_calls.append((identifier, value))
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        value: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        del timeout_seconds
+        self.http_calls.append((method, path, value))
+        return "{}"
 
 
 class _MemoryText(io.StringIO):

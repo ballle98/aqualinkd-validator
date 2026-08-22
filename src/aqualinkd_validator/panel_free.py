@@ -14,9 +14,10 @@ from .adapters import (
     PanelFixture,
 )
 from .capture import CapturedSerialTransport
+from .engine.http_actions import HttpActions
 from .engine.serial_actions import SerialActions
 from .interfaces import (
-    AqualinkApi,
+    HttpTransport,
     ProcessRunner,
     RunResult,
     ScenarioContext,
@@ -25,6 +26,7 @@ from .interfaces import (
 )
 from .testcases import (
     ExpectSerialStep,
+    HttpRequestStep,
     SerialSendStep,
     TestcaseDefinition,
     TestcaseExecutor,
@@ -35,8 +37,9 @@ from .testcases import (
 class PanelFreeKeywords(UnsupportedTestcaseKeywords):
     """YAML keywords available to an emulated RS485 panel."""
 
-    def __init__(self, serial: SerialActions) -> None:
+    def __init__(self, serial: SerialActions, http: HttpActions) -> None:
         self._serial = serial
+        self._http = http
 
     async def serial_send(self, step: SerialSendStep) -> None:
         await self._serial.send(step.payload, timeout_seconds=step.timeout_seconds)
@@ -44,6 +47,14 @@ class PanelFreeKeywords(UnsupportedTestcaseKeywords):
     async def expect_serial(self, step: ExpectSerialStep) -> None:
         await self._serial.expect_exact(
             step.payload,
+            timeout_seconds=step.timeout_seconds,
+        )
+
+    async def http_request(self, step: HttpRequestStep) -> None:
+        await self._http.request(
+            step.method,
+            step.path,
+            value=step.value,
             timeout_seconds=step.timeout_seconds,
         )
 
@@ -56,7 +67,7 @@ class PanelFreeScenario:
         *,
         testcase: TestcaseDefinition,
         transport: SerialTransport,
-        api: AqualinkApi,
+        api: HttpTransport,
         http_ready_timeout_seconds: float = 10.0,
         http_poll_seconds: float = 0.05,
     ) -> None:
@@ -82,6 +93,11 @@ class PanelFreeScenario:
             artifacts=context.artifacts,
         )
         serial = SerialActions(captured, timeline=context.timeline)
+        http = HttpActions(
+            self._api,
+            timeline=context.timeline,
+            artifacts=context.artifacts,
+        )
         print(f"\n=== Starting {self._testcase.identifier} ===", flush=True)
         print(
             "[ WAIT ] AqualinkD HTTP API readiness "
@@ -90,11 +106,18 @@ class PanelFreeScenario:
         )
         try:
             await serial.open()
-            await self._wait_for_http(context)
-            print("[STATE ] AqualinkD HTTP API ready", flush=True)
-            execution = await TestcaseExecutor(PanelFreeKeywords(serial)).execute(
-                self._testcase
+            await http.wait_ready(
+                timeout_seconds=self._http_ready_timeout_seconds,
+                poll_seconds=self._http_poll_seconds,
             )
+            await context.timeline.write(
+                "http_ready",
+                api_base_url=self._api.base_url,
+            )
+            print("[STATE ] AqualinkD HTTP API ready", flush=True)
+            execution = await TestcaseExecutor(
+                PanelFreeKeywords(serial, http)
+            ).execute(self._testcase)
             report.update(
                 status="passed",
                 reason="scenario_completed",
@@ -114,6 +137,7 @@ class PanelFreeScenario:
             )
             outcome = ScenarioOutcome("failed", "testcase_failed")
         finally:
+            http.close()
             await serial.close()
             context.artifacts.write_json("scenario.json", report)
         state = "PASS" if outcome.status == "passed" else "FAIL"
@@ -123,28 +147,6 @@ class PanelFreeScenario:
             flush=True,
         )
         return outcome
-
-    async def _wait_for_http(self, context: ScenarioContext) -> None:
-        deadline = asyncio.get_running_loop().time() + self._http_ready_timeout_seconds
-        last_error: Exception | None = None
-        while True:
-            try:
-                await self._api.status()
-                await context.timeline.write(
-                    "http_ready",
-                    api_base_url=self._api.base_url,
-                )
-                return
-            except Exception as error:
-                last_error = error
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise TimeoutError(
-                    "AqualinkD HTTP API did not become ready within "
-                    f"{self._http_ready_timeout_seconds:g}s: {last_error}"
-                )
-            await asyncio.sleep(min(self._http_poll_seconds, remaining))
-
 
 async def run_panel_free_testcase(
     *,

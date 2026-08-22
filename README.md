@@ -897,6 +897,10 @@ steps:
   - expect_serial:
       bytes: "10 02 00 01 40 00 53 10 03"
       timeout: 2s
+  - http_request:
+      method: GET
+      path: /api/status
+      timeout: 2s
 ```
 
 Validate the document without starting AqualinkD, then run it with:
@@ -928,6 +932,7 @@ run-<id>/
 ├── stdout.log
 ├── stderr.log
 ├── scenario.json
+├── http.jsonl
 ├── effective-aqualinkd.conf
 ├── testcase.yaml
 └── result.json
@@ -1162,8 +1167,9 @@ targets; ordinary physical-panel coverage is authored in YAML.
 tracks the initial panel-free end-to-end milestone. Its isolated configuration
 builder, PTY transport, bidirectional serial timeline, and PCAPNG writer are
 implemented as tested components. The panel-free CLI composition and low-level
-YAML serial keywords are also implemented. HTTP action/history keywords and a
-stateful panel fixture for the end-to-end HTTP-action milestone remain.
+YAML serial and HTTP request keywords are also implemented, with every HTTP
+attempt recorded in `http.jsonl`. A stateful panel fixture for the end-to-end
+HTTP-action milestone remains.
 The PDA live-panel work was developed ahead of that panel-free milestone and
 does not close the issue.
 
