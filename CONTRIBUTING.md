@@ -40,6 +40,11 @@ source modules are:
 | `run_targets.py` | Single registry that normalizes named suites and YAML paths before execution |
 | `supervisor.py` | AqualinkD lifecycle, stdout/stderr fan-out, timing, and process metrics |
 | `interfaces/events.py` | Typed ordered-log and monotonic-timeline boundaries |
+| `interfaces/aquapda.py` | AquaPDA client and read-only screen-view boundaries |
+| `interfaces/process.py` | Supervised process and scenario lifecycle boundaries |
+| `interfaces/serial.py` | Bidirectional RS485 byte-transport boundary |
+| `interfaces/artifacts.py` | Run-scoped artifact persistence boundary |
+| `interfaces/clock.py` | Monotonic time and asynchronous sleep boundary |
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `engine/equipment_stability.py` | Typed transition interpretation, stable-state polling, observation artifacts, and timeout evidence |

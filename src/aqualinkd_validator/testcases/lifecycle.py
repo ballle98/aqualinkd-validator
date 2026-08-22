@@ -7,7 +7,7 @@ from typing import Any
 
 from ..engine.reporting import ScenarioRecorder
 from ..engine.restoration import RestorationSession
-from ..supervisor import ScenarioContext, ScenarioOutcome
+from ..interfaces import ScenarioContext, ScenarioOutcome
 from .executor import TestcaseExecutor, TestcaseKeywords
 from .model import TestcaseDefinition
 

@@ -5,8 +5,7 @@ import re
 from dataclasses import dataclass
 
 from ...config import normalize_api_base_url
-from ...interfaces import EventTimeline, OrderedLogEvents
-from ...supervisor import LineEvent
+from ...interfaces import EventTimeline, LineEvent, OrderedLogEvents
 from .programmer import PdaProgrammerFailure, PdaProgrammerObserver
 
 INIT_FINISHED = "(Init PDA) finished"

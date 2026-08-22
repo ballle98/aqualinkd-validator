@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..supervisor import LineEvent
+
+@dataclass(frozen=True)
+class LineEvent:
+    sequence: int
+    offset_ns: int
+    stream: str
+    text: str
 
 
 class OrderedLogEvents(Protocol):
@@ -46,3 +53,5 @@ class EventTimeline(Protocol):
     def offset_ns(self) -> int: ...
 
     async def write(self, kind: str, **fields: Any) -> int: ...
+
+    def close(self) -> None: ...

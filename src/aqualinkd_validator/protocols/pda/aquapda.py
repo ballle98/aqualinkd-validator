@@ -5,8 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ...aquapda_client import AquaPdaClient, AquaPdaProtocolError
-from ...interfaces import OrderedLogEvents
+from ...aquapda_client import AquaPdaProtocolError
+from ...interfaces import AquaPdaClient, OrderedLogEvents
 
 _SERIAL_SEND_TIME = re.compile(
     r"Time from recv to (?:blocking )?send is\s+([0-9.]+)\s+sec",

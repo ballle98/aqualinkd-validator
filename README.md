@@ -1100,6 +1100,10 @@ PDA organization now resolves through one execution path:
 
 - `testcases/pda/` contains versioned YAML cases and `testcases/suites/`
   provides their serialized ordering and AqualinkD configuration overrides.
+- `interfaces/` defines the typed boundaries for the AqualinkD API, ordered
+  events, process lifecycle, AquaPDA WebSocket, serial transport, artifacts,
+  and monotonic time. Protocol and engine code should depend on these
+  boundaries rather than concrete operating-system implementations.
 - `testcases/lifecycle.py` owns serialized declarative testcase execution,
   final safety restoration, result aggregation, and timeline finalization.
 - `run_targets.py` is the single registry and normalized target model for

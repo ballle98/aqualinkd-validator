@@ -9,31 +9,16 @@ import signal
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import Any, TextIO
 
-
-@dataclass(frozen=True)
-class RunResult:
-    status: str
-    reason: str
-    child_returncode: int | None
-    duration_ns: int
-
-
-@dataclass(frozen=True)
-class ScenarioOutcome:
-    status: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class LineEvent:
-    sequence: int
-    offset_ns: int
-    stream: str
-    text: str
+from .interfaces import (
+    LineEvent,
+    RunResult,
+    Scenario,
+    ScenarioContext,
+    ScenarioOutcome,
+)
 
 
 class OutputMonitor:
@@ -173,17 +158,6 @@ class Timeline:
 
     def close(self) -> None:
         self._handle.close()
-
-
-@dataclass(frozen=True)
-class ScenarioContext:
-    artifact_dir: Path
-    monitor: OutputMonitor
-    timeline: Timeline
-
-
-class Scenario(Protocol):
-    async def run(self, context: ScenarioContext) -> ScenarioOutcome: ...
 
 
 async def supervise(

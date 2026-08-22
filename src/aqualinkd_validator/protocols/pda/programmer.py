@@ -4,8 +4,7 @@ import asyncio
 from collections.abc import Coroutine
 from typing import Any
 
-from ...interfaces import EventTimeline, OrderedLogEvents
-from ...supervisor import LineEvent
+from ...interfaces import EventTimeline, LineEvent, OrderedLogEvents
 
 
 class PdaProgrammerFailure(RuntimeError):

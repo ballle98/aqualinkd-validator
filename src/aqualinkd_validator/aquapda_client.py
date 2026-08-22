@@ -9,56 +9,12 @@ import os
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 
 class AquaPdaProtocolError(RuntimeError):
     """Raised when the AquaPDA WebSocket protocol is not usable."""
-
-
-class AquaPdaClient(Protocol):
-    screen: PdaScreen
-    packet_count: int
-    screen_update_count: int
-
-    async def connect(self) -> None: ...
-
-    async def send_key(self, key: str) -> None: ...
-
-    async def wait_for_packets(
-        self,
-        count: int,
-        *,
-        after: int = 0,
-        timeout_seconds: float = 10.0,
-    ) -> int: ...
-
-    async def wait_for_highlight_change(
-        self,
-        previous: str | None,
-        *,
-        after: int,
-        timeout_seconds: float = 5.0,
-    ) -> str: ...
-
-    async def wait_for_screen_change(
-        self,
-        previous: tuple[str, ...],
-        *,
-        after: int,
-        timeout_seconds: float = 5.0,
-    ) -> tuple[str, ...]: ...
-
-    async def wait_for_screen_settle(
-        self,
-        *,
-        after: int,
-        timeout_seconds: float = 5.0,
-        idle_seconds: float = 0.15,
-    ) -> int: ...
-
-    async def close(self) -> None: ...
 
 
 class JsonWebSocket:

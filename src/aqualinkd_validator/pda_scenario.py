@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .aquapda_client import (
-    AquaPdaClient,
     AquaPdaWebSocketClient,
 )
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
@@ -24,7 +23,13 @@ from .engine import (
 )
 from .engine.runtime_cases import RuntimeCaseRunner
 from .http_api import ApiError, AqualinkHttpApi
-from .interfaces import AqualinkApi
+from .interfaces import (
+    AqualinkApi,
+    AquaPdaClient,
+    LineEvent,
+    ScenarioContext,
+    ScenarioOutcome,
+)
 from .protocols.pda import (
     PdaDeviceSelectionConfig,
     PdaDeviceSelectionFailure,
@@ -61,7 +66,6 @@ from .protocols.pda.equipment_setup import (
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .run_targets import RuntimeCaseId
-from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 from .testcases import (
     DeclarativeScenarioRunner,
     ExerciseDiscoveredDevicesStep,

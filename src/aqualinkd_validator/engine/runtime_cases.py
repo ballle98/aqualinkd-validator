@@ -5,8 +5,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..interfaces import ScenarioContext, ScenarioOutcome
 from ..run_targets import RUNTIME_CASES, RuntimeCaseId
-from ..supervisor import ScenarioContext, ScenarioOutcome
 from .reporting import ScenarioRecorder
 from .restoration import RestorationSession
 

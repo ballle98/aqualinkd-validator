@@ -5,8 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ...interfaces import EventTimeline, OrderedLogEvents
-from ...supervisor import LineEvent
+from ...interfaces import EventTimeline, LineEvent, OrderedLogEvents
 from .programmer import PdaProgrammerFailure, PdaProgrammerObserver
 
 PDA_SLEEPING = "PDA Aqualink daemon in sleep mode"

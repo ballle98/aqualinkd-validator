@@ -7,8 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ...domain import DeviceState, EquipmentSnapshot
-from ...interfaces import OrderedLogEvents
-from ...supervisor import LineEvent
+from ...interfaces import LineEvent, OrderedLogEvents
 
 STATUS_MENU_PRESENT = "PDA Start new Equiptment loop"
 LEGACY_STATUS_MENU_PRESENT = "PDA Start new Equipment loop"
