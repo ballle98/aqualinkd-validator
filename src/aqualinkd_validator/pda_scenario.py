@@ -28,6 +28,7 @@ from .protocols.pda import (
     PdaDeviceSelectionConfig,
     PdaDeviceSelectionFailure,
     PdaDeviceSelector,
+    PdaEquipmentStatusExercise,
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusService,
     PdaPanelIdentityFailure,
@@ -571,24 +572,6 @@ class PdaScenarioRuntime:
         candidates = self._device_selector.status_candidates(
             phase="devices.status_menu.setup"
         )
-        try:
-            setup = await self._equipment_status_setup(context).prepare(
-                self._initial_snapshot,
-                candidates,
-            )
-        except PdaEquipmentSetupFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        controls = list(setup.controls)
-        setup_states = setup.states
-        if not controls:
-            self._recorder.skip(
-                "devices.status_menu",
-                "No configured equipment can be enabled for status testing",
-            )
-            return
-
-        cursor = context.monitor.cursor
-        wait_started = context.timeline.offset_ns()
         status_service = PdaEquipmentStatusService(
             events=context.monitor,
             wait_for_stable=lambda identifiers, phase, timeout: (
@@ -603,43 +586,27 @@ class PdaScenarioRuntime:
             state_timeout_seconds=self._config.state_timeout_seconds,
             progress=lambda message: print(message, flush=True),
         )
-        loop = await status_service.wait_for_complete_loop(after=cursor)
         try:
-            result = await status_service.verify(
+            result = await PdaEquipmentStatusExercise(
+                events=context.monitor,
+                timeline=context.timeline,
+                setup=self._equipment_status_setup(context),
+                status=status_service,
+                record_skip=self._recorder.skip,
+                record_measurement=self._recorder.append_measurement,
+                progress=lambda message: print(message, flush=True),
+            ).run(
                 initial_snapshot=self._initial_snapshot,
-                controls=controls,
-                events=loop.events,
-                setup_states=setup_states,
+                candidates=candidates,
             )
+        except PdaEquipmentSetupFailure as error:
+            raise ScenarioFailure(str(error)) from error
         except PdaEquipmentStatusFailure as error:
             if error.result is not None:
                 self._report["equipment_status"] = error.result.report
             raise ScenarioFailure(str(error)) from error
-        verification = result.report
-        self._report["equipment_status"] = verification
-        swg_suffix = (
-            f"; SWG {verification['swg']['percent']}%"
-            if verification["swg"]["percent"] is not None
-            else ("; SWG status observed" if verification["swg"]["present"] else "")
-        )
-        print(
-            f"[STATE ] Equipment status verified "
-            f"{len(verification['verified_devices'])}/"
-            f"{len(verification['expected_devices'])} devices"
-            f"{swg_suffix}",
-            flush=True,
-        )
-        self._recorder.append_measurement(
-            name="pda.status_menu.complete",
-            category="state_wait",
-            phase="devices.status_menu",
-            target="equipment_status_menu",
-            requested_value="complete",
-            start_offset_ns=wait_started,
-            api_ack_offset_ns=None,
-            log_completion_offset_ns=loop.reconciled.offset_ns,
-            state_observed_offset_ns=context.timeline.offset_ns(),
-        )
+        if result.verification is not None:
+            self._report["equipment_status"] = result.verification.report
 
     def _equipment_status_setup(
         self,

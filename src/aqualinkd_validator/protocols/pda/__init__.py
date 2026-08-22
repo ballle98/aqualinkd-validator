@@ -36,6 +36,10 @@ from .sleep import (
     PdaStatusRetryWindow,
 )
 from .startup import PdaStartupConfig, PdaStartupCoordinator, PdaStartupOutcome
+from .status_exercise import (
+    PdaEquipmentStatusExercise,
+    PdaEquipmentStatusExerciseResult,
+)
 
 __all__ = [
     "PdaDeviceConstraints",
@@ -70,4 +74,6 @@ __all__ = [
     "PdaStartupConfig",
     "PdaStartupCoordinator",
     "PdaStartupOutcome",
+    "PdaEquipmentStatusExercise",
+    "PdaEquipmentStatusExerciseResult",
 ]
