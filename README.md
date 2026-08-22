@@ -1114,7 +1114,9 @@ PDA organization now resolves through one execution path:
   selection. `protocols/pda/equipment_setup.py` owns safe non-heating control
   setup and emergency heat shutdown, while
   `protocols/pda/equipment_status.py` owns complete multi-page status-loop
-  parsing and reconciliation.
+  parsing and reconciliation. `protocols/pda/restoration.py` adapts the common
+  restoration session to PDA transitions, including bounded pending-state
+  waits and duplicate-toggle suppression.
   `protocols/pda/sleep.py` owns natural duty-cycle timing and STATUS-retry/probe
   transition validation. `aquapda_client.py` owns the AquaPDA WebSocket and
   screen reconstruction, while `protocols/pda/aquapda.py` owns transport

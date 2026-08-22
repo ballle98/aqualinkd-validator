@@ -25,6 +25,7 @@ from .identity import (
     PdaPanelIdentityValidator,
 )
 from .programmer import PdaProgrammerFailure, PdaProgrammerObserver
+from .restoration import PdaRestorationConfig, PdaRestorationService
 from .session import PdaSessionFailure, PdaSessionInitializer, PdaStartupResult
 from .sleep import (
     PdaProbeWindow,
@@ -54,6 +55,8 @@ __all__ = [
     "PdaPanelIdentityValidator",
     "PdaProgrammerFailure",
     "PdaProgrammerObserver",
+    "PdaRestorationConfig",
+    "PdaRestorationService",
     "PdaSessionFailure",
     "PdaSessionInitializer",
     "PdaStartupResult",

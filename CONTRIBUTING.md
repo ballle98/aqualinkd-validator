@@ -49,6 +49,7 @@ source modules are:
 | `protocols/pda/device_selection.py` | Panel-size/button constraints, `NONE` exclusions, explicit device validation, and safe test-device selection |
 | `protocols/pda/equipment_setup.py` | Safe non-heating EQUIPMENT STATUS setup, minimum heater setpoints, and emergency heat shutdown |
 | `protocols/pda/equipment_status.py` | Complete multi-page EQUIPMENT STATUS observation, parsing, API reconciliation, and failure evidence |
+| `protocols/pda/restoration.py` | PDA transition-aware restoration execution, pending-transition waits, and duplicate-toggle suppression |
 | `protocols/pda/sleep.py` | Natural sleep/wake duty-cycle observation, post-wake refresh timing, and STATUS-retry/probe transition validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |

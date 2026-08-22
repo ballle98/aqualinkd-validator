@@ -37,6 +37,8 @@ from .protocols.pda import (
     PdaPanelIdentityValidator,
     PdaProgrammerFailure,
     PdaProgrammerObserver,
+    PdaRestorationConfig,
+    PdaRestorationService,
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
@@ -1436,8 +1438,6 @@ class PdaScenarioRuntime:
         restoration = self._report["restoration"]
         if self._initial_snapshot is None:
             return []
-        if self._restoration.initial_snapshot is not self._initial_snapshot:
-            self._restoration.capture_initial(self._initial_snapshot)
         restoration["attempted"] = True
 
         async def restore_setpoint(identifier: str, original: int) -> None:
@@ -1465,12 +1465,53 @@ class PdaScenarioRuntime:
                 category="restoration",
             )
 
-        result = await self._restoration.restore(
-            read_snapshot=self._api_client.devices,
-            restore_setpoint=restore_setpoint,
-            restore_device=lambda identifier, expected: self._restore_device_state(
-                context, identifier, expected
+        async def wait_for_stable(
+            identifiers: Sequence[str],
+            phase: str,
+            timeout: float,
+            initial: EquipmentSnapshot,
+        ) -> EquipmentSnapshot:
+            return await self._wait_for_stable_equipment_snapshot(
+                context,
+                identifiers,
+                phase=phase,
+                timeout_seconds=timeout,
+                initial_snapshot=initial,
+            )
+
+        async def wait_for_device_state(
+            identifier: str,
+            expected: bool,
+            timeout: float,
+        ) -> None:
+            await self._wait_for_device_state(
+                context,
+                identifier,
+                expected,
+                timeout_seconds=timeout,
+            )
+
+        result = await PdaRestorationService(
+            api=self._api_client,
+            session=self._restoration,
+            config=PdaRestorationConfig(
+                timeout_seconds=self._config.restoration_timeout_seconds
             ),
+            set_device=lambda identifier, enabled, phase, timeout: (
+                self._set_device(
+                    context,
+                    identifier,
+                    enabled,
+                    phase=phase,
+                    state_timeout_seconds=timeout,
+                )
+            ),
+            set_setpoint=restore_setpoint,
+            wait_for_stable=wait_for_stable,
+            wait_for_device_state=wait_for_device_state,
+            progress=lambda message: print(message, flush=True),
+        ).restore(
+            self._initial_snapshot,
         )
         restoration["actions"].extend(
             {
@@ -1484,76 +1525,6 @@ class PdaScenarioRuntime:
         restoration["errors"].extend(result.errors)
         restoration["status"] = "passed" if result.passed else "failed"
         return list(result.errors)
-
-    async def _restore_device_state(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        expected: bool,
-    ) -> None:
-        snapshot = await self._api_client.devices()
-        device = self._require_device(snapshot, identifier)
-        requested = self._restoration.requested_state(identifier)
-        if self._device_transition_pending(device):
-            requested_state = self._requested_device_state_label(
-                device,
-                expected,
-            )
-            print(
-                f"[ WAIT ] {identifier}: equipment transition is already "
-                "pending; not sending another toggle "
-                f"(timeout {self._config.restoration_timeout_seconds:g}s)",
-                flush=True,
-            )
-            snapshot = await self._wait_for_stable_equipment_snapshot(
-                context,
-                [identifier],
-                phase=f"restoration.{identifier}.pending_transition",
-                timeout_seconds=self._config.restoration_timeout_seconds,
-                initial_snapshot=snapshot,
-            )
-            device = self._require_device(snapshot, identifier)
-            if self._device_enabled(device) == expected:
-                print(
-                    f"[STATE ] {identifier} completed the pending "
-                    f"{requested_state} transition",
-                    flush=True,
-                )
-                return
-
-        if self._device_enabled(device) == expected:
-            return
-
-        if requested == expected:
-            reason = "a restoration request was already sent"
-            print(
-                f"[ WAIT ] {identifier}: {reason}; not sending another "
-                f"toggle (timeout "
-                f"{self._config.restoration_timeout_seconds:g}s)",
-                flush=True,
-            )
-            await self._wait_for_device_state(
-                context,
-                identifier,
-                expected,
-                timeout_seconds=self._config.restoration_timeout_seconds,
-            )
-            print(
-                f"[STATE ] {identifier} completed the pending "
-                f"{self._requested_device_state_label(device, expected)} "
-                "transition",
-                flush=True,
-            )
-            return
-
-        self._restoration.mark_requested_state(identifier, expected)
-        await self._set_device(
-            context,
-            identifier,
-            expected,
-            phase="restoration.device",
-            state_timeout_seconds=self._config.restoration_timeout_seconds,
-        )
 
     def _append_measurement(
         self,
