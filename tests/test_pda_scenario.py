@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from aqualinkd_validator.domain import EquipmentSnapshot
+from aqualinkd_validator.engine import ScenarioRecorder
 from aqualinkd_validator.pda_scenario import (
     DEVICE_ACTIVE,
     DEVICE_FINISHED,
@@ -282,7 +283,7 @@ class PdaScenarioTests(unittest.TestCase):
             [ScenarioFailure("legacy startup log was invalid")],
         )
         self.assertEqual(
-            PdaScenarioRuntime._format_exception(error),
+            ScenarioRecorder.format_exception(error),
             "ScenarioFailure: legacy startup log was invalid",
         )
 

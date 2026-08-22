@@ -11,6 +11,7 @@ from .equipment_stability import (
     EquipmentStabilityFailure,
     EquipmentStabilityService,
 )
+from .reporting import ScenarioRecorder
 from .restoration import (
     RestorationAction,
     RestorationResult,
@@ -28,4 +29,5 @@ __all__ = [
     "EquipmentStabilityFailure",
     "EquipmentStabilityService",
     "ProgrammerMarkers",
+    "ScenarioRecorder",
 ]

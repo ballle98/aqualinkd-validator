@@ -43,6 +43,7 @@ source modules are:
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `engine/equipment_stability.py` | Typed transition interpretation, stable-state polling, observation artifacts, and timeout evidence |
+| `engine/reporting.py` | Scenario artifact serialization, timing measurements, exception formatting, skips, and console progress |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `protocols/pda/session.py` | PDA_INIT coordination, startup identity parsing, firmware-screen capture, and HTTP endpoint discovery |
 | `protocols/pda/identity.py` | Configured/reported panel comparison, API identity capture, and bounded panel-clock validation |

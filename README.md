@@ -1106,6 +1106,8 @@ PDA organization now resolves through one execution path:
 - `protocols/pda/keywords.py` binds small declarative steps to typed Python
   behavior. `engine/equipment_stability.py` owns typed transition detection,
   stable-state polling, and equipment-state observations, while
+  `engine/reporting.py` owns scenario artifact serialization, measurements,
+  skip records, and console progress.
   `protocols/pda/session.py` owns PDA_INIT, daemon identity, firmware-screen
   capture, and HTTP endpoint discovery.
   `protocols/pda/identity.py` owns configured/reported panel comparison and

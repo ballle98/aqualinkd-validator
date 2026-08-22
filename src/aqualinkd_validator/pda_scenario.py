@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -22,6 +21,7 @@ from .engine import (
     EquipmentStabilityService,
     ProgrammerMarkers,
     RestorationSession,
+    ScenarioRecorder,
 )
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
@@ -246,6 +246,7 @@ class PdaScenarioRuntime:
                 "errors": [],
             },
         }
+        self._recorder = ScenarioRecorder(self._report)
         self._initial_snapshot: EquipmentSnapshot | None = None
         self._restoration = RestorationSession()
         self._device_selector = PdaDeviceSelector(
@@ -253,7 +254,7 @@ class PdaScenarioRuntime:
                 requested=config.test_devices,
                 disabled_button_numbers=config.disabled_button_numbers,
             ),
-            record_skip=self._skip,
+            record_skip=self._recorder.skip,
         )
         self._reported_panel_size: int | None = None
         self._reported_panel_combo: bool | None = None
@@ -279,8 +280,8 @@ class PdaScenarioRuntime:
                     testcase.identifier for testcase in self._testcases
                 ]
                 self._report.pop("testcase", None)
-                self._write_report(context)
-                self._progress_finished(
+                self._recorder.write(context.artifact_dir)
+                self._recorder.progress_finished(
                     self._config.suite_name,
                     suite_started,
                     passed=outcome.status == "passed",
@@ -330,7 +331,7 @@ class PdaScenarioRuntime:
                     3,
                 ),
                 "error": (
-                    self._format_exception(case_error)
+                    self._recorder.format_exception(case_error)
                     if case_error is not None
                     else None
                 ),
@@ -356,7 +357,9 @@ class PdaScenarioRuntime:
                 if case.id == RuntimeCaseId.INITIALIZATION:
                     status = "failed"
                     reason = "initialization_failed"
-                    self._report["error"] = self._format_exception(case_error)
+                    self._report["error"] = self._recorder.format_exception(
+                        case_error
+                    )
                     break
 
         if reason == "scenario_completed" and case_failures:
@@ -389,14 +392,14 @@ class PdaScenarioRuntime:
 
         self._report["status"] = status
         self._report["reason"] = reason
-        self._write_report(context)
+        self._recorder.write(context.artifact_dir)
         await context.timeline.write(
             "scenario_finished",
             suite=self._config.suite_name,
             status=status,
             reason=reason,
         )
-        self._progress_finished(
+        self._recorder.progress_finished(
             display_name,
             suite_started,
             passed=status == "passed",
@@ -465,7 +468,7 @@ class PdaScenarioRuntime:
             reason = "restoration_failed"
             self._report["error"] = "; ".join(final_restoration_errors)
         elif error is not None:
-            self._report["error"] = self._format_exception(error)
+            self._report["error"] = self._recorder.format_exception(error)
 
         self._report["cases"].append(
             {
@@ -473,7 +476,7 @@ class PdaScenarioRuntime:
                 "name": testcase.description,
                 "status": status,
                 "duration_ms": round((time.monotonic() - case_started) * 1000, 3),
-                "error": self._format_exception(error) if error else None,
+                "error": self._recorder.format_exception(error) if error else None,
                 "restoration": self._report["restoration"]["status"],
             }
         )
@@ -485,7 +488,7 @@ class PdaScenarioRuntime:
         self._report["status"] = status
         self._report["reason"] = reason
         self._report["testcase"] = testcase.identifier
-        self._write_report(context)
+        self._recorder.write(context.artifact_dir)
         await context.timeline.write(
             "scenario_finished",
             suite=self._config.suite_name,
@@ -493,7 +496,7 @@ class PdaScenarioRuntime:
             status=status,
             reason=reason,
         )
-        self._progress_finished(
+        self._recorder.progress_finished(
             testcase.identifier,
             started,
             passed=status == "passed",
@@ -561,7 +564,7 @@ class PdaScenarioRuntime:
                 context
             ),
             exercise_probe_transition=lambda: self._test_device_after_probe(context),
-            record_skip=self._skip,
+            record_skip=self._recorder.skip,
             phase_prefix=f"testcase.{testcase_id}",
         )
 
@@ -646,9 +649,9 @@ class PdaScenarioRuntime:
         context: ScenarioContext,
         name: str,
     ) -> list[str]:
-        started = self._progress_started(name)
+        started = self._recorder.progress_started(name)
         errors = await self._restore_original_state(context)
-        self._progress_finished(
+        self._recorder.progress_finished(
             name,
             started,
             passed=not errors,
@@ -684,11 +687,11 @@ class PdaScenarioRuntime:
         name: str,
         operation: Callable[[], Awaitable[_TestResult]],
     ) -> _TestResult:
-        started = self._progress_started(name)
+        started = self._recorder.progress_started(name)
         try:
             result = await operation()
         except asyncio.CancelledError:
-            self._progress_finished(
+            self._recorder.progress_finished(
                 name,
                 started,
                 passed=False,
@@ -696,36 +699,15 @@ class PdaScenarioRuntime:
             )
             raise
         except Exception as error:
-            self._progress_finished(
+            self._recorder.progress_finished(
                 name,
                 started,
                 passed=False,
-                detail=self._format_exception(error),
+                detail=self._recorder.format_exception(error),
             )
             raise
-        self._progress_finished(name, started, passed=True)
+        self._recorder.progress_finished(name, started, passed=True)
         return result
-
-    @staticmethod
-    def _progress_started(name: str) -> float:
-        print(f"[ RUN  ] {name}", flush=True)
-        return time.monotonic()
-
-    @staticmethod
-    def _progress_finished(
-        name: str,
-        started: float,
-        *,
-        passed: bool,
-        detail: str | None = None,
-    ) -> None:
-        elapsed = time.monotonic() - started
-        status = "PASS" if passed else "FAIL"
-        suffix = f" — {detail}" if detail else ""
-        print(
-            f"[ {status} ] {name} completed in {elapsed:.3f}s{suffix}",
-            flush=True,
-        )
 
     async def _wait_for_task_active(
         self,
@@ -810,7 +792,7 @@ class PdaScenarioRuntime:
             f"[INFO  ] Configured panel: {identity['configured_panel_type']}",
             flush=True,
         )
-        self._append_measurement(
+        self._recorder.append_measurement(
             name="pda.init",
             category="initialization",
             phase="startup",
@@ -995,7 +977,7 @@ class PdaScenarioRuntime:
         controls = list(setup.controls)
         setup_states = setup.states
         if not controls:
-            self._skip(
+            self._recorder.skip(
                 "devices.status_menu",
                 "No configured equipment can be enabled for status testing",
             )
@@ -1043,7 +1025,7 @@ class PdaScenarioRuntime:
             f"{swg_suffix}",
             flush=True,
         )
-        self._append_measurement(
+        self._recorder.append_measurement(
             name="pda.status_menu.complete",
             category="state_wait",
             phase="devices.status_menu",
@@ -1103,7 +1085,7 @@ class PdaScenarioRuntime:
                     timeout_seconds=timeout,
                 )
             ),
-            record_skip=self._skip,
+            record_skip=self._recorder.skip,
             progress=lambda message: print(message, flush=True),
         )
 
@@ -1158,8 +1140,8 @@ class PdaScenarioRuntime:
                 completion_marker=SPA_HEATER_SETPOINT_FINISHED_MARKERS,
                 category="spa_heating",
             ),
-            record_measurement=self._append_measurement,
-            record_skip=self._skip,
+            record_measurement=self._recorder.append_measurement,
+            record_skip=self._recorder.skip,
             offset_ns=context.timeline.offset_ns,
         )
         await exercise.run(self._initial_snapshot)
@@ -1205,7 +1187,7 @@ class PdaScenarioRuntime:
             return
         heater = self._initial_snapshot.devices.get(POOL_HEATER)
         if heater is None or heater.get("type") != "setpoint_thermo":
-            self._skip(
+            self._recorder.skip(
                 "heater",
                 "Pool_Heater is not present in /api/devices",
             )
@@ -1259,7 +1241,7 @@ class PdaScenarioRuntime:
                     self._config.probe_command_min_delay_seconds
                 ),
             ),
-            record_measurement=self._append_measurement,
+            record_measurement=self._recorder.append_measurement,
             progress=lambda message: print(message, flush=True),
         )
 
@@ -1349,7 +1331,7 @@ class PdaScenarioRuntime:
             ),
             wait_for_stable=wait_for_stable,
             record_measurement=self._report["measurements"].append,
-            record_skip=self._skip,
+            record_skip=self._recorder.skip,
         )
 
     async def _set_device(
@@ -1525,103 +1507,6 @@ class PdaScenarioRuntime:
         restoration["errors"].extend(result.errors)
         restoration["status"] = "passed" if result.passed else "failed"
         return list(result.errors)
-
-    def _append_measurement(
-        self,
-        *,
-        name: str,
-        category: str,
-        phase: str,
-        target: str,
-        requested_value: Any,
-        start_offset_ns: int,
-        api_ack_offset_ns: int | None,
-        log_completion_offset_ns: int | None,
-        state_observed_offset_ns: int | None,
-        task_active_offset_ns: int | None = None,
-        status: str = "passed",
-    ) -> None:
-        completion_offsets = [
-            offset
-            for offset in (
-                task_active_offset_ns,
-                log_completion_offset_ns,
-                state_observed_offset_ns,
-                api_ack_offset_ns,
-            )
-            if offset is not None
-        ]
-        completed = max(completion_offsets, default=start_offset_ns)
-        measurement = {
-            "name": name,
-            "category": category,
-            "status": status,
-            "phase": phase,
-            "target": target,
-            "requested_value": requested_value,
-            "start_offset_ns": start_offset_ns,
-            "api_ack_offset_ns": api_ack_offset_ns,
-            "task_active_offset_ns": task_active_offset_ns,
-            "log_completion_offset_ns": log_completion_offset_ns,
-            "state_observed_offset_ns": state_observed_offset_ns,
-            "completed_offset_ns": completed,
-            "duration_ms": round((completed - start_offset_ns) / 1_000_000, 3),
-            "api_ack_ms": (
-                round((api_ack_offset_ns - start_offset_ns) / 1_000_000, 3)
-                if api_ack_offset_ns is not None
-                else None
-            ),
-            "activation_ms": (
-                round(
-                    (task_active_offset_ns - start_offset_ns) / 1_000_000,
-                    3,
-                )
-                if task_active_offset_ns is not None
-                else None
-            ),
-            "programmer_duration_ms": (
-                round(
-                    (log_completion_offset_ns - task_active_offset_ns) / 1_000_000,
-                    3,
-                )
-                if (
-                    task_active_offset_ns is not None
-                    and log_completion_offset_ns is not None
-                )
-                else None
-            ),
-            "state_convergence_ms": (
-                round(
-                    (state_observed_offset_ns - log_completion_offset_ns) / 1_000_000,
-                    3,
-                )
-                if (
-                    log_completion_offset_ns is not None
-                    and state_observed_offset_ns is not None
-                )
-                else None
-            ),
-        }
-        self._report["measurements"].append(measurement)
-
-    def _skip(self, name: str, reason: str) -> None:
-        self._report["skipped"].append({"name": name, "reason": reason})
-        print(f"[ SKIP ] {name} — {reason}", flush=True)
-
-    @classmethod
-    def _format_exception(cls, error: BaseException) -> str:
-        if isinstance(error, BaseExceptionGroup):
-            details = [cls._format_exception(nested) for nested in error.exceptions]
-            if len(details) == 1:
-                return details[0]
-            return "; ".join(details)
-        return f"{type(error).__name__}: {error}"
-
-    def _write_report(self, context: ScenarioContext) -> None:
-        (context.artifact_dir / "scenario.json").write_text(
-            json.dumps(self._report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
 
     @staticmethod
     def _require_device(
