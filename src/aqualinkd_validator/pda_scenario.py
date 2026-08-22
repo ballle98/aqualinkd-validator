@@ -63,12 +63,12 @@ from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .run_targets import RUNTIME_CASES, RuntimeCaseDefinition, RuntimeCaseId
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 from .testcases import (
+    DeclarativeScenarioRunner,
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
     ExerciseStatusRetryStep,
     TestcaseDefinition,
-    TestcaseExecutor,
 )
 
 FILTER_PUMP = "Filter_Pump"
@@ -261,33 +261,19 @@ class PdaScenarioRuntime:
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         if self._testcases:
-            suite_started = time.monotonic()
-            if len(self._testcases) > 1:
-                print(
-                    f"\n=== Starting {self._config.suite_name} ===",
-                    flush=True,
-                )
-            outcome = ScenarioOutcome(
-                status="passed",
-                reason="scenario_completed",
-            )
-            for testcase in self._testcases:
-                outcome = await self._run_declarative_testcase(context, testcase)
-                if outcome.status != "passed":
-                    break
-            if len(self._testcases) > 1:
-                self._report["testcases"] = [
-                    testcase.identifier for testcase in self._testcases
-                ]
-                self._report.pop("testcase", None)
-                self._recorder.write(context.artifact_dir)
-                self._recorder.progress_finished(
-                    self._config.suite_name,
-                    suite_started,
-                    passed=outcome.status == "passed",
-                    detail=(None if outcome.status == "passed" else outcome.reason),
-                )
-            return outcome
+            return await DeclarativeScenarioRunner(
+                suite_name=self._config.suite_name,
+                testcases=self._testcases,
+                report=self._report,
+                recorder=self._recorder,
+                restoration=self._restoration,
+                keywords=lambda testcase_id: self._testcase_keywords(
+                    context,
+                    testcase_id,
+                ),
+                restore=self._restore_with_progress,
+                initialized=lambda: self._initial_snapshot is not None,
+            ).run(context)
         suite_started = time.monotonic()
         display_name = self._config.suite_name
         print(
@@ -402,103 +388,6 @@ class PdaScenarioRuntime:
         self._recorder.progress_finished(
             display_name,
             suite_started,
-            passed=status == "passed",
-            detail=None if status == "passed" else reason,
-        )
-        if cancelled:
-            raise asyncio.CancelledError
-        return ScenarioOutcome(status=status, reason=reason)
-
-    async def _run_declarative_testcase(
-        self,
-        context: ScenarioContext,
-        testcase: TestcaseDefinition,
-    ) -> ScenarioOutcome:
-        started = time.monotonic()
-        print(f"\n=== Starting {testcase.identifier} ===", flush=True)
-        await context.timeline.write(
-            "scenario_started",
-            suite=self._config.suite_name,
-            testcase=testcase.identifier,
-            api_base_url=self._report["api_base_url"],
-            api_endpoint_source=self._report["api_endpoint_source"],
-        )
-        status = "passed"
-        reason = "scenario_completed"
-        cancelled = False
-        error: BaseException | None = None
-        case_started = time.monotonic()
-        try:
-            execution = await TestcaseExecutor(
-                self._testcase_keywords(context, testcase.identifier)
-            ).execute(testcase)
-            execution_report = {
-                "id": execution.identifier,
-                "duration_ms": round(execution.duration_seconds * 1000, 3),
-                "steps": [
-                    {
-                        "section": step.section,
-                        "index": step.index,
-                        "keyword": step.keyword,
-                        "duration_ms": round(step.duration_seconds * 1000, 3),
-                    }
-                    for step in execution.steps
-                ],
-            }
-            self._report.setdefault("testcase_executions", []).append(execution_report)
-            self._report["testcase_execution"] = execution_report
-        except asyncio.CancelledError as caught:
-            error = caught
-            cancelled = True
-            status = "failed"
-            reason = "scenario_cancelled"
-        except BaseException as caught:
-            error = caught
-            status = "failed"
-            reason = "testcase_failed"
-
-        final_restoration_errors: list[str] = []
-        if self._restoration.has_pending_mutations:
-            final_restoration_errors = await self._restore_with_progress(
-                context,
-                "Final safety restoration",
-            )
-        if final_restoration_errors:
-            status = "failed"
-            reason = "restoration_failed"
-            self._report["error"] = "; ".join(final_restoration_errors)
-        elif error is not None:
-            self._report["error"] = self._recorder.format_exception(error)
-
-        self._report["cases"].append(
-            {
-                "id": testcase.identifier,
-                "name": testcase.description,
-                "status": status,
-                "duration_ms": round((time.monotonic() - case_started) * 1000, 3),
-                "error": self._recorder.format_exception(error) if error else None,
-                "restoration": self._report["restoration"]["status"],
-            }
-        )
-        self._report["safe_to_continue"] = bool(
-            self._initial_snapshot is not None
-            and not cancelled
-            and reason != "restoration_failed"
-        )
-        self._report["status"] = status
-        self._report["reason"] = reason
-        self._report["testcase"] = testcase.identifier
-        self._recorder.write(context.artifact_dir)
-        await context.timeline.write(
-            "scenario_finished",
-            suite=self._config.suite_name,
-            testcase=testcase.identifier,
-            status=status,
-            reason=reason,
-        )
-        self._recorder.progress_finished(
-            testcase.identifier,
-            started,
             passed=status == "passed",
             detail=None if status == "passed" else reason,
         )

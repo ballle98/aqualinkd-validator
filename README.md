@@ -1100,6 +1100,8 @@ PDA organization now resolves through one execution path:
 
 - `testcases/pda/` contains versioned YAML cases and `testcases/suites/`
   provides their serialized ordering and AqualinkD configuration overrides.
+- `testcases/lifecycle.py` owns serialized declarative testcase execution,
+  final safety restoration, result aggregation, and timeline finalization.
 - `run_targets.py` is the single registry and normalized target model for
   built-in suite names, explicit YAML paths, the cross-process long suite, and
   the remaining interface-emulator suites.

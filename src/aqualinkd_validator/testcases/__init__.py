@@ -7,6 +7,7 @@ from .executor import (
     TestcaseExecutor,
     TestcaseKeywords,
 )
+from .lifecycle import DeclarativeScenarioRunner
 from .model import (
     AssertDeviceStep,
     AssertLogStep,
@@ -41,6 +42,7 @@ __all__ = [
     "AssertDeviceStep",
     "AssertLogStep",
     "AssertNoLogStep",
+    "DeclarativeScenarioRunner",
     "ExerciseHeaterStep",
     "ExerciseSpaHeatingStep",
     "ExerciseDiscoveredDevicesStep",
