@@ -6,7 +6,7 @@ from typing import Literal, TypeAlias
 
 TestcaseMode: TypeAlias = Literal["physical-panel", "rs485-panel-emulator"]
 TestcaseAccess: TypeAlias = Literal["read-only", "read-write"]
-TestcaseProtocol: TypeAlias = Literal["pda"]
+TestcaseProtocol: TypeAlias = Literal["pda", "rs485"]
 DeviceTargetState: TypeAlias = Literal[
     "on",
     "off",
@@ -27,6 +27,20 @@ class WaitForStep:
     condition: str
     timeout_seconds: float
     keyword: str = "wait_for"
+
+
+@dataclass(frozen=True)
+class SerialSendStep:
+    payload: bytes
+    timeout_seconds: float
+    keyword: str = "serial_send"
+
+
+@dataclass(frozen=True)
+class ExpectSerialStep:
+    payload: bytes
+    timeout_seconds: float
+    keyword: str = "expect_serial"
 
 
 @dataclass(frozen=True)
@@ -133,6 +147,8 @@ class ExerciseProbeTransitionStep:
 
 TestcaseStep: TypeAlias = (
     WaitForStep
+    | SerialSendStep
+    | ExpectSerialStep
     | SetDeviceStep
     | SetSetpointStep
     | ExerciseHeaterStep

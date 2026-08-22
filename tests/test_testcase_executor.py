@@ -8,9 +8,12 @@ from aqualinkd_validator.testcases import (
     AssertLogStep,
     AssertNoLogStep,
     ExerciseHeaterStep,
+    ExpectSerialStep,
     RestoreOriginalStateStep,
+    SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
+    UnsupportedTestcaseKeywords,
     WaitForStableEquipmentStep,
     WaitForStep,
 )
@@ -28,12 +31,18 @@ from aqualinkd_validator.testcases import (
 )
 
 
-class RecordingKeywords:
+class RecordingKeywords(UnsupportedTestcaseKeywords):
     def __init__(self, fail_keyword: str | None = None) -> None:
         self.calls: list[str] = []
         self._fail_keyword = fail_keyword
 
     async def wait_for(self, step: WaitForStep) -> None:
+        await self._record(step.keyword)
+
+    async def serial_send(self, step: SerialSendStep) -> None:
+        await self._record(step.keyword)
+
+    async def expect_serial(self, step: ExpectSerialStep) -> None:
         await self._record(step.keyword)
 
     async def set_device(self, step: SetDeviceStep) -> None:
@@ -84,6 +93,9 @@ class TestcaseExecutorTests(unittest.TestCase):
 
     def test_cancellation_propagates_after_restoration(self) -> None:
         asyncio.run(self._execute_cancellation())
+
+    def test_dispatches_serial_keywords(self) -> None:
+        asyncio.run(self._execute_serial())
 
     async def _execute_success(self) -> None:
         keywords = RecordingKeywords()
@@ -156,6 +168,28 @@ class TestcaseExecutorTests(unittest.TestCase):
             await task
         self.assertTrue(restored.is_set())
         self.assertEqual(keywords.calls, ["wait_for", "restore_original_state"])
+
+    async def _execute_serial(self) -> None:
+        keywords = RecordingKeywords()
+        testcase = DeclarativeCase(
+            schema=1,
+            identifier="rs485.probe",
+            description="Probe exchange",
+            mode="rs485-panel-emulator",
+            access="read-write",
+            requirements=CaseRequirements(protocol="rs485"),
+            steps=(
+                SerialSendStep(bytes.fromhex("100260001003"), 1),
+                ExpectSerialStep(bytes.fromhex("1002000100031003"), 1),
+            ),
+            finally_steps=(),
+        )
+        result = await DeclarativeExecutor(keywords).execute(testcase)
+        self.assertEqual(keywords.calls, ["serial_send", "expect_serial"])
+        self.assertEqual(
+            [execution.keyword for execution in result.steps],
+            ["serial_send", "expect_serial"],
+        )
 
 
 def make_testcase() -> DeclarativeCase:

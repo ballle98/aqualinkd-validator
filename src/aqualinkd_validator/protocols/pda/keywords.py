@@ -9,6 +9,7 @@ from ...domain import EquipmentSnapshot
 from ...engine.equipment_actions import ProgrammerMarkers
 from ...engine.restoration import RestorationSession
 from ...interfaces import OrderedLogEvents
+from ...testcases.executor import UnsupportedTestcaseKeywords
 from ...testcases.model import (
     AssertDeviceStep,
     AssertLogStep,
@@ -82,7 +83,7 @@ class PdaKeywordMarkers:
     setpoints: Mapping[str, ProgrammerMarkers]
 
 
-class PdaTestcaseKeywords:
+class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
     """Binds schema-v1 testcase keywords to PDA runtime services."""
 
     def __init__(

@@ -12,8 +12,10 @@ from aqualinkd_validator.testcases import (
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
     ExerciseStatusRetryStep,
+    ExpectSerialStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    SerialSendStep,
     SetDeviceStep,
     VerifyEquipmentStatusStep,
     WaitForStep,
@@ -127,6 +129,52 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertIsInstance(retry.steps[1], ExerciseStatusRetryStep)
         self.assertIsInstance(probe.steps[1], ExerciseProbeTransitionStep)
         self.assertEqual(retry.finally_steps[0].timeout_seconds, 420)
+
+    def test_loads_strict_panel_free_serial_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.yaml"
+            path.write_text(
+                """
+schema: 1
+id: rs485.probe
+description: Send a panel probe and expect an ACK
+mode: rs485-panel-emulator
+access: read-write
+requires: {protocol: rs485}
+steps:
+  - serial_send:
+      bytes: "10 02 60 00 72 10 03"
+      timeout: 100ms
+  - expect_serial:
+      bytes: "100200010000131003"
+      timeout: 2s
+""",
+                encoding="utf-8",
+            )
+            testcase = load_testcase(path)
+
+        self.assertIsInstance(testcase.steps[0], SerialSendStep)
+        self.assertIsInstance(testcase.steps[1], ExpectSerialStep)
+        assert isinstance(testcase.steps[0], SerialSendStep)
+        assert isinstance(testcase.steps[1], ExpectSerialStep)
+        self.assertEqual(testcase.steps[0].payload.hex(), "10026000721003")
+        self.assertEqual(testcase.steps[0].timeout_seconds, 0.1)
+        self.assertEqual(testcase.steps[1].timeout_seconds, 2)
+
+    def test_rejects_serial_steps_outside_rs485_runtime(self) -> None:
+        error = self._load_error(
+            """
+schema: 1
+id: pda.bad-serial
+description: Wrong runtime
+mode: physical-panel
+access: read-write
+requires: {protocol: pda}
+steps:
+  - serial_send: {bytes: "1002", timeout: 1s}
+"""
+        )
+        self.assertIn("serial steps require 'rs485'", str(error))
 
     def test_suite_rejects_member_access_above_suite_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

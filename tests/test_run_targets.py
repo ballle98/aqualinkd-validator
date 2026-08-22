@@ -54,7 +54,7 @@ description: Emulator-only case
 mode: rs485-panel-emulator
 access: read-only
 requires:
-  protocol: pda
+  protocol: rs485
 steps:
   - assert_log:
       contains: ready

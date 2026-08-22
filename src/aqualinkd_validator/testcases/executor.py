@@ -15,8 +15,10 @@ from .model import (
     ExerciseProbeTransitionStep,
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
+    ExpectSerialStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
     TestcaseDefinition,
@@ -31,6 +33,10 @@ class TestcaseKeywords(Protocol):
     """Operations that a protocol/runtime adapter exposes to YAML tests."""
 
     async def wait_for(self, step: WaitForStep) -> None: ...
+
+    async def serial_send(self, step: SerialSendStep) -> None: ...
+
+    async def expect_serial(self, step: ExpectSerialStep) -> None: ...
 
     async def set_device(self, step: SetDeviceStep) -> None: ...
 
@@ -71,6 +77,75 @@ class TestcaseKeywords(Protocol):
     async def exercise_probe_transition(
         self, step: ExerciseProbeTransitionStep
     ) -> None: ...
+
+
+class UnsupportedTestcaseKeywords:
+    """Explicit defaults for runtimes that implement only some keywords."""
+
+    async def wait_for(self, step: WaitForStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def serial_send(self, step: SerialSendStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def expect_serial(self, step: ExpectSerialStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def set_device(self, step: SetDeviceStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def set_setpoint(self, step: SetSetpointStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def exercise_heater(self, step: ExerciseHeaterStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def exercise_spa_heating(self, step: ExerciseSpaHeatingStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def assert_device(self, step: AssertDeviceStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def assert_log(self, step: AssertLogStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def assert_no_log(self, step: AssertNoLogStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def wait_for_stable_equipment(
+        self, step: WaitForStableEquipmentStep
+    ) -> None:
+        self._unsupported(step.keyword)
+
+    async def restore_original_state(self, step: RestoreOriginalStateStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def verify_equipment_status(
+        self, step: VerifyEquipmentStatusStep
+    ) -> None:
+        self._unsupported(step.keyword)
+
+    async def exercise_discovered_devices(
+        self, step: ExerciseDiscoveredDevicesStep
+    ) -> None:
+        self._unsupported(step.keyword)
+
+    async def observe_sleep_cycle(self, step: ObserveSleepCycleStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def exercise_status_retry(self, step: ExerciseStatusRetryStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def exercise_probe_transition(
+        self, step: ExerciseProbeTransitionStep
+    ) -> None:
+        self._unsupported(step.keyword)
+
+    @staticmethod
+    def _unsupported(keyword: str) -> None:
+        raise TestcaseExecutionFailure(
+            f"keyword {keyword!r} is unavailable in this runtime"
+        )
 
 
 @dataclass(frozen=True)
@@ -186,6 +261,10 @@ class TestcaseExecutor:
     async def _dispatch(self, step: TestcaseStep) -> None:
         if isinstance(step, WaitForStep):
             await self._keywords.wait_for(step)
+        elif isinstance(step, SerialSendStep):
+            await self._keywords.serial_send(step)
+        elif isinstance(step, ExpectSerialStep):
+            await self._keywords.expect_serial(step)
         elif isinstance(step, SetDeviceStep):
             await self._keywords.set_device(step)
         elif isinstance(step, SetSetpointStep):

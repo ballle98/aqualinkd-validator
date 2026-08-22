@@ -6,6 +6,7 @@ from .executor import (
     TestcaseExecutionFailure,
     TestcaseExecutor,
     TestcaseKeywords,
+    UnsupportedTestcaseKeywords,
 )
 from .lifecycle import DeclarativeScenarioRunner
 from .model import (
@@ -17,8 +18,10 @@ from .model import (
     ExerciseProbeTransitionStep,
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
+    ExpectSerialStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
     TestcaseDefinition,
@@ -48,8 +51,10 @@ __all__ = [
     "ExerciseDiscoveredDevicesStep",
     "ExerciseProbeTransitionStep",
     "ExerciseStatusRetryStep",
+    "ExpectSerialStep",
     "ObserveSleepCycleStep",
     "RestoreOriginalStateStep",
+    "SerialSendStep",
     "SetDeviceStep",
     "SetSetpointStep",
     "StepExecution",
@@ -64,6 +69,7 @@ __all__ = [
     "TestcaseRequirements",
     "TestcaseStep",
     "TestcaseValidationError",
+    "UnsupportedTestcaseKeywords",
     "WaitForStableEquipmentStep",
     "WaitForStep",
     "VerifyEquipmentStatusStep",

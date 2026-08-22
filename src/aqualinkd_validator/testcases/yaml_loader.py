@@ -7,6 +7,7 @@ from typing import Literal, TypeAlias, cast
 
 import yaml  # type: ignore[import-untyped]
 
+from ..engine.serial_actions import parse_hex_bytes
 from .model import (
     AssertDeviceStep,
     AssertLogStep,
@@ -17,8 +18,10 @@ from .model import (
     ExerciseProbeTransitionStep,
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
+    ExpectSerialStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
     TestcaseAccess,
@@ -261,6 +264,27 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     requirements = _requirements(document["requires"], f"{source}.requires")
     steps = _steps(document["steps"], f"{source}.steps")
     finally_steps = _steps(document.get("finally", []), f"{source}.finally")
+    serial_steps = tuple(
+        step for step in steps if isinstance(step, (SerialSendStep, ExpectSerialStep))
+    )
+    if serial_steps and requirements.protocol != "rs485":
+        raise TestcaseValidationError(
+            f"{source}.requires.protocol: serial steps require 'rs485'"
+        )
+    if requirements.protocol == "rs485" and mode_value != "rs485-panel-emulator":
+        raise TestcaseValidationError(
+            f"{source}.mode: rs485 protocol requires 'rs485-panel-emulator'"
+        )
+    if requirements.protocol == "pda" and mode_value != "physical-panel":
+        raise TestcaseValidationError(
+            f"{source}.mode: pda protocol requires 'physical-panel'"
+        )
+    if any(isinstance(step, SerialSendStep) for step in steps) and access_value != (
+        "read-write"
+    ):
+        raise TestcaseValidationError(
+            f"{source}.access: serial_send requires read-write access"
+        )
     invalid_cleanup = [
         step.keyword
         for step in finally_steps
@@ -310,7 +334,7 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
 def _requirements(raw: object, path: str) -> TestcaseRequirements:
     value = _mapping(raw, path)
     _keys(value, path, required={"protocol"})
-    protocol = _choice(value["protocol"], f"{path}.protocol", {"pda"})
+    protocol = _choice(value["protocol"], f"{path}.protocol", {"pda", "rs485"})
     return TestcaseRequirements(protocol=cast(TestcaseProtocol, protocol))
 
 
@@ -388,6 +412,22 @@ def _wait_for(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"condition", "timeout"})
     return WaitForStep(
         _string(value["condition"], f"{path}.condition"),
+        _duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
+def _serial_send(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"bytes", "timeout"})
+    return SerialSendStep(
+        _serial_bytes(value["bytes"], f"{path}.bytes"),
+        _duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
+def _expect_serial(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"bytes", "timeout"})
+    return ExpectSerialStep(
+        _serial_bytes(value["bytes"], f"{path}.bytes"),
         _duration(value["timeout"], f"{path}.timeout"),
     )
 
@@ -562,6 +602,8 @@ def _exercise_probe_transition(value: Mapping[str, object], path: str) -> Testca
 
 _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
+    "serial_send": _serial_send,
+    "expect_serial": _expect_serial,
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
     "exercise_heater": _exercise_heater,
@@ -616,6 +658,14 @@ def _string(raw: object, path: str) -> str:
 
 def _optional_string(raw: object, path: str) -> str | None:
     return None if raw is None else _string(raw, path)
+
+
+def _serial_bytes(raw: object, path: str) -> bytes:
+    value = _string(raw, path)
+    try:
+        return parse_hex_bytes(value)
+    except ValueError as error:
+        raise TestcaseValidationError(f"{path}: {error}") from error
 
 
 def _integer(raw: object, path: str) -> int:
