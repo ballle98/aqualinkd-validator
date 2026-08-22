@@ -46,6 +46,7 @@ source modules are:
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `protocols/pda/session.py` | PDA_INIT coordination, startup identity parsing, firmware-screen capture, and HTTP endpoint discovery |
 | `protocols/pda/identity.py` | Configured/reported panel comparison, API identity capture, and bounded panel-clock validation |
+| `protocols/pda/equipment_setup.py` | Safe non-heating EQUIPMENT STATUS setup, minimum heater setpoints, and emergency heat shutdown |
 | `protocols/pda/equipment_status.py` | Complete multi-page EQUIPMENT STATUS observation, parsing, API reconciliation, and failure evidence |
 | `protocols/pda/sleep.py` | Natural sleep/wake duty-cycle observation, post-wake refresh timing, and STATUS-retry/probe transition validation |
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |

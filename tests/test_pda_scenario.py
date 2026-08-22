@@ -9,7 +9,6 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
 
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.pda_scenario import (
@@ -265,9 +264,6 @@ class SpaApi(CleanupApi):
 
 
 class PdaScenarioTests(unittest.TestCase):
-    def test_status_controls_lower_both_heaters_without_spa_mode(self) -> None:
-        asyncio.run(self._prepare_maximum_nonheating_status_controls())
-
     def test_spa_heating_uses_site_fill_and_restores_state(self) -> None:
         asyncio.run(self._run_spa_heating())
 
@@ -825,68 +821,3 @@ class PdaScenarioTests(unittest.TestCase):
             }
             self.assertIn("spa.pool_mode_fill", measurement_names)
             self.assertIn("spa.heater.active", measurement_names)
-
-    async def _prepare_maximum_nonheating_status_controls(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            context = ScenarioContext(
-                artifact_dir=Path(directory),
-                monitor=OutputMonitor(),
-                timeline=Timeline(
-                    Path(directory) / "timeline.jsonl",
-                    time.monotonic_ns(),
-                ),
-            )
-            scenario = PdaScenarioRuntime(None, PdaScenarioConfig())
-            scenario._initial_snapshot = EquipmentSnapshot(
-                temp_units="f",
-                devices={
-                    "Filter_Pump": {
-                        "id": "Filter_Pump",
-                        "type": "switch",
-                        "int_status": "0",
-                    },
-                    "Spa": {
-                        "id": "Spa",
-                        "type": "switch",
-                        "int_status": "0",
-                    },
-                    POOL_HEATER: {
-                        "id": POOL_HEATER,
-                        "type": "setpoint_thermo",
-                        "int_status": "0",
-                        "spvalue": "80",
-                        "value": "82",
-                    },
-                    SPA_HEATER: {
-                        "id": SPA_HEATER,
-                        "type": "setpoint_thermo",
-                        "int_status": "0",
-                        "spvalue": "100",
-                        "value": "-999",
-                    },
-                },
-            )
-            try:
-                with patch.object(
-                    scenario,
-                    "_set_setpoint",
-                    new_callable=AsyncMock,
-                ) as set_setpoint:
-                    controls = await scenario._prepare_nonheating_status_controls(
-                        context,
-                        ["Filter_Pump", POOL_HEATER, SPA_HEATER],
-                    )
-            finally:
-                context.timeline.close()
-
-            self.assertEqual(
-                controls,
-                ["Filter_Pump", POOL_HEATER, SPA_HEATER],
-            )
-            self.assertEqual(
-                [
-                    (call.args[1], call.args[2])
-                    for call in set_setpoint.await_args_list
-                ],
-                [(POOL_HEATER, 36), (SPA_HEATER, 36)],
-            )

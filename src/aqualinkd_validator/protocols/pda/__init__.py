@@ -1,5 +1,11 @@
 """PDA protocol services."""
 
+from .equipment_setup import (
+    PdaEquipmentSetupConfig,
+    PdaEquipmentSetupFailure,
+    PdaEquipmentSetupResult,
+    PdaEquipmentStatusSetup,
+)
 from .equipment_status import (
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusLoop,
@@ -28,6 +34,10 @@ __all__ = [
     "PdaEquipmentStatusLoop",
     "PdaEquipmentStatusResult",
     "PdaEquipmentStatusService",
+    "PdaEquipmentSetupConfig",
+    "PdaEquipmentSetupFailure",
+    "PdaEquipmentSetupResult",
+    "PdaEquipmentStatusSetup",
     "PdaPanelIdentityConfig",
     "PdaPanelIdentityFailure",
     "PdaPanelIdentityResult",

@@ -127,3 +127,16 @@ class EquipmentSnapshot:
         }
         object.__setattr__(self, "temp_units", temp_units)
         object.__setattr__(self, "devices", normalized)
+
+
+def device_state_details(device: DeviceState) -> dict[str, Any]:
+    """Return the stable artifact representation of typed equipment state."""
+
+    return {
+        "int_status": device.int_status,
+        "state": device.state,
+        "status": device.status,
+        "enabled": device.enabled,
+        "active": device.active,
+        "transitioning": device.transitioning,
+    }

@@ -5,7 +5,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain import DeviceState, EquipmentSnapshot, EquipmentStateError
+from ..domain import (
+    DeviceState,
+    EquipmentSnapshot,
+    EquipmentStateError,
+    device_state_details,
+)
 from ..interfaces import AqualinkApi, EventTimeline
 
 ObservationSink = Callable[[dict[str, Any]], None]
@@ -160,13 +165,6 @@ class EquipmentStabilityService:
     @staticmethod
     def _state_details(device: DeviceState) -> dict[str, Any]:
         try:
-            return {
-                "int_status": device.int_status,
-                "state": device.state,
-                "status": device.status,
-                "enabled": device.enabled,
-                "active": device.active,
-                "transitioning": device.transitioning,
-            }
+            return device_state_details(device)
         except EquipmentStateError as error:
             raise EquipmentStabilityFailure(str(error)) from error

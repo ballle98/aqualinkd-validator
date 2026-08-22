@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
@@ -47,6 +47,11 @@ from .protocols.pda.aquapda import (
     AquaPdaTransportConfig,
     AquaPdaTransportValidator,
     AquaPdaValidationFailure,
+)
+from .protocols.pda.equipment_setup import (
+    PdaEquipmentSetupConfig,
+    PdaEquipmentSetupFailure,
+    PdaEquipmentStatusSetup,
 )
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
@@ -903,7 +908,7 @@ class PdaScenarioRuntime:
     async def _wait_for_stable_equipment_snapshot(
         self,
         context: ScenarioContext,
-        identifiers: tuple[str, ...] | list[str],
+        identifiers: Sequence[str],
         *,
         phase: str,
         timeout_seconds: float,
@@ -972,10 +977,15 @@ class PdaScenarioRuntime:
                 phase="devices.status_menu.setup",
             )
         ]
-        controls = await self._prepare_nonheating_status_controls(
-            context,
-            candidates,
-        )
+        try:
+            setup = await self._equipment_status_setup(context).prepare(
+                self._initial_snapshot,
+                candidates,
+            )
+        except PdaEquipmentSetupFailure as error:
+            raise ScenarioFailure(str(error)) from error
+        controls = list(setup.controls)
+        setup_states = setup.states
         deferred_controls = sorted(
             excluded_hydraulic_controls & self._initial_snapshot.devices.keys()
         )
@@ -992,104 +1002,6 @@ class PdaScenarioRuntime:
                 "No configured equipment can be enabled for status testing",
             )
             return
-
-        await self._wait_for_stable_equipment_snapshot(
-            context,
-            controls,
-            phase="devices.status_menu.precondition",
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-
-        heater_controls = [
-            identifier
-            for identifier in controls
-            if identifier in {POOL_HEATER, SPA_HEATER}
-        ]
-        non_heater_controls = [
-            identifier for identifier in controls if identifier not in heater_controls
-        ]
-        circulation_cursor = context.monitor.cursor
-        for identifier in non_heater_controls:
-            await self._set_device(
-                context,
-                identifier,
-                True,
-                phase="devices.status_menu.setup",
-                state_timeout_seconds=self._config.status_timeout_seconds,
-            )
-        eligible_heaters: list[str] = []
-        for identifier in heater_controls:
-            if identifier == POOL_HEATER and not await self._pool_is_above_minimum(
-                context,
-                after=circulation_cursor,
-                minimum=self._minimum_heater_setpoint(),
-                timeout_seconds=self._config.status_timeout_seconds,
-            ):
-                self._skip(
-                    f"devices.status_menu.setup.{identifier}",
-                    "Pool temperature did not become available above the "
-                    "minimum heater setpoint after circulation started",
-                )
-                continue
-            await self._set_device(
-                context,
-                identifier,
-                True,
-                phase="devices.status_menu.setup",
-                state_timeout_seconds=self._config.status_timeout_seconds,
-            )
-            eligible_heaters.append(identifier)
-        controls = [
-            identifier
-            for identifier in controls
-            if identifier not in heater_controls or identifier in eligible_heaters
-        ]
-        print(
-            f"[STATE ] Equipment status setup: enabled "
-            f"{len(controls)} configured controls",
-            flush=True,
-        )
-
-        setup_snapshot = await self._wait_for_stable_equipment_snapshot(
-            context,
-            controls,
-            phase="devices.status_menu.setup_complete",
-            timeout_seconds=self._config.status_timeout_seconds,
-        )
-        setup_states = {
-            identifier: self._device_state_details(
-                self._require_device(setup_snapshot, identifier)
-            )
-            for identifier in controls
-        }
-        setup_failures = [
-            identifier
-            for identifier, state in setup_states.items()
-            if not state["enabled"]
-        ]
-        if setup_failures:
-            raise ScenarioFailure(
-                "Equipment status setup did not remain enabled after "
-                "transitions settled: " + ", ".join(setup_failures)
-            )
-        active_heaters = [
-            identifier
-            for identifier, state in setup_states.items()
-            if identifier in {POOL_HEATER, SPA_HEATER} and state["active"]
-        ]
-        if active_heaters:
-            for identifier in active_heaters:
-                await self._set_device(
-                    context,
-                    identifier,
-                    False,
-                    phase="devices.status_menu.emergency_heat_disable",
-                    state_timeout_seconds=self._config.restoration_timeout_seconds,
-                )
-            raise ScenarioFailure(
-                "Non-heating EQUIPMENT STATUS setup unexpectedly activated: "
-                + ", ".join(active_heaters)
-            )
 
         cursor = context.monitor.cursor
         wait_started = context.timeline.offset_ns()
@@ -1145,132 +1057,57 @@ class PdaScenarioRuntime:
             state_observed_offset_ns=context.timeline.offset_ns(),
         )
 
-    async def _prepare_nonheating_status_controls(
+    def _equipment_status_setup(
         self,
         context: ScenarioContext,
-        candidates: list[str],
-    ) -> list[str]:
-        """Lower heater setpoints before maximizing status-menu occupancy."""
+    ) -> PdaEquipmentStatusSetup:
+        async def set_heater_setpoint(
+            identifier: str,
+            value: int,
+            phase: str,
+        ) -> None:
+            active, completed = self._heater_setpoint_markers(identifier)
+            await self._set_setpoint(
+                context,
+                identifier,
+                value,
+                phase=phase,
+                active_marker=active,
+                completion_marker=completed,
+                category="heater_safety",
+            )
 
-        assert self._initial_snapshot is not None
-        spa_mode_enabled = any(
-            self._initial_snapshot.devices[identifier].enabled
-            for identifier in ("Spa", "Spa_Mode")
-            if identifier in self._initial_snapshot.devices
-        )
-        controls: list[str] = []
-        for identifier in candidates:
-            device = self._initial_snapshot.devices[identifier]
-            if device.kind != "setpoint_thermo":
-                controls.append(identifier)
-                continue
-            if identifier not in {POOL_HEATER, SPA_HEATER}:
-                self._skip(
-                    f"devices.status_menu.setup.{identifier}",
-                    "Unknown heater type cannot be made non-heating safely",
-                )
-                continue
-            if device.active:
-                self._skip(
-                    f"devices.status_menu.setup.{identifier}",
-                    "Heater was already actively heating at test start",
-                )
-                continue
-            if spa_mode_enabled:
-                self._skip(
-                    f"devices.status_menu.setup.{identifier}",
-                    "Spa mode was already enabled at test start",
-                )
-                continue
-            try:
-                minimum = self._minimum_heater_setpoint()
-            except ScenarioFailure:
-                self._skip(
-                    f"devices.status_menu.setup.{identifier}",
-                    "Unknown temperature units prevent a safe minimum setpoint",
-                )
-                continue
-            if device.enabled:
-                await self._set_device(
+        return PdaEquipmentStatusSetup(
+            api=self._api_client,
+            events=context.monitor,
+            config=PdaEquipmentSetupConfig(
+                status_timeout_seconds=self._config.status_timeout_seconds,
+                restoration_timeout_seconds=(
+                    self._config.restoration_timeout_seconds
+                ),
+                poll_seconds=_EQUIPMENT_POLL_SECONDS,
+            ),
+            set_device=lambda identifier, enabled, phase, timeout: (
+                self._set_device(
                     context,
                     identifier,
-                    False,
-                    phase="devices.status_menu.safety_disable",
-                    state_timeout_seconds=self._config.restoration_timeout_seconds,
+                    enabled,
+                    phase=phase,
+                    state_timeout_seconds=timeout,
                 )
-            if device.setpoint != minimum:
-                active_markers, finished_markers = self._heater_setpoint_markers(
-                    identifier
-                )
-                await self._set_setpoint(
+            ),
+            set_setpoint=set_heater_setpoint,
+            wait_for_stable=lambda identifiers, phase, timeout: (
+                self._wait_for_stable_equipment_snapshot(
                     context,
-                    identifier,
-                    minimum,
-                    phase="devices.status_menu.safe_setpoint",
-                    active_marker=active_markers,
-                    completion_marker=finished_markers,
-                    category="heater_safety",
+                    identifiers,
+                    phase=phase,
+                    timeout_seconds=timeout,
                 )
-            controls.append(identifier)
-        return controls
-
-    def _minimum_heater_setpoint(self) -> int:
-        assert self._initial_snapshot is not None
-        minimum = {"f": 36, "c": 0}.get(
-            self._initial_snapshot.temp_units.casefold()
+            ),
+            record_skip=self._skip,
+            progress=lambda message: print(message, flush=True),
         )
-        if minimum is None:
-            raise ScenarioFailure(
-                f"Unknown temperature units {self._initial_snapshot.temp_units!r}"
-            )
-        return minimum
-
-    async def _pool_is_above_minimum(
-        self,
-        context: ScenarioContext,
-        *,
-        after: int,
-        minimum: int,
-        timeout_seconds: float,
-    ) -> bool:
-        print(
-            "[ WAIT ] Pool Heater safety: waiting for a home-screen water "
-            f"temperature (timeout {timeout_seconds:g}s)",
-            flush=True,
-        )
-        try:
-            await context.monitor.wait_for(
-                "PDA Menu Line 1 = AIR",
-                after=after,
-                timeout_seconds=timeout_seconds,
-            )
-        except TimeoutError:
-            return False
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            snapshot = await self._api_client.devices()
-            heater = self._require_device(snapshot, POOL_HEATER)
-            raw_temperature = heater.raw.get("value")
-            try:
-                temperature = (
-                    float(raw_temperature)
-                    if isinstance(raw_temperature, (int, float, str))
-                    else None
-                )
-            except ValueError:
-                temperature = None
-            if temperature is not None and temperature > minimum:
-                print(
-                    f"[STATE ] Pool temperature {temperature:g} is above "
-                    f"the safe {minimum}° heater test setpoint",
-                    flush=True,
-                )
-                return True
-            if temperature is not None and temperature > -100:
-                return False
-            if time.monotonic() >= deadline:
-                return False
-            await asyncio.sleep(_EQUIPMENT_POLL_SECONDS)
 
     @staticmethod
     def _heater_setpoint_markers(
@@ -2025,21 +1862,6 @@ class PdaScenarioRuntime:
         device: DeviceState | Mapping[str, Any],
     ) -> bool:
         return cls._device_state(device).transitioning
-
-    @classmethod
-    def _device_state_details(
-        cls,
-        device: DeviceState | Mapping[str, Any],
-    ) -> dict[str, Any]:
-        state = cls._device_state(device)
-        return {
-            "int_status": state.int_status,
-            "state": state.state,
-            "status": state.status,
-            "enabled": state.enabled,
-            "active": state.active,
-            "transitioning": state.transitioning,
-        }
 
     @staticmethod
     def _requested_device_state_label(
