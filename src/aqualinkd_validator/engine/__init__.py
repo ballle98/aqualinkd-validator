@@ -17,6 +17,7 @@ from .restoration import (
     RestorationResult,
     RestorationSession,
 )
+from .serial_actions import SerialActionFailure, SerialActions, parse_hex_bytes
 
 __all__ = [
     "RestorationAction",
@@ -30,4 +31,7 @@ __all__ = [
     "EquipmentStabilityService",
     "ProgrammerMarkers",
     "ScenarioRecorder",
+    "SerialActionFailure",
+    "SerialActions",
+    "parse_hex_bytes",
 ]
