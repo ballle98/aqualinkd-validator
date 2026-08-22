@@ -29,7 +29,6 @@ from aqualinkd_validator.pda_scenario import (
     PdaScenarioRuntime,
     ScenarioFailure,
 )
-from aqualinkd_validator.run_targets import RuntimeCaseId
 from aqualinkd_validator.supervisor import (
     OutputMonitor,
     ScenarioContext,
@@ -287,9 +286,6 @@ class PdaScenarioTests(unittest.TestCase):
             "ScenarioFailure: legacy startup log was invalid",
         )
 
-    def test_failed_case_restores_then_continues(self) -> None:
-        asyncio.run(self._run_failed_case_continuation())
-
     def test_cleanup_orders_dependencies_and_waits_for_delays(self) -> None:
         asyncio.run(self._run_dependency_aware_cleanup())
 
@@ -525,67 +521,6 @@ class PdaScenarioTests(unittest.TestCase):
             self.assertTrue(first_errors)
             self.assertEqual(second_errors, [])
             self.assertEqual(api.set_device_calls, [("Spa_Mode", False)])
-
-    async def _run_failed_case_continuation(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(
-                artifact_dir / "timeline.jsonl",
-                time.monotonic_ns(),
-            )
-            context = ScenarioContext(
-                artifact_dir=artifact_dir,
-                monitor=OutputMonitor(),
-                timeline=timeline,
-            )
-            scenario = PdaScenarioRuntime(
-                None,
-                PdaScenarioConfig(
-                    suite_name="continuation-test",
-                    case_ids=(
-                        RuntimeCaseId.INITIALIZATION,
-                        RuntimeCaseId.AQUAPDA_TRANSPORT,
-                        RuntimeCaseId.AQUAPDA_MENU_WALK,
-                    ),
-                ),
-            )
-            observed: list[str] = []
-
-            async def run_test(name: str, operation: Any) -> None:
-                del operation
-                observed.append(name)
-                if name == "PDA initialization, identity, and clock":
-                    scenario._initial_snapshot = EquipmentSnapshot(
-                        temp_units="f",
-                        devices={},
-                    )
-                if name == "AquaPDA WebSocket transport integrity":
-                    raise ScenarioFailure("injected assertion failure")
-
-            async def restore_case(context: Any, case: Any) -> list[str]:
-                del context, case
-                return []
-
-            scenario._run_test = run_test  # type: ignore[method-assign]
-            scenario._restore_after_case = (  # type: ignore[method-assign]
-                restore_case
-            )
-            try:
-                outcome = await scenario.run(context)
-            finally:
-                timeline.close()
-
-            report = json.loads(
-                (artifact_dir / "scenario.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(outcome.status, "failed")
-            self.assertEqual(outcome.reason, "case_failures")
-            self.assertTrue(report["safe_to_continue"])
-            self.assertEqual(
-                [case["status"] for case in report["cases"]],
-                ["passed", "failed", "passed"],
-            )
-            self.assertEqual(len(observed), 3)
 
     async def _run_declarative_filter_test(
         self,

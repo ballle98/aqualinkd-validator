@@ -1110,6 +1110,8 @@ PDA organization now resolves through one execution path:
   stable-state polling, and equipment-state observations, while
   `engine/reporting.py` owns scenario artifact serialization, measurements,
   skip records, and console progress.
+  `engine/runtime_cases.py` owns lifecycle and failure handling for the few
+  remaining Python-only AquaPDA interface cases.
   `protocols/pda/session.py` owns PDA_INIT, daemon identity, firmware-screen
   capture, and HTTP endpoint discovery.
   `protocols/pda/identity.py` owns configured/reported panel comparison and

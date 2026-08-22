@@ -44,6 +44,7 @@ source modules are:
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `engine/equipment_stability.py` | Typed transition interpretation, stable-state polling, observation artifacts, and timeout evidence |
 | `engine/reporting.py` | Scenario artifact serialization, timing measurements, exception formatting, skips, and console progress |
+| `engine/runtime_cases.py` | Lifecycle, failure continuation, cleanup gating, and finalization for the remaining Python-only interface cases |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
 | `protocols/pda/session.py` | PDA_INIT coordination, startup identity parsing, firmware-screen capture, and HTTP endpoint discovery |
 | `protocols/pda/identity.py` | Configured/reported panel comparison, API identity capture, and bounded panel-clock validation |

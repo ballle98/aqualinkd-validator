@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 from .aquapda_client import (
     AquaPdaClient,
@@ -23,6 +22,7 @@ from .engine import (
     RestorationSession,
     ScenarioRecorder,
 )
+from .engine.runtime_cases import RuntimeCaseRunner
 from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import AqualinkApi
 from .protocols.pda import (
@@ -60,7 +60,7 @@ from .protocols.pda.equipment_setup import (
 )
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
-from .run_targets import RUNTIME_CASES, RuntimeCaseDefinition, RuntimeCaseId
+from .run_targets import RuntimeCaseId
 from .supervisor import LineEvent, ScenarioContext, ScenarioOutcome
 from .testcases import (
     DeclarativeScenarioRunner,
@@ -113,9 +113,6 @@ WAKE_INIT_FINISHED = pda_sleep.WAKE_INIT_FINISHED
 _EQUIPMENT_POLL_SECONDS = 0.25
 
 _PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
-_TestResult = TypeVar("_TestResult")
-
-
 @dataclass(frozen=True)
 class PdaScenarioConfig:
     suite_name: str = "pda-live-fast"
@@ -274,126 +271,16 @@ class PdaScenarioRuntime:
                 restore=self._restore_with_progress,
                 initialized=lambda: self._initial_snapshot is not None,
             ).run(context)
-        suite_started = time.monotonic()
-        display_name = self._config.suite_name
-        print(
-            f"\n=== Starting {display_name} ===",
-            flush=True,
-        )
-        await context.timeline.write(
-            "scenario_started",
-            suite=self._config.suite_name,
-            api_base_url=self._report["api_base_url"],
-            api_endpoint_source=self._report["api_endpoint_source"],
-        )
-        status = "passed"
-        reason = "scenario_completed"
-        cancelled = False
-        case_failures: list[str] = []
-        for case_id in self._case_ids:
-            case = RUNTIME_CASES[case_id]
-            self._restoration.begin_case()
-            case_started = time.monotonic()
-            case_error: BaseException | None = None
-            try:
-                await self._run_test(
-                    case.name,
-                    self._case_operation(case_id, context),
-                )
-            except asyncio.CancelledError as error:
-                case_error = error
-                cancelled = True
-            except Exception as error:
-                case_error = error
-
-            restoration_errors = await self._restore_after_case(context, case)
-            case_status = "passed" if case_error is None else "failed"
-            case_result = {
-                "id": case.id.value,
-                "name": case.name,
-                "status": case_status,
-                "duration_ms": round(
-                    (time.monotonic() - case_started) * 1000,
-                    3,
-                ),
-                "error": (
-                    self._recorder.format_exception(case_error)
-                    if case_error is not None
-                    else None
-                ),
-                "restoration": (
-                    "failed"
-                    if restoration_errors
-                    else ("passed" if case.mutates_panel else "not-needed")
-                ),
-            }
-            self._report["cases"].append(case_result)
-
-            if restoration_errors:
-                status = "failed"
-                reason = "restoration_failed"
-                self._report["error"] = "; ".join(restoration_errors)
-                break
-            if cancelled:
-                status = "failed"
-                reason = "scenario_cancelled"
-                break
-            if case_error is not None:
-                case_failures.append(case.id.value)
-                if case.id == RuntimeCaseId.INITIALIZATION:
-                    status = "failed"
-                    reason = "initialization_failed"
-                    self._report["error"] = self._recorder.format_exception(
-                        case_error
-                    )
-                    break
-
-        if reason == "scenario_completed" and case_failures:
-            status = "failed"
-            reason = "case_failures"
-            self._report["failed_cases"] = case_failures
-
-        final_restoration_errors: list[str] = []
-        if self._restoration.has_pending_mutations:
-            final_restoration_errors = await self._restore_with_progress(
-                context,
-                "Restore original equipment state",
-            )
-        if final_restoration_errors:
-            status = "failed"
-            reason = "restoration_failed"
-            self._report["error"] = "; ".join(final_restoration_errors)
-        elif reason == "restoration_failed":
-            # The case-level cleanup exceeded its window, but the final
-            # safety pass subsequently verified the original state. Keep the
-            # run failed while allowing a composite suite to continue.
-            reason = "restoration_recovered"
-            self._report["restoration"]["status"] = "recovered"
-
-        self._report["safe_to_continue"] = bool(
-            self._initial_snapshot is not None
-            and not cancelled
-            and reason != "restoration_failed"
-        )
-
-        self._report["status"] = status
-        self._report["reason"] = reason
-        self._recorder.write(context.artifact_dir)
-        await context.timeline.write(
-            "scenario_finished",
-            suite=self._config.suite_name,
-            status=status,
-            reason=reason,
-        )
-        self._recorder.progress_finished(
-            display_name,
-            suite_started,
-            passed=status == "passed",
-            detail=None if status == "passed" else reason,
-        )
-        if cancelled:
-            raise asyncio.CancelledError
-        return ScenarioOutcome(status=status, reason=reason)
+        return await RuntimeCaseRunner(
+            suite_name=self._config.suite_name,
+            case_ids=self._case_ids,
+            report=self._report,
+            recorder=self._recorder,
+            restoration=self._restoration,
+            operation=lambda case_id: self._case_operation(case_id, context)(),
+            restore=lambda name: self._restore_with_progress(context, name),
+            initialized=lambda: self._initial_snapshot is not None,
+        ).run(context)
 
     def _testcase_keywords(
         self,
@@ -521,18 +408,6 @@ class PdaScenarioRuntime:
             raise ScenarioFailure(str(error)) from error
         self._report["menu_walk"] = result.report
 
-    async def _restore_after_case(
-        self,
-        context: ScenarioContext,
-        case: RuntimeCaseDefinition,
-    ) -> list[str]:
-        if not case.mutates_panel:
-            return []
-        return await self._restore_with_progress(
-            context,
-            f"Restore state after {case.name}",
-        )
-
     async def _restore_with_progress(
         self,
         context: ScenarioContext,
@@ -570,33 +445,6 @@ class PdaScenarioRuntime:
             constraints.excluded
         )
         self._require_device(self._initial_snapshot, FILTER_PUMP)
-
-    async def _run_test(
-        self,
-        name: str,
-        operation: Callable[[], Awaitable[_TestResult]],
-    ) -> _TestResult:
-        started = self._recorder.progress_started(name)
-        try:
-            result = await operation()
-        except asyncio.CancelledError:
-            self._recorder.progress_finished(
-                name,
-                started,
-                passed=False,
-                detail="cancelled",
-            )
-            raise
-        except Exception as error:
-            self._recorder.progress_finished(
-                name,
-                started,
-                passed=False,
-                detail=self._recorder.format_exception(error),
-            )
-            raise
-        self._recorder.progress_finished(name, started, passed=True)
-        return result
 
     async def _wait_for_task_active(
         self,
