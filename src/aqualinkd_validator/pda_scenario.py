@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -33,10 +32,8 @@ from .protocols.pda import (
     PdaDeviceSelector,
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusService,
-    PdaPanelIdentityConfig,
     PdaPanelIdentityFailure,
     PdaPanelIdentityResult,
-    PdaPanelIdentityValidator,
     PdaProgrammerFailure,
     PdaProgrammerObserver,
     PdaRestorationConfig,
@@ -44,6 +41,8 @@ from .protocols.pda import (
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
+    PdaStartupConfig,
+    PdaStartupCoordinator,
 )
 from .protocols.pda import equipment_status as pda_equipment_status
 from .protocols.pda import session as pda_session
@@ -425,18 +424,52 @@ class PdaScenarioRuntime:
         return errors
 
     async def _initialize(self, context: ScenarioContext) -> None:
-        init_screen = await self._prepare_startup(context)
-        ready_snapshot = await self._wait_for_api()
-        identifiers = self._actionable_identifiers(ready_snapshot)
-        self._initial_snapshot = await self._wait_for_stable_equipment_snapshot(
-            context,
-            identifiers,
-            phase="initialization.snapshot",
-            timeout_seconds=self._config.init_timeout_seconds,
-            initial_snapshot=ready_snapshot,
-        )
+        async def stabilize(
+            api: AqualinkApi,
+            identifiers: Sequence[str],
+            initial_snapshot: EquipmentSnapshot,
+        ) -> EquipmentSnapshot:
+            del api
+            return await self._wait_for_stable_equipment_snapshot(
+                context,
+                identifiers,
+                phase="initialization.snapshot",
+                timeout_seconds=self._config.init_timeout_seconds,
+                initial_snapshot=initial_snapshot,
+            )
+
+        try:
+            result = await PdaStartupCoordinator(
+                events=context.monitor,
+                timeline=context.timeline,
+                programmer=self._programmer,
+                api_factory=self._api_factory,
+                config=PdaStartupConfig(
+                    init_timeout_seconds=self._config.init_timeout_seconds,
+                    api_timeout_seconds=self._config.action_timeout_seconds,
+                    panel_timezone=self._config.panel_timezone,
+                    panel_time_tolerance_seconds=(
+                        self._config.panel_time_tolerance_seconds
+                    ),
+                ),
+                progress=lambda message: print(message, flush=True),
+                retryable_api_errors=(ApiError,),
+            ).initialize(
+                api=self._api,
+                api_base_url_override=self._api_base_url_override,
+                api_configured=self._api_configured,
+                session_observed=self._record_startup_session,
+                stabilize=stabilize,
+            )
+        except PdaPanelIdentityFailure as error:
+            self._record_panel_identity_result(error.result)
+            raise ScenarioFailure(str(error)) from error
+        except (pda_session.PdaSessionFailure, RuntimeError) as error:
+            raise ScenarioFailure(str(error)) from error
+
+        self._initial_snapshot = result.snapshot
         self._restoration.capture_initial(self._initial_snapshot)
-        await self._record_panel_identity_and_check_time(init_screen)
+        self._record_panel_identity_result(result.panel_identity)
         constraints = self._device_selector.configure(
             self._initial_snapshot,
             reported_panel_size=self._reported_panel_size,
@@ -446,6 +479,21 @@ class PdaScenarioRuntime:
             constraints.excluded
         )
         self._require_device(self._initial_snapshot, FILTER_PUMP)
+
+    def _record_startup_session(self, result: pda_session.PdaStartupResult) -> None:
+        self._report["aqualinkd"] = result.aqualinkd_identity
+        self._recorder.append_measurement(
+            name="pda.init",
+            category="initialization",
+            phase="startup",
+            target="PDA_INIT",
+            requested_value=None,
+            start_offset_ns=0,
+            api_ack_offset_ns=None,
+            task_active_offset_ns=result.active.offset_ns,
+            log_completion_offset_ns=result.completed.offset_ns,
+            state_observed_offset_ns=None,
+        )
 
     async def _wait_for_task_active(
         self,
@@ -493,57 +541,6 @@ class PdaScenarioRuntime:
         except PdaProgrammerFailure as error:
             raise ScenarioFailure(str(error)) from error
 
-    async def _prepare_startup(
-        self,
-        context: ScenarioContext,
-    ) -> dict[str, str]:
-        if self._api is None and self._api_base_url_override is not None:
-            self._configure_api(
-                self._api_base_url_override,
-                source="explicit_override",
-            )
-
-        try:
-            result = await pda_session.PdaSessionInitializer(
-                events=context.monitor,
-                timeline=context.timeline,
-                programmer=self._programmer,
-                timeout_seconds=self._config.init_timeout_seconds,
-            ).initialize(discover_api=self._api is None)
-        except pda_session.PdaSessionFailure as error:
-            raise ScenarioFailure(str(error)) from error
-        if result.discovered_api_base_url is not None:
-            discovered = result.discovered_api_base_url
-            self._configure_api(discovered, source="aqualinkd_startup_log")
-            await context.timeline.write(
-                "api_endpoint_discovered",
-                api_base_url=discovered,
-                source="aqualinkd_startup_log",
-            )
-        identity = result.aqualinkd_identity
-        self._report["aqualinkd"] = identity
-        print(
-            f"[INFO  ] AqualinkD version: {identity['version']}",
-            flush=True,
-        )
-        print(
-            f"[INFO  ] Configured panel: {identity['configured_panel_type']}",
-            flush=True,
-        )
-        self._recorder.append_measurement(
-            name="pda.init",
-            category="initialization",
-            phase="startup",
-            target="PDA_INIT",
-            requested_value=None,
-            start_offset_ns=0,
-            api_ack_offset_ns=None,
-            task_active_offset_ns=result.active.offset_ns,
-            log_completion_offset_ns=result.completed.offset_ns,
-            state_observed_offset_ns=None,
-        )
-        return result.init_screen
-
     @staticmethod
     async def _wait_for_marker(
         context: ScenarioContext,
@@ -564,8 +561,8 @@ class PdaScenarioRuntime:
             timeout_seconds=timeout_seconds,
         )
 
-    def _configure_api(self, base_url: str, *, source: str) -> None:
-        self._api = self._api_factory(base_url)
+    def _api_configured(self, api: AqualinkApi, source: str) -> None:
+        self._api = api
         self._report["api_base_url"] = self._api.base_url
         self._report["api_endpoint_source"] = source
 
@@ -574,36 +571,6 @@ class PdaScenarioRuntime:
         if self._api is None:
             raise ScenarioFailure("AqualinkD HTTP API endpoint is not configured")
         return self._api
-
-    async def _record_panel_identity_and_check_time(
-        self,
-        init_screen: dict[str, str],
-    ) -> None:
-        daemon_identity = self._report.get("aqualinkd")
-        configured_panel = (
-            daemon_identity.get("configured_panel_type")
-            if isinstance(daemon_identity, dict)
-            else None
-        )
-        try:
-            result = await PdaPanelIdentityValidator(
-                api=self._api_client,
-                config=PdaPanelIdentityConfig(
-                    timezone=self._config.panel_timezone,
-                    time_tolerance_seconds=(
-                        self._config.panel_time_tolerance_seconds
-                    ),
-                    timeout_seconds=self._config.init_timeout_seconds,
-                ),
-                progress=lambda message: print(message, flush=True),
-            ).validate(
-                init_screen=init_screen,
-                configured_panel=configured_panel,
-            )
-        except PdaPanelIdentityFailure as error:
-            self._record_panel_identity_result(error.result)
-            raise ScenarioFailure(str(error)) from error
-        self._record_panel_identity_result(result)
 
     def _record_panel_identity_result(
         self,
@@ -615,30 +582,6 @@ class PdaScenarioRuntime:
         self._reported_panel_combo = result.reported_panel_combo
         self._report["device_selection"]["reported_panel_size"] = (
             self._reported_panel_size
-        )
-
-    async def _wait_for_api(self) -> EquipmentSnapshot:
-        deadline = asyncio.get_running_loop().time() + (
-            self._config.action_timeout_seconds
-        )
-        last_error: Exception | None = None
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                return await self._api_client.devices()
-            except ApiError as error:
-                last_error = error
-                await asyncio.sleep(0.25)
-        raise ScenarioFailure(
-            "AqualinkD HTTP API did not become ready after PDA_INIT"
-            + (f": {last_error}" if last_error is not None else "")
-        )
-
-    @staticmethod
-    def _actionable_identifiers(snapshot: EquipmentSnapshot) -> tuple[str, ...]:
-        return tuple(
-            identifier
-            for identifier, device in snapshot.devices.items()
-            if device.get("type") in {"switch", "setpoint_thermo"}
         )
 
     async def _wait_for_stable_equipment_snapshot(
