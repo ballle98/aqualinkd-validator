@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from .adapters import ApiError, AqualinkHttpApi, AquaPdaWebSocketClient
-from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
+from .domain import DeviceState, EquipmentSnapshot
 from .engine import (
     EquipmentActionFailure,
     EquipmentActions,
@@ -22,7 +21,6 @@ from .engine.runtime_cases import RuntimeCaseRunner
 from .interfaces import (
     AqualinkApi,
     AquaPdaClient,
-    LineEvent,
     ScenarioContext,
     ScenarioOutcome,
 )
@@ -65,7 +63,6 @@ from .run_targets import RuntimeCaseId
 from .testcases import (
     DeclarativeScenarioRunner,
     ExerciseDiscoveredDevicesStep,
-    ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
     ExerciseStatusRetryStep,
     TestcaseDefinition,
@@ -112,7 +109,6 @@ WAKE_INIT_ACTIVE = pda_sleep.WAKE_INIT_ACTIVE
 WAKE_INIT_FINISHED = pda_sleep.WAKE_INIT_FINISHED
 _EQUIPMENT_POLL_SECONDS = 0.25
 
-_PDA_MENU_LINE = re.compile(r"PDA Menu Line (\d+) =\s*(.*?)\s*$")
 @dataclass(frozen=True)
 class PdaScenarioConfig:
     suite_name: str = "pda-live-fast"
@@ -495,72 +491,6 @@ class PdaScenarioRuntime:
             state_observed_offset_ns=None,
         )
 
-    async def _wait_for_task_active(
-        self,
-        context: ScenarioContext,
-        *,
-        task_name: str,
-        marker: str | tuple[str, ...],
-        after: int,
-        requested_offset_ns: int,
-        timeout_seconds: float,
-        wait_reason: str = "waiting in the programmer queue",
-    ) -> LineEvent:
-        try:
-            return await self._programmer.wait_for_active(
-                context.monitor,
-                context.timeline,
-                task_name=task_name,
-                marker=marker,
-                after=after,
-                requested_offset_ns=requested_offset_ns,
-                timeout_seconds=timeout_seconds,
-                wait_reason=wait_reason,
-            )
-        except PdaProgrammerFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    async def _wait_for_task_completion(
-        self,
-        context: ScenarioContext,
-        *,
-        task_name: str,
-        marker: str | tuple[str, ...],
-        active: LineEvent,
-        timeout_seconds: float,
-    ) -> LineEvent:
-        try:
-            return await self._programmer.wait_for_completion(
-                context.monitor,
-                context.timeline,
-                task_name=task_name,
-                marker=marker,
-                active=active,
-                timeout_seconds=timeout_seconds,
-            )
-        except PdaProgrammerFailure as error:
-            raise ScenarioFailure(str(error)) from error
-
-    @staticmethod
-    async def _wait_for_marker(
-        context: ScenarioContext,
-        marker: str | tuple[str, ...],
-        *,
-        after: int,
-        timeout_seconds: float,
-    ) -> LineEvent:
-        if isinstance(marker, str):
-            return await context.monitor.wait_for(
-                marker,
-                after=after,
-                timeout_seconds=timeout_seconds,
-            )
-        return await context.monitor.wait_for_any(
-            marker,
-            after=after,
-            timeout_seconds=timeout_seconds,
-        )
-
     def _api_configured(self, api: AqualinkApi, source: str) -> None:
         self._api = api
         self._report["api_base_url"] = self._api.base_url
@@ -614,13 +544,6 @@ class PdaScenarioRuntime:
             )
         except EquipmentStabilityFailure as error:
             raise ScenarioFailure(str(error)) from error
-
-    @staticmethod
-    def _parse_menu_line(text: str) -> tuple[int, str] | None:
-        match = _PDA_MENU_LINE.search(text)
-        if match is None:
-            return None
-        return int(match.group(1)), match.group(2).strip()
 
     async def _toggle_round_trip(
         self,
@@ -859,34 +782,6 @@ class PdaScenarioRuntime:
                 phase="devices.consecutive.restore",
             )
 
-    async def _test_pool_heater(self, context: ScenarioContext) -> None:
-        assert self._initial_snapshot is not None
-        if self._device_selector.skip_unactionable(
-            POOL_HEATER,
-            phase="heater",
-        ):
-            return
-        heater = self._initial_snapshot.devices.get(POOL_HEATER)
-        if heater is None or heater.get("type") != "setpoint_thermo":
-            self._recorder.skip(
-                "heater",
-                "Pool_Heater is not present in /api/devices",
-            )
-            return
-
-        await self._testcase_keywords(
-            context,
-            "legacy.pool-heater",
-        ).exercise_heater(
-            ExerciseHeaterStep(
-                identifier=POOL_HEATER,
-                optional=True,
-                activation_timeout_seconds=self._config.activation_timeout_seconds,
-                completion_timeout_seconds=self._config.action_timeout_seconds,
-                convergence_timeout_seconds=self._config.state_timeout_seconds,
-            )
-        )
-
     async def _test_sleep_wake_cycle(self, context: ScenarioContext) -> None:
         try:
             result = await self._sleep_wake_service(context).observe_natural_cycle()
@@ -967,17 +862,6 @@ class PdaScenarioRuntime:
             f"toggling {identifier}",
             flush=True,
         )
-        await self._toggle_round_trip(context, identifier, phase=phase)
-
-    async def _toggle_round_trip_unless_disabled(
-        self,
-        context: ScenarioContext,
-        identifier: str,
-        *,
-        phase: str,
-    ) -> None:
-        if self._device_selector.skip_unactionable(identifier, phase=phase):
-            return
         await self._toggle_round_trip(context, identifier, phase=phase)
 
     def _equipment_actions(
@@ -1086,10 +970,6 @@ class PdaScenarioRuntime:
             )
         except EquipmentActionFailure as error:
             raise ScenarioFailure(str(error)) from error
-
-    async def _current_device_enabled(self, identifier: str) -> bool:
-        snapshot = await self._api_client.devices()
-        return self._device_enabled(self._require_device(snapshot, identifier))
 
     def _initial_device_enabled(self, identifier: str) -> bool:
         return self._restoration.initial_device_enabled(identifier)
@@ -1200,47 +1080,3 @@ class PdaScenarioRuntime:
             raise ScenarioFailure(
                 f"Required device {identifier} is absent from /api/devices"
             ) from error
-
-    @staticmethod
-    def _device_state(
-        device: DeviceState | Mapping[str, Any],
-    ) -> DeviceState:
-        return device if isinstance(device, DeviceState) else DeviceState(device)
-
-    @classmethod
-    def _device_int_status(
-        cls,
-        device: DeviceState | Mapping[str, Any],
-    ) -> int:
-        try:
-            return cls._device_state(device).int_status
-        except EquipmentStateError as error:
-            raise ScenarioFailure(str(error)) from error
-
-    @classmethod
-    def _device_enabled(
-        cls,
-        device: DeviceState | Mapping[str, Any],
-    ) -> bool:
-        return cls._device_state(device).enabled
-
-    @classmethod
-    def _device_active(
-        cls,
-        device: DeviceState | Mapping[str, Any],
-    ) -> bool:
-        return cls._device_state(device).active
-
-    @classmethod
-    def _device_transition_pending(
-        cls,
-        device: DeviceState | Mapping[str, Any],
-    ) -> bool:
-        return cls._device_state(device).transitioning
-
-    @staticmethod
-    def _requested_device_state_label(
-        device: DeviceState | Mapping[str, Any],
-        enabled: bool,
-    ) -> str:
-        return PdaScenarioRuntime._device_state(device).requested_state_label(enabled)

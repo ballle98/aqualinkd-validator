@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
-from aqualinkd_validator.domain import EquipmentSnapshot
+from aqualinkd_validator.domain import DeviceState, EquipmentSnapshot
 from aqualinkd_validator.engine import ScenarioRecorder
 from aqualinkd_validator.interfaces import ScenarioContext
 from aqualinkd_validator.pda_scenario import (
@@ -305,12 +305,12 @@ class PdaScenarioTests(unittest.TestCase):
         }
         active = {**enabled, "int_status": "1", "state": "on", "status": "on"}
 
-        self.assertTrue(PdaScenarioRuntime._device_enabled(enabled))
-        self.assertFalse(PdaScenarioRuntime._device_active(enabled))
-        self.assertTrue(PdaScenarioRuntime._device_enabled(active))
-        self.assertTrue(PdaScenarioRuntime._device_active(active))
+        self.assertTrue(DeviceState(enabled).enabled)
+        self.assertFalse(DeviceState(enabled).active)
+        self.assertTrue(DeviceState(active).enabled)
+        self.assertTrue(DeviceState(active).active)
         self.assertEqual(
-            PdaScenarioRuntime._requested_device_state_label(enabled, True),
+            DeviceState(enabled).requested_state_label(True),
             "enabled",
         )
 
