@@ -7,12 +7,7 @@ from typing import Any, Literal
 from .adapters import ApiError, AqualinkHttpApi, AquaPdaWebSocketClient
 from .domain import DeviceState, EquipmentSnapshot
 from .engine import (
-    EquipmentActionFailure,
     EquipmentActions,
-    EquipmentActionTimeouts,
-    EquipmentStabilityConfig,
-    EquipmentStabilityFailure,
-    EquipmentStabilityService,
     ProgrammerMarkers,
     RestorationSession,
     ScenarioRecorder,
@@ -33,7 +28,6 @@ from .protocols.pda import (
     PdaEquipmentStatusService,
     PdaPanelIdentityFailure,
     PdaPanelIdentityResult,
-    PdaProgrammerFailure,
     PdaProgrammerObserver,
     PdaRestorationConfig,
     PdaRestorationService,
@@ -52,6 +46,11 @@ from .protocols.pda.aquapda import (
     AquaPdaTransportConfig,
     AquaPdaTransportValidator,
     AquaPdaValidationFailure,
+)
+from .protocols.pda.equipment_control import (
+    PdaEquipmentControlConfig,
+    PdaEquipmentControlFailure,
+    PdaEquipmentController,
 )
 from .protocols.pda.equipment_setup import (
     PdaEquipmentSetupConfig,
@@ -524,26 +523,14 @@ class PdaScenarioRuntime:
         timeout_seconds: float,
         initial_snapshot: EquipmentSnapshot | None = None,
     ) -> EquipmentSnapshot:
-        service = EquipmentStabilityService(
-            api=self._api_client,
-            timeline=context.timeline,
-            config=EquipmentStabilityConfig(
-                stable_seconds=0.5,
-                poll_seconds=_EQUIPMENT_POLL_SECONDS,
-            ),
-            record_observation=(
-                self._report["equipment_state_observations"].append
-            ),
-            progress=lambda message: print(message, flush=True),
-        )
         try:
-            return await service.wait(
+            return await self._equipment_control(context).wait_for_stable(
                 identifiers,
                 phase=phase,
                 timeout_seconds=timeout_seconds,
                 initial_snapshot=initial_snapshot,
             )
-        except EquipmentStabilityFailure as error:
+        except PdaEquipmentControlFailure as error:
             raise ScenarioFailure(str(error)) from error
 
     async def _toggle_round_trip(
@@ -835,35 +822,35 @@ class PdaScenarioRuntime:
         self,
         context: ScenarioContext,
     ) -> EquipmentActions:
-        async def wait_for_stable(
-            identifier: str,
-            phase: str,
-            initial: EquipmentSnapshot,
-            timeout_seconds: float,
-        ) -> EquipmentSnapshot:
-            return await self._wait_for_stable_equipment_snapshot(
-                context,
-                [identifier],
-                phase=phase,
-                timeout_seconds=timeout_seconds,
-                initial_snapshot=initial,
-            )
+        return self._equipment_control(context).actions()
 
-        return EquipmentActions(
+    def _equipment_control(
+        self,
+        context: ScenarioContext,
+    ) -> PdaEquipmentController:
+        return PdaEquipmentController(
             api=self._api_client,
             events=context.monitor,
             timeline=context.timeline,
             programmer=self._programmer,
             restoration=self._restoration,
-            timeouts=EquipmentActionTimeouts(
-                activation_seconds=self._config.activation_timeout_seconds,
-                completion_seconds=self._config.action_timeout_seconds,
-                convergence_seconds=self._config.state_timeout_seconds,
-                stabilization_seconds=(self._config.restoration_timeout_seconds),
+            config=PdaEquipmentControlConfig(
+                activation_timeout_seconds=(
+                    self._config.activation_timeout_seconds
+                ),
+                action_timeout_seconds=self._config.action_timeout_seconds,
+                state_timeout_seconds=self._config.state_timeout_seconds,
+                restoration_timeout_seconds=(
+                    self._config.restoration_timeout_seconds
+                ),
+                poll_seconds=_EQUIPMENT_POLL_SECONDS,
             ),
-            wait_for_stable=wait_for_stable,
             record_measurement=self._report["measurements"].append,
+            record_observation=(
+                self._report["equipment_state_observations"].append
+            ),
             record_skip=self._recorder.skip,
+            progress=lambda message: print(message, flush=True),
         )
 
     async def _set_device(
@@ -876,7 +863,7 @@ class PdaScenarioRuntime:
         state_timeout_seconds: float | None = None,
     ) -> None:
         try:
-            await self._equipment_actions(context).set_device(
+            await self._equipment_control(context).set_device(
                 identifier,
                 enabled,
                 phase=phase,
@@ -887,7 +874,7 @@ class PdaScenarioRuntime:
                 ),
                 convergence_timeout_seconds=state_timeout_seconds,
             )
-        except (EquipmentActionFailure, PdaProgrammerFailure) as error:
+        except PdaEquipmentControlFailure as error:
             raise ScenarioFailure(str(error)) from error
 
     async def _set_setpoint(
@@ -906,7 +893,7 @@ class PdaScenarioRuntime:
             SPA_HEATER: "Set PDA Spa Heater",
         }.get(identifier, identifier)
         try:
-            await self._equipment_actions(context).set_setpoint(
+            await self._equipment_control(context).set_setpoint(
                 identifier,
                 value,
                 phase=phase,
@@ -917,7 +904,7 @@ class PdaScenarioRuntime:
                     completed=completion_marker,
                 ),
             )
-        except (EquipmentActionFailure, PdaProgrammerFailure) as error:
+        except PdaEquipmentControlFailure as error:
             raise ScenarioFailure(str(error)) from error
 
     async def _wait_for_device_state(
@@ -930,12 +917,12 @@ class PdaScenarioRuntime:
     ) -> int:
         timeout = timeout_seconds or self._config.state_timeout_seconds
         try:
-            return await self._equipment_actions(context).wait_for_device_state(
+            return await self._equipment_control(context).wait_for_device_state(
                 identifier,
                 enabled,
                 timeout_seconds=timeout,
             )
-        except EquipmentActionFailure as error:
+        except PdaEquipmentControlFailure as error:
             raise ScenarioFailure(str(error)) from error
 
     def _initial_device_enabled(self, identifier: str) -> bool:
