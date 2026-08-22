@@ -84,6 +84,7 @@ class PdaRunReport:
                 "errors": [],
             },
         }
+        self.recorder = ScenarioRecorder(self.data)
 
     def record_startup(
         self,

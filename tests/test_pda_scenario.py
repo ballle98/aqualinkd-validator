@@ -397,11 +397,13 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=2.0),
             )
-            scenario._initial_snapshot = EquipmentSnapshot(
+            scenario._session.initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            scenario._restoration.capture_initial(
+                scenario._session.initial_snapshot
+            )
             for identifier in identifiers:
                 scenario._restoration.touch_device(identifier)
             try:
@@ -452,11 +454,13 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=2.0),
             )
-            scenario._initial_snapshot = EquipmentSnapshot(
+            scenario._session.initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            scenario._restoration.capture_initial(
+                scenario._session.initial_snapshot
+            )
             scenario._restoration.touch_device("Filter_Pump")
             try:
                 errors = await scenario._restore_original_state(context)
@@ -502,11 +506,13 @@ class PdaScenarioTests(unittest.TestCase):
                 api,
                 PdaScenarioConfig(restoration_timeout_seconds=1.0),
             )
-            scenario._initial_snapshot = EquipmentSnapshot(
+            scenario._session.initial_snapshot = EquipmentSnapshot(
                 temp_units="f",
                 devices=original,
             )
-            scenario._restoration.capture_initial(scenario._initial_snapshot)
+            scenario._restoration.capture_initial(
+                scenario._session.initial_snapshot
+            )
             scenario._restoration.touch_device("Spa_Mode")
             first_errors = await scenario._restore_original_state(context)
             api._pending_polls["Spa_Mode"] = 1
@@ -667,7 +673,7 @@ class PdaScenarioTests(unittest.TestCase):
                 ),
             )
             initial = await api.devices()
-            scenario._initial_snapshot = initial
+            scenario._session.initial_snapshot = initial
             scenario._restoration.capture_initial(initial)
             try:
                 await scenario._test_spa_heating(context)
