@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import tempfile
-import time
 import unittest
-from pathlib import Path
 from typing import cast
 
 from aqualinkd_validator import testcases as testcase_types
-from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
 from aqualinkd_validator.engine import RestorationSession, ScenarioRecorder
 from aqualinkd_validator.interfaces import ScenarioContext
+from aqualinkd_validator.testing import (
+    FakeOrderedLogEvents,
+    FakeTimeline,
+    MemoryArtifactStore,
+)
 
 
 class DeclarativeScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -23,47 +24,41 @@ class DeclarativeScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
             "skipped": [],
         }
         cases = (self._testcase("one"), self._testcase("two"))
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(artifact_dir / "timeline.jsonl", time.monotonic_ns())
-            context = ScenarioContext(
-                artifacts=FileArtifactStore(artifact_dir),
-                monitor=OutputMonitor(),
-                timeline=timeline,
-            )
+        artifacts = MemoryArtifactStore()
+        timeline = FakeTimeline()
+        context = ScenarioContext(
+            artifacts=artifacts,
+            monitor=FakeOrderedLogEvents(),
+            timeline=timeline,
+        )
 
-            async def unexpected_restore(
-                context: ScenarioContext,
-                name: str,
-            ) -> list[str]:
-                raise AssertionError(f"unexpected restoration: {context} {name}")
+        async def unexpected_restore(
+            context: ScenarioContext,
+            name: str,
+        ) -> list[str]:
+            raise AssertionError(f"unexpected restoration: {context} {name}")
 
-            try:
-                outcome = await testcase_types.DeclarativeScenarioRunner(
-                    suite_name="test-suite",
-                    testcases=cases,
-                    report=report,
-                    recorder=ScenarioRecorder(report),
-                    restoration=RestorationSession(),
-                    keywords=lambda identifier: cast(
-                        testcase_types.TestcaseKeywords,
-                        object(),
-                    ),
-                    restore=unexpected_restore,
-                    initialized=lambda: True,
-                ).run(context)
-            finally:
-                timeline.close()
+        outcome = await testcase_types.DeclarativeScenarioRunner(
+            suite_name="test-suite",
+            testcases=cases,
+            report=report,
+            recorder=ScenarioRecorder(report),
+            restoration=RestorationSession(),
+            keywords=lambda identifier: cast(
+                testcase_types.TestcaseKeywords,
+                object(),
+            ),
+            restore=unexpected_restore,
+            initialized=lambda: True,
+        ).run(context)
 
-            self.assertEqual(outcome.status, "passed")
-            self.assertEqual(report["testcases"], ["one", "two"])
-            self.assertEqual(len(report["cases"]), 2)  # type: ignore[arg-type]
-            self.assertTrue((artifact_dir / "scenario.json").is_file())
-            events = (artifact_dir / "timeline.jsonl").read_text(
-                encoding="utf-8"
-            )
-            self.assertEqual(events.count('"kind":"scenario_started"'), 2)
-            self.assertEqual(events.count('"kind":"scenario_finished"'), 2)
+        self.assertEqual(outcome.status, "passed")
+        self.assertEqual(report["testcases"], ["one", "two"])
+        self.assertEqual(len(report["cases"]), 2)  # type: ignore[arg-type]
+        self.assertIn("scenario.json", artifacts.values)
+        kinds = [event["kind"] for event in timeline.events]
+        self.assertEqual(kinds.count("scenario_started"), 2)
+        self.assertEqual(kinds.count("scenario_finished"), 2)
 
     @staticmethod
     def _testcase(identifier: str) -> testcase_types.TestcaseDefinition:

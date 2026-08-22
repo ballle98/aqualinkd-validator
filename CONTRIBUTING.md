@@ -66,6 +66,7 @@ source modules are:
 | `protocols/pda/keywords.py` | Binding from typed declarative keywords to PDA initialization, actions, assertions, and restoration |
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `testcases/lifecycle.py` | Serialized declarative testcase/suite execution, final safety restoration, result aggregation, and timeline finalization |
+| `testing/fakes.py` | Reusable deterministic API, event, timeline, artifact, clock, serial, AquaPDA, and process adapters for focused unit tests |
 | `pda_scenario.py` | `PdaScenarioRuntime`, the remaining PDA lifecycle and keyword coordinator |
 | `protocols/pda/aquapda.py` | AquaPDA transport validation and bounded read-only menu walking |
 

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
-from aqualinkd_validator.adapters import FileArtifactStore
 from aqualinkd_validator.engine import ScenarioRecorder
+from aqualinkd_validator.testing import MemoryArtifactStore
 
 
 class ScenarioRecorderTests(unittest.TestCase):
@@ -27,11 +24,9 @@ class ScenarioRecorderTests(unittest.TestCase):
         )
         recorder.skip("optional", "not configured")
 
-        with tempfile.TemporaryDirectory() as directory:
-            recorder.write(FileArtifactStore(Path(directory)))
-            written = json.loads(
-                (Path(directory) / "scenario.json").read_text(encoding="utf-8")
-            )
+        artifacts = MemoryArtifactStore()
+        recorder.write(artifacts)
+        written = artifacts.json("scenario.json")
 
         measurement = written["measurements"][0]
         self.assertEqual(measurement["duration_ms"], 7.0)

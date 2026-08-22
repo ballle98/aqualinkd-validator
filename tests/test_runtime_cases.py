@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import tempfile
-import time
 import unittest
-from pathlib import Path
 
-from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
 from aqualinkd_validator.engine import RestorationSession, ScenarioRecorder
 from aqualinkd_validator.engine.runtime_cases import RuntimeCaseRunner
 from aqualinkd_validator.interfaces import ScenarioContext
 from aqualinkd_validator.run_targets import RuntimeCaseId
+from aqualinkd_validator.testing import (
+    FakeOrderedLogEvents,
+    FakeTimeline,
+    MemoryArtifactStore,
+)
 
 
 class RuntimeCaseRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -34,31 +35,25 @@ class RuntimeCaseRunnerTests(unittest.IsolatedAsyncioTestCase):
         async def unexpected_restore(name: str) -> list[str]:
             raise AssertionError(f"unexpected restoration: {name}")
 
-        with tempfile.TemporaryDirectory() as directory:
-            artifact_dir = Path(directory)
-            timeline = Timeline(artifact_dir / "timeline.jsonl", time.monotonic_ns())
-            context = ScenarioContext(
-                artifacts=FileArtifactStore(artifact_dir),
-                monitor=OutputMonitor(),
-                timeline=timeline,
-            )
-            try:
-                outcome = await RuntimeCaseRunner(
-                    suite_name="runtime-cases",
-                    case_ids=(
-                        RuntimeCaseId.INITIALIZATION,
-                        RuntimeCaseId.AQUAPDA_TRANSPORT,
-                        RuntimeCaseId.AQUAPDA_MENU_WALK,
-                    ),
-                    report=report,
-                    recorder=ScenarioRecorder(report),
-                    restoration=RestorationSession(),
-                    operation=operation,
-                    restore=unexpected_restore,
-                    initialized=lambda: True,
-                ).run(context)
-            finally:
-                timeline.close()
+        context = ScenarioContext(
+            artifacts=MemoryArtifactStore(),
+            monitor=FakeOrderedLogEvents(),
+            timeline=FakeTimeline(),
+        )
+        outcome = await RuntimeCaseRunner(
+            suite_name="runtime-cases",
+            case_ids=(
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.AQUAPDA_TRANSPORT,
+                RuntimeCaseId.AQUAPDA_MENU_WALK,
+            ),
+            report=report,
+            recorder=ScenarioRecorder(report),
+            restoration=RestorationSession(),
+            operation=operation,
+            restore=unexpected_restore,
+            initialized=lambda: True,
+        ).run(context)
 
         self.assertEqual(outcome.status, "failed")
         self.assertEqual(outcome.reason, "case_failures")

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
 
-from aqualinkd_validator.adapters import Timeline
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.engine import (
     EquipmentStabilityConfig,
     EquipmentStabilityFailure,
     EquipmentStabilityService,
 )
+from aqualinkd_validator.testing import FakeTimeline
 
 
 class SequenceApi:
@@ -120,8 +118,7 @@ class StabilityFixture:
         *,
         stable_seconds: float = 0.01,
     ) -> None:
-        self._temporary = tempfile.TemporaryDirectory()
-        self.timeline = Timeline(Path(self._temporary.name) / "timeline.jsonl", 0)
+        self.timeline = FakeTimeline()
         self.api = SequenceApi(snapshots)
         self.observations: list[dict[str, Any]] = []
         self.service = EquipmentStabilityService(
@@ -140,7 +137,6 @@ class StabilityFixture:
 
     async def __aexit__(self, *args: object) -> None:
         self.timeline.close()
-        self._temporary.cleanup()
 
 
 if __name__ == "__main__":

@@ -1104,6 +1104,9 @@ PDA organization now resolves through one execution path:
   events, process lifecycle, AquaPDA WebSocket, serial transport, artifacts,
   and monotonic time. Protocol and engine code should depend on these
   boundaries rather than concrete operating-system implementations.
+- `testing/fakes.py` provides reusable in-memory implementations of those
+  boundaries so protocol and engine tests do not need a subprocess, socket,
+  serial device, or filesystem timeline.
 - `testcases/lifecycle.py` owns serialized declarative testcase execution,
   final safety restoration, result aggregation, and timeline finalization.
 - `run_targets.py` is the single registry and normalized target model for
