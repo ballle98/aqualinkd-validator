@@ -15,6 +15,7 @@ from .model import (
     ExerciseProbeTransitionStep,
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
+    ExpectPanelCommandStep,
     ExpectSerialStep,
     HttpRequestStep,
     ObserveSleepCycleStep,
@@ -40,6 +41,8 @@ class TestcaseKeywords(Protocol):
     async def expect_serial(self, step: ExpectSerialStep) -> None: ...
 
     async def http_request(self, step: HttpRequestStep) -> None: ...
+
+    async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None: ...
 
     async def set_device(self, step: SetDeviceStep) -> None: ...
 
@@ -95,6 +98,9 @@ class UnsupportedTestcaseKeywords:
         self._unsupported(step.keyword)
 
     async def http_request(self, step: HttpRequestStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None:
         self._unsupported(step.keyword)
 
     async def set_device(self, step: SetDeviceStep) -> None:
@@ -273,6 +279,8 @@ class TestcaseExecutor:
             await self._keywords.expect_serial(step)
         elif isinstance(step, HttpRequestStep):
             await self._keywords.http_request(step)
+        elif isinstance(step, ExpectPanelCommandStep):
+            await self._keywords.expect_panel_command(step)
         elif isinstance(step, SetDeviceStep):
             await self._keywords.set_device(step)
         elif isinstance(step, SetSetpointStep):

@@ -12,6 +12,7 @@ from aqualinkd_validator.testcases import (
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
     ExerciseStatusRetryStep,
+    ExpectPanelCommandStep,
     ExpectSerialStep,
     HttpRequestStep,
     ObserveSleepCycleStep,
@@ -210,6 +211,21 @@ steps:
 """
         )
         self.assertIn("HTTP PUT require read-write access", str(error))
+
+    def test_loads_stateful_allbutton_panel_driver(self) -> None:
+        testcase = load_testcase(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "rs485"
+            / "allbutton-filter.yaml"
+        )
+        self.assertIsNotNone(testcase.fixture)
+        assert testcase.fixture is not None
+        self.assertEqual(testcase.fixture.driver, "allbutton")
+        self.assertIsInstance(testcase.steps[1], ExpectPanelCommandStep)
+        command = testcase.steps[1]
+        assert isinstance(command, ExpectPanelCommandStep)
+        self.assertEqual(command.command, 0x02)
 
     def test_suite_rejects_member_access_above_suite_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

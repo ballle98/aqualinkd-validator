@@ -1,6 +1,6 @@
 schema: 1
 id: rs485.probe-ack
-description: Send a PDA panel probe and expect the AqualinkD ACK
+description: Send a PDA probe and STATUS, then expect the AqualinkD ACK
 mode: rs485-panel-emulator
 access: read-write
 requires: {protocol: rs485}
@@ -10,6 +10,9 @@ fixture:
 steps:
   - serial_send:
       bytes: "10 02 60 00 72 10 03"
+      timeout: 100ms
+  - serial_send:
+      bytes: "10 02 60 02 00 00 00 00 00 74 10 03"
       timeout: 100ms
   - expect_serial:
       bytes: "10 02 00 01 40 00 53 10 03"

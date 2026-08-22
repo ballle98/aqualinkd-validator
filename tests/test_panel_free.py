@@ -13,7 +13,9 @@ from aqualinkd_validator.panel_free import (
     run_panel_free_testcase,
 )
 from aqualinkd_validator.testcases import (
+    ExpectPanelCommandStep,
     ExpectSerialStep,
+    HttpRequestStep,
     PanelFixtureDefinition,
     SerialSendStep,
 )
@@ -50,6 +52,50 @@ def _testcase() -> CaseDefinition:
     )
 
 
+class _AllButtonTransport(FakeSerialTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.command_enabled = False
+        self.command_sent = False
+
+    async def write(self, payload: bytes) -> None:
+        await super().write(payload)
+        if payload[3] != 0x02:
+            return
+        command = 0
+        if self.command_enabled and not self.command_sent:
+            command = 0x02
+            self.command_sent = True
+        packet = bytes((0x10, 0x02, 0x00, 0x01, 0x00, command))
+        await self.incoming.put(
+            packet + bytes((sum(packet) & 0xFF, 0x10, 0x03))
+        )
+
+
+class _CommandEnablingApi(FakeAqualinkApi):
+    def __init__(self, transport: _AllButtonTransport) -> None:
+        super().__init__(EquipmentSnapshot(temp_units="F", devices={}))
+        self._transport = transport
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        value: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        response = await super().request(
+            method,
+            path,
+            value=value,
+            timeout_seconds=timeout_seconds,
+        )
+        if method == "PUT":
+            self._transport.command_enabled = True
+        return response
+
+
 class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
     async def test_runs_serial_yaml_after_http_is_ready(self) -> None:
         transport = FakeSerialTransport()
@@ -60,11 +106,13 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
             monitor=FakeOrderedLogEvents(),
             timeline=FakeTimeline(),
         )
-        outcome = await PanelFreeScenario(
+        scenario = PanelFreeScenario(
             testcase=_testcase(),
             transport=transport,
             api=FakeAqualinkApi(EquipmentSnapshot(temp_units="F", devices={})),
-        ).run(context)
+        )
+        outcome = await scenario.run(context)
+        await scenario.close()
 
         self.assertEqual(outcome.status, "passed")
         self.assertEqual(transport.outgoing, [b"\x10\x02"])
@@ -74,6 +122,52 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
         history = artifacts.values["http.jsonl"].splitlines()
         self.assertEqual(len(history), 1)
         self.assertEqual(json.loads(history[0])["purpose"], "readiness")
+
+    async def test_runs_http_action_against_stateful_allbutton_driver(self) -> None:
+        transport = _AllButtonTransport()
+        testcase = CaseDefinition(
+            schema=1,
+            identifier="rs485.allbutton-filter",
+            description="HTTP to AllButton command",
+            mode="rs485-panel-emulator",
+            access="read-write",
+            requirements=CaseRequirements("rs485"),
+            steps=(
+                HttpRequestStep("PUT", "/api/Filter_Pump/set", "1", 1),
+                ExpectPanelCommandStep(0x02, 1),
+            ),
+            finally_steps=(),
+            fixture=PanelFixtureDefinition(
+                "RS-4 Combo",
+                "0x0a",
+                driver="allbutton",
+            ),
+        )
+        artifacts = MemoryArtifactStore()
+        scenario = PanelFreeScenario(
+            testcase=testcase,
+            transport=transport,
+            api=_CommandEnablingApi(transport),
+        )
+        outcome = await scenario.run(
+            ScenarioContext(
+                artifacts=artifacts,
+                monitor=FakeOrderedLogEvents(),
+                timeline=FakeTimeline(),
+            )
+        )
+        await scenario.close()
+
+        self.assertEqual(outcome.status, "passed")
+        self.assertTrue(transport.command_sent)
+        history = [
+            json.loads(line)
+            for line in artifacts.values["http.jsonl"].splitlines()
+        ]
+        self.assertEqual(
+            [item["purpose"] for item in history],
+            ["readiness", "testcase"],
+        )
 
 
 class PanelFreeCompositionTests(unittest.TestCase):

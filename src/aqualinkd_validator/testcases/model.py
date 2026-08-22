@@ -8,6 +8,7 @@ TestcaseMode: TypeAlias = Literal["physical-panel", "rs485-panel-emulator"]
 TestcaseAccess: TypeAlias = Literal["read-only", "read-write"]
 TestcaseProtocol: TypeAlias = Literal["pda", "rs485"]
 HttpMethod: TypeAlias = Literal["GET", "PUT"]
+PanelDriver: TypeAlias = Literal["raw", "allbutton"]
 DeviceTargetState: TypeAlias = Literal[
     "on",
     "off",
@@ -30,6 +31,7 @@ class PanelFixtureDefinition:
     rssa_device_id: str | None = None
     extended_device_id: str | None = None
     overrides: tuple[tuple[str, str], ...] = ()
+    driver: PanelDriver = "raw"
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,13 @@ class HttpRequestStep:
     value: str | None
     timeout_seconds: float
     keyword: str = "http_request"
+
+
+@dataclass(frozen=True)
+class ExpectPanelCommandStep:
+    command: int
+    timeout_seconds: float
+    keyword: str = "expect_panel_command"
 
 
 @dataclass(frozen=True)
@@ -169,6 +178,7 @@ TestcaseStep: TypeAlias = (
     | SerialSendStep
     | ExpectSerialStep
     | HttpRequestStep
+    | ExpectPanelCommandStep
     | SetDeviceStep
     | SetSetpointStep
     | ExerciseHeaterStep

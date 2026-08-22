@@ -18,10 +18,12 @@ from .model import (
     ExerciseProbeTransitionStep,
     ExerciseSpaHeatingStep,
     ExerciseStatusRetryStep,
+    ExpectPanelCommandStep,
     ExpectSerialStep,
     HttpMethod,
     HttpRequestStep,
     ObserveSleepCycleStep,
+    PanelDriver,
     PanelFixtureDefinition,
     RestoreOriginalStateStep,
     SerialSendStep,
@@ -276,7 +278,15 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     panel_free_steps = tuple(
         step
         for step in steps
-        if isinstance(step, (SerialSendStep, ExpectSerialStep, HttpRequestStep))
+        if isinstance(
+            step,
+            (
+                SerialSendStep,
+                ExpectSerialStep,
+                HttpRequestStep,
+                ExpectPanelCommandStep,
+            ),
+        )
     )
     if panel_free_steps and requirements.protocol != "rs485":
         raise TestcaseValidationError(
@@ -298,6 +308,21 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         raise TestcaseValidationError(
             f"{source}.fixture: panel fixtures are only valid for rs485 testcases"
         )
+    if fixture is not None:
+        raw_serial = any(
+            isinstance(step, (SerialSendStep, ExpectSerialStep)) for step in steps
+        )
+        panel_commands = any(
+            isinstance(step, ExpectPanelCommandStep) for step in steps
+        )
+        if fixture.driver == "allbutton" and raw_serial:
+            raise TestcaseValidationError(
+                f"{source}.steps: raw serial steps cannot share the allbutton driver"
+            )
+        if fixture.driver == "raw" and panel_commands:
+            raise TestcaseValidationError(
+                f"{source}.fixture.driver: expect_panel_command requires 'allbutton'"
+            )
     writes_panel = any(
         isinstance(step, SerialSendStep)
         or (isinstance(step, HttpRequestStep) and step.method == "PUT")
@@ -367,7 +392,7 @@ def _panel_fixture(raw: object, path: str) -> PanelFixtureDefinition:
         value,
         path,
         required={"panel_type", "device_id"},
-        optional={"rssa_device_id", "extended_device_id", "overrides"},
+        optional={"rssa_device_id", "extended_device_id", "overrides", "driver"},
     )
     raw_overrides = _mapping(value.get("overrides", {}), f"{path}.overrides")
     overrides: list[tuple[str, str]] = []
@@ -387,6 +412,10 @@ def _panel_fixture(raw: object, path: str) -> PanelFixtureDefinition:
             value.get("extended_device_id"), f"{path}.extended_device_id"
         ),
         overrides=tuple(overrides),
+        driver=cast(
+            PanelDriver,
+            _choice(value.get("driver", "raw"), f"{path}.driver", {"raw", "allbutton"}),
+        ),
     )
 
 
@@ -507,6 +536,14 @@ def _http_request(value: Mapping[str, object], path: str) -> TestcaseStep:
         cast(HttpMethod, method),
         request_path,
         request_value,
+        _duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
+def _expect_panel_command(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"command", "timeout"})
+    return ExpectPanelCommandStep(
+        _byte(value["command"], f"{path}.command"),
         _duration(value["timeout"], f"{path}.timeout"),
     )
 
@@ -684,6 +721,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
     "http_request": _http_request,
+    "expect_panel_command": _expect_panel_command,
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
     "exercise_heater": _exercise_heater,
@@ -760,6 +798,25 @@ def _integer(raw: object, path: str) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise TestcaseValidationError(f"{path}: expected an integer")
     return raw
+
+
+def _byte(raw: object, path: str) -> int:
+    if isinstance(raw, bool):
+        raise TestcaseValidationError(f"{path}: expected a byte from 0x00 to 0xff")
+    try:
+        if isinstance(raw, str):
+            value = int(raw, 0)
+        elif isinstance(raw, int):
+            value = raw
+        else:
+            raise TypeError
+    except (TypeError, ValueError) as error:
+        raise TestcaseValidationError(
+            f"{path}: expected a byte from 0x00 to 0xff"
+        ) from error
+    if not 0 <= value <= 0xFF:
+        raise TestcaseValidationError(f"{path}: expected a byte from 0x00 to 0xff")
+    return value
 
 
 def _choice(raw: object, path: str, choices: set[str]) -> str:

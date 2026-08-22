@@ -882,7 +882,7 @@ use raw serial bytes for the initial bounded protocol work:
 ```yaml
 schema: 1
 id: rs485.probe-ack
-description: Send a panel probe and expect the AqualinkD response
+description: Send a panel probe and STATUS, then expect the AqualinkD response
 mode: rs485-panel-emulator
 access: read-write
 requires: {protocol: rs485}
@@ -893,6 +893,9 @@ fixture:
 steps:
   - serial_send:
       bytes: "10 02 60 00 72 10 03"
+      timeout: 100ms
+  - serial_send:
+      bytes: "10 02 60 02 00 00 00 00 00 74 10 03"
       timeout: 100ms
   - expect_serial:
       bytes: "10 02 00 01 40 00 53 10 03"
@@ -910,13 +913,16 @@ aqualinkd-validator validate-testcase testcases/rs485/probe-ack.yaml
 aqualinkd-validator run-panel-free \
   --aqualinkd ~/git/AqualinkD/release/aqualinkd \
   --web-directory ~/git/AqualinkD/web \
-  testcases/rs485/probe-ack.yaml
+  testcases/rs485/allbutton-filter.yaml
 ```
 
 `run-panel-free` automatically creates a private PTY and configuration, waits
 for AqualinkD's HTTP API, captures both directions of serial traffic, and
-cleans up the child process. HTTP action keywords and a reusable stateful
-probe/ACK panel fixture are still follow-on work.
+cleans up the child process. `fixture.driver: allbutton` starts a minimal
+stateful panel which performs probe/ACK and periodic STATUS exchanges, applies
+the filter-pump command to its next status packet, and allows the testcase to
+assert that an HTTP request produced key command `0x02`. Raw byte scenarios
+continue to use the default `fixture.driver: raw`.
 
 ## Capture bundle and formats
 
@@ -1168,8 +1174,10 @@ tracks the initial panel-free end-to-end milestone. Its isolated configuration
 builder, PTY transport, bidirectional serial timeline, and PCAPNG writer are
 implemented as tested components. The panel-free CLI composition and low-level
 YAML serial and HTTP request keywords are also implemented, with every HTTP
-attempt recorded in `http.jsonl`. A stateful panel fixture for the end-to-end
-HTTP-action milestone remains.
+attempt recorded in `http.jsonl`. The minimal stateful AllButton panel fixture
+implements the first HTTP-to-RS485 end-to-end testcase. It is covered by the
+automated transport/runtime tests; verification against a native host build of
+AqualinkD remains before the initial panel-free milestone can be closed.
 The PDA live-panel work was developed ahead of that panel-free milestone and
 does not close the issue.
 

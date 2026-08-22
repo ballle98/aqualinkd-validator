@@ -24,7 +24,9 @@ from .interfaces import (
     ScenarioOutcome,
     SerialTransport,
 )
+from .protocols.rs485 import AllButtonPanelDriver
 from .testcases import (
+    ExpectPanelCommandStep,
     ExpectSerialStep,
     HttpRequestStep,
     SerialSendStep,
@@ -37,9 +39,15 @@ from .testcases import (
 class PanelFreeKeywords(UnsupportedTestcaseKeywords):
     """YAML keywords available to an emulated RS485 panel."""
 
-    def __init__(self, serial: SerialActions, http: HttpActions) -> None:
+    def __init__(
+        self,
+        serial: SerialActions,
+        http: HttpActions,
+        panel_driver: AllButtonPanelDriver | None,
+    ) -> None:
         self._serial = serial
         self._http = http
+        self._panel_driver = panel_driver
 
     async def serial_send(self, step: SerialSendStep) -> None:
         await self._serial.send(step.payload, timeout_seconds=step.timeout_seconds)
@@ -55,6 +63,15 @@ class PanelFreeKeywords(UnsupportedTestcaseKeywords):
             step.method,
             step.path,
             value=step.value,
+            timeout_seconds=step.timeout_seconds,
+        )
+
+    async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None:
+        if self._panel_driver is None:
+            self._unsupported(step.keyword)
+        assert self._panel_driver is not None
+        await self._panel_driver.expect_command(
+            step.command,
             timeout_seconds=step.timeout_seconds,
         )
 
@@ -78,6 +95,7 @@ class PanelFreeScenario:
         self._api = api
         self._http_ready_timeout_seconds = http_ready_timeout_seconds
         self._http_poll_seconds = http_poll_seconds
+        self._serial: SerialActions | None = None
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         started = time.monotonic()
@@ -93,10 +111,22 @@ class PanelFreeScenario:
             artifacts=context.artifacts,
         )
         serial = SerialActions(captured, timeline=context.timeline)
+        self._serial = serial
         http = HttpActions(
             self._api,
             timeline=context.timeline,
             artifacts=context.artifacts,
+        )
+        fixture = self._testcase.fixture
+        assert fixture is not None
+        panel_driver = (
+            AllButtonPanelDriver(
+                captured,
+                device_id=fixture.device_id,
+                timeline=context.timeline,
+            )
+            if fixture.driver == "allbutton"
+            else None
         )
         print(f"\n=== Starting {self._testcase.identifier} ===", flush=True)
         print(
@@ -105,7 +135,8 @@ class PanelFreeScenario:
             flush=True,
         )
         try:
-            await serial.open()
+            if panel_driver is None:
+                await serial.open()
             await http.wait_ready(
                 timeout_seconds=self._http_ready_timeout_seconds,
                 poll_seconds=self._http_poll_seconds,
@@ -115,8 +146,12 @@ class PanelFreeScenario:
                 api_base_url=self._api.base_url,
             )
             print("[STATE ] AqualinkD HTTP API ready", flush=True)
+            if panel_driver is not None:
+                print("[ WAIT ] AllButton panel probe/STATUS/ACK", flush=True)
+                await panel_driver.start()
+                print("[STATE ] AllButton panel driver active", flush=True)
             execution = await TestcaseExecutor(
-                PanelFreeKeywords(serial, http)
+                PanelFreeKeywords(serial, http, panel_driver)
             ).execute(self._testcase)
             report.update(
                 status="passed",
@@ -138,7 +173,8 @@ class PanelFreeScenario:
             outcome = ScenarioOutcome("failed", "testcase_failed")
         finally:
             http.close()
-            await serial.close()
+            if panel_driver is not None:
+                await panel_driver.stop()
             context.artifacts.write_json("scenario.json", report)
         state = "PASS" if outcome.status == "passed" else "FAIL"
         print(
@@ -147,6 +183,13 @@ class PanelFreeScenario:
             flush=True,
         )
         return outcome
+
+    async def close(self) -> None:
+        """Close capture and PTY after the supervised child has stopped."""
+        serial = self._serial
+        self._serial = None
+        if serial is not None:
+            await serial.close()
 
 async def run_panel_free_testcase(
     *,
@@ -204,7 +247,7 @@ async def run_panel_free_testcase(
     )
     runtime.release_http_port()
     try:
-        return await (process_runner or LocalProcessRunner()).run(
+        result = await (process_runner or LocalProcessRunner()).run(
             command,
             artifact_dir,
             cwd=binary.parent,
@@ -213,5 +256,9 @@ async def run_panel_free_testcase(
             terminate_grace_seconds=terminate_grace_seconds,
             scenario=scenario,
         )
+        return result
     finally:
-        await runtime.close()
+        try:
+            await scenario.close()
+        finally:
+            await runtime.close()

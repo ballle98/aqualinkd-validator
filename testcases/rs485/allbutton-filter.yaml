@@ -1,0 +1,23 @@
+schema: 1
+id: rs485.allbutton-filter
+description: Verify an HTTP filter request becomes an AllButton key command
+mode: rs485-panel-emulator
+access: read-write
+requires: {protocol: rs485}
+fixture:
+  panel_type: RS-4 Combo
+  device_id: "0x0a"
+  driver: allbutton
+steps:
+  - http_request:
+      method: PUT
+      path: /api/Filter_Pump/set
+      value: 1
+      timeout: 2s
+  - expect_panel_command:
+      command: "0x02"
+      timeout: 2s
+  - http_request:
+      method: GET
+      path: /api/status
+      timeout: 2s

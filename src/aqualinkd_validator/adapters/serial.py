@@ -98,6 +98,11 @@ class _OwnedFileDescriptorTransport:
                 view = view[written:]
             except BlockingIOError:
                 await asyncio.sleep(self._poll_seconds)
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                # The child may not have opened the PTY slave immediately.
+                await asyncio.sleep(self._poll_seconds)
 
     async def close(self) -> None:
         self.close_now()
