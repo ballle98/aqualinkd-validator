@@ -5,7 +5,8 @@ from .artifacts import FileArtifactStore
 from .clock import SystemMonotonicClock
 from .http import ApiError, AqualinkHttpApi
 from .process import LocalProcessRunner, OutputMonitor, Timeline
-from .serial import PosixSerialTransport
+from .runtime import IsolatedAqualinkdRuntime, PanelFixture
+from .serial import PosixPtyPair, PosixSerialTransport
 
 __all__ = [
     "ApiError",
@@ -14,8 +15,11 @@ __all__ = [
     "AquaPdaWebSocketClient",
     "FileArtifactStore",
     "LocalProcessRunner",
+    "IsolatedAqualinkdRuntime",
     "OutputMonitor",
     "PdaScreen",
+    "PanelFixture",
+    "PosixPtyPair",
     "PosixSerialTransport",
     "SystemMonotonicClock",
     "Timeline",

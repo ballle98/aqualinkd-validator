@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import tempfile
 import unittest
 from pathlib import Path
 
 from aqualinkd_validator.adapters import (
     FileArtifactStore,
+    IsolatedAqualinkdRuntime,
+    PanelFixture,
+    PosixPtyPair,
     PosixSerialTransport,
     SystemMonotonicClock,
 )
@@ -57,3 +61,81 @@ class AdapterTests(unittest.TestCase):
                 os.close(master_fd)
 
         asyncio.run(exercise())
+
+    def test_owned_pty_pair_exposes_panel_side_and_slave_path(self) -> None:
+        async def exercise() -> None:
+            pair = PosixPtyPair.create()
+            slave = PosixSerialTransport(pair.slave_path)
+            try:
+                await pair.panel.open()
+                await slave.open()
+                await pair.panel.write(b"panel")
+                self.assertEqual(await slave.read(), b"panel")
+                await slave.write(b"aqualinkd")
+                self.assertEqual(await pair.panel.read(), b"aqualinkd")
+            finally:
+                await slave.close()
+                await pair.close()
+
+        asyncio.run(exercise())
+
+    def test_isolated_runtime_generates_private_config_and_artifact(self) -> None:
+        async def exercise() -> None:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                web = root / "web"
+                web.mkdir()
+                artifacts = FileArtifactStore(root / "artifacts")
+                runtime = IsolatedAqualinkdRuntime.create(
+                    web_directory=web,
+                    fixture=PanelFixture(
+                        panel_type="PDA-6 Combo",
+                        device_id="0x60",
+                        overrides=(("pda_sleep_mode", "yes"),),
+                    ),
+                    artifacts=artifacts,
+                )
+                config_path = runtime.config_path
+                try:
+                    contents = config_path.read_text(encoding="utf-8")
+                    self.assertIn(f"serial_port = {runtime.pty.slave_path}", contents)
+                    self.assertIn(f"listen_address = {runtime.api_base_url}", contents)
+                    self.assertIn("enable_scheduler = no", contents)
+                    self.assertIn("pda_sleep_mode = yes", contents)
+                    self.assertNotIn("mqtt_address", contents)
+                    self.assertEqual(
+                        (root / "artifacts/effective-aqualinkd.conf").read_text(
+                            encoding="utf-8"
+                        ),
+                        contents,
+                    )
+                    port = int(runtime.api_base_url.rsplit(":", 1)[1])
+                    conflict = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    try:
+                        with self.assertRaises(OSError):
+                            conflict.bind(("127.0.0.1", port))
+                        runtime.release_http_port()
+                        conflict.bind(("127.0.0.1", port))
+                    finally:
+                        conflict.close()
+                finally:
+                    await runtime.close()
+                self.assertFalse(config_path.exists())
+
+        asyncio.run(exercise())
+
+    def test_isolated_runtime_rejects_owned_config_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            web = root / "web"
+            web.mkdir()
+            with self.assertRaisesRegex(ValueError, "runtime-owned key serial_port"):
+                IsolatedAqualinkdRuntime.create(
+                    web_directory=web,
+                    fixture=PanelFixture(
+                        panel_type="RS-4 Combo",
+                        device_id="0x0a",
+                        overrides=(("serial_port", "/dev/ttyUSB0"),),
+                    ),
+                    artifacts=FileArtifactStore(root / "artifacts"),
+                )
