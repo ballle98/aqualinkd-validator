@@ -5,7 +5,8 @@ import time
 import unittest
 from typing import Any
 
-from aqualinkd_validator.aquapda_client import (
+from aqualinkd_validator.adapters import OutputMonitor
+from aqualinkd_validator.adapters.aquapda import (
     AquaPdaProtocolError,
     AquaPdaWebSocketClient,
     PdaScreen,
@@ -17,7 +18,6 @@ from aqualinkd_validator.protocols.pda.aquapda import (
     AquaPdaTransportValidator,
     AquaPdaValidationFailure,
 )
-from aqualinkd_validator.supervisor import OutputMonitor
 
 
 def packet(command: int, *data: int) -> dict[str, Any]:

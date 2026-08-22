@@ -6,9 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .aquapda_client import (
-    AquaPdaWebSocketClient,
-)
+from .adapters import ApiError, AqualinkHttpApi, AquaPdaWebSocketClient
 from .domain import DeviceState, EquipmentSnapshot, EquipmentStateError
 from .engine import (
     EquipmentActionFailure,
@@ -22,7 +20,6 @@ from .engine import (
     ScenarioRecorder,
 )
 from .engine.runtime_cases import RuntimeCaseRunner
-from .http_api import ApiError, AqualinkHttpApi
 from .interfaces import (
     AqualinkApi,
     AquaPdaClient,

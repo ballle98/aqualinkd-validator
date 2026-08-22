@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
-from .domain import EquipmentSnapshot
+from ..domain import EquipmentSnapshot
 
 
 class ApiError(RuntimeError):

@@ -4,6 +4,7 @@ import copy
 import unittest
 from typing import Any
 
+from aqualinkd_validator.adapters import OutputMonitor
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.protocols.pda.equipment_setup import (
     POOL_HEATER,
@@ -12,7 +13,6 @@ from aqualinkd_validator.protocols.pda.equipment_setup import (
     PdaEquipmentSetupFailure,
     PdaEquipmentStatusSetup,
 )
-from aqualinkd_validator.supervisor import OutputMonitor
 
 
 class SetupApi:

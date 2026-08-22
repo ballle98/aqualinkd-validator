@@ -38,7 +38,12 @@ source modules are:
 | --- | --- |
 | `cli.py` | Options, resolved-target execution, safety authorization, and run artifacts |
 | `run_targets.py` | Single registry that normalizes named suites and YAML paths before execution |
-| `supervisor.py` | AqualinkD lifecycle, stdout/stderr fan-out, timing, and process metrics |
+| `adapters/process.py` | Local AqualinkD subprocess lifecycle, stdout/stderr fan-out, ordered output, timeline, and process metrics |
+| `adapters/http.py` | Asynchronous AqualinkD HTTP API implementation |
+| `adapters/aquapda.py` | Local WebSocket client and AquaPDA screen reconstruction |
+| `adapters/artifacts.py` | Filesystem-backed run artifacts |
+| `adapters/serial.py` | Nonblocking POSIX serial-device and PTY byte transport |
+| `adapters/clock.py` | System monotonic time and asynchronous sleeping |
 | `interfaces/events.py` | Typed ordered-log and monotonic-timeline boundaries |
 | `interfaces/aquapda.py` | AquaPDA client and read-only screen-view boundaries |
 | `interfaces/process.py` | Supervised process and scenario lifecycle boundaries |
@@ -62,8 +67,6 @@ source modules are:
 | `testcases/` | Strict schema-v1 YAML loading, typed steps, and protocol-independent keyword execution |
 | `testcases/lifecycle.py` | Serialized declarative testcase/suite execution, final safety restoration, result aggregation, and timeline finalization |
 | `pda_scenario.py` | `PdaScenarioRuntime`, the remaining PDA lifecycle and keyword coordinator |
-| `http_api.py` | Minimal asynchronous AqualinkD HTTP client |
-| `aquapda_client.py` | Client and screen reconstruction for AqualinkD's AquaPDA WebSocket interface |
 | `protocols/pda/aquapda.py` | AquaPDA transport validation and bounded read-only menu walking |
 
 `pda_scenario.py` still contains too many responsibilities. Restoration policy,

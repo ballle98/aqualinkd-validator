@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.engine import ScenarioRecorder
+from aqualinkd_validator.interfaces import ScenarioContext
 from aqualinkd_validator.pda_scenario import (
     DEVICE_ACTIVE,
     DEVICE_FINISHED,
@@ -28,11 +30,6 @@ from aqualinkd_validator.pda_scenario import (
     PdaScenarioConfig,
     PdaScenarioRuntime,
     ScenarioFailure,
-)
-from aqualinkd_validator.supervisor import (
-    OutputMonitor,
-    ScenarioContext,
-    Timeline,
 )
 from aqualinkd_validator.testcases import load_testcase, load_testcase_suite
 
@@ -334,7 +331,7 @@ class PdaScenarioTests(unittest.TestCase):
                 time.monotonic_ns(),
             )
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )
@@ -387,7 +384,7 @@ class PdaScenarioTests(unittest.TestCase):
                 time.monotonic_ns(),
             )
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )
@@ -442,7 +439,7 @@ class PdaScenarioTests(unittest.TestCase):
                 time.monotonic_ns(),
             )
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )
@@ -492,7 +489,7 @@ class PdaScenarioTests(unittest.TestCase):
                 time.monotonic_ns(),
             )
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )
@@ -535,7 +532,11 @@ class PdaScenarioTests(unittest.TestCase):
                 time.monotonic_ns(),
             )
             monitor = OutputMonitor()
-            context = ScenarioContext(artifact_dir, monitor, timeline)
+            context = ScenarioContext(
+                FileArtifactStore(artifact_dir),
+                monitor,
+                timeline,
+            )
             api = FakeApi(context)
             testcase = load_testcase(
                 Path(__file__).parents[1]
@@ -622,7 +623,7 @@ class PdaScenarioTests(unittest.TestCase):
     async def _run_spa_heating(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context = ScenarioContext(
-                artifact_dir=Path(directory),
+                artifacts=FileArtifactStore(Path(directory)),
                 monitor=OutputMonitor(),
                 timeline=Timeline(
                     Path(directory) / "timeline.jsonl",

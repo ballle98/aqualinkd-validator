@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import cast
 
 from aqualinkd_validator import testcases as testcase_types
+from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
 from aqualinkd_validator.engine import RestorationSession, ScenarioRecorder
-from aqualinkd_validator.supervisor import OutputMonitor, ScenarioContext, Timeline
+from aqualinkd_validator.interfaces import ScenarioContext
 
 
 class DeclarativeScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -26,7 +27,7 @@ class DeclarativeScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
             artifact_dir = Path(directory)
             timeline = Timeline(artifact_dir / "timeline.jsonl", time.monotonic_ns())
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )

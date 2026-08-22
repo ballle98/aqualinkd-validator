@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from aqualinkd_validator.http_api import AqualinkHttpApi
+from aqualinkd_validator.adapters.http import AqualinkHttpApi
 
 
 class FakeWriter:
@@ -30,7 +30,7 @@ class HttpApiTests(unittest.TestCase):
         asyncio.run(self._exercise_api())
 
     @patch(
-        "aqualinkd_validator.http_api.asyncio.open_connection",
+        "aqualinkd_validator.adapters.http.asyncio.open_connection",
         new_callable=AsyncMock,
     )
     async def _exercise_api(self, open_connection: AsyncMock) -> None:

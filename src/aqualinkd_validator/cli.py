@@ -19,6 +19,7 @@ from typing import Any, Literal, TextIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import __version__
+from .adapters import LocalProcessRunner
 from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
@@ -37,7 +38,6 @@ from .metrics import summarize_metrics
 from .pda_scenario import PdaScenarioConfig, PdaScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
-from .supervisor import supervise
 from .testcases import (
     TestcaseSuiteDefinition,
     load_testcase_document,
@@ -680,7 +680,7 @@ def _run_in_artifact(
 
     try:
         result = asyncio.run(
-            supervise(
+            LocalProcessRunner().run(
                 command,
                 artifact_dir,
                 cwd=workdir,

@@ -5,13 +5,13 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from aqualinkd_validator.adapters import Timeline
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.engine import (
     EquipmentStabilityConfig,
     EquipmentStabilityFailure,
     EquipmentStabilityService,
 )
-from aqualinkd_validator.supervisor import Timeline
 
 
 class SequenceApi:

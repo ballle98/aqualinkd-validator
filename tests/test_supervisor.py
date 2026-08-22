@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from aqualinkd_validator.supervisor import (
+from aqualinkd_validator.adapters.process import (
     ScenarioContext,
     ScenarioOutcome,
     supervise,

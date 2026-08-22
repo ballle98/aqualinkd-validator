@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from aqualinkd_validator.adapters import OutputMonitor, Timeline
 from aqualinkd_validator.protocols.pda import (
     PdaProgrammerObserver,
     PdaSleepWakeConfig,
@@ -19,7 +20,6 @@ from aqualinkd_validator.protocols.pda.sleep import (
     WAKE_INIT_ACTIVE,
     WAKE_INIT_FINISHED,
 )
-from aqualinkd_validator.supervisor import OutputMonitor, Timeline
 
 
 class PdaSleepWakeServiceTests(unittest.TestCase):

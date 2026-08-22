@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aqualinkd_validator.adapters import FileArtifactStore
 from aqualinkd_validator.engine import ScenarioRecorder
 
 
@@ -27,7 +28,7 @@ class ScenarioRecorderTests(unittest.TestCase):
         recorder.skip("optional", "not configured")
 
         with tempfile.TemporaryDirectory() as directory:
-            recorder.write(Path(directory))
+            recorder.write(FileArtifactStore(Path(directory)))
             written = json.loads(
                 (Path(directory) / "scenario.json").read_text(encoding="utf-8")
             )

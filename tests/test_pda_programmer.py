@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aqualinkd_validator.adapters import OutputMonitor, Timeline
 from aqualinkd_validator.protocols.pda import (
     PdaProgrammerFailure,
     PdaProgrammerObserver,
 )
-from aqualinkd_validator.supervisor import OutputMonitor, Timeline
 
 
 class PdaProgrammerObserverTests(unittest.TestCase):

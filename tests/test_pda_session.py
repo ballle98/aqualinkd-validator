@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aqualinkd_validator.adapters import OutputMonitor, Timeline
 from aqualinkd_validator.protocols.pda import (
     PdaProgrammerObserver,
     PdaSessionInitializer,
 )
 from aqualinkd_validator.protocols.pda.session import INIT_ACTIVE, INIT_FINISHED
-from aqualinkd_validator.supervisor import OutputMonitor, Timeline
 
 
 class PdaSessionInitializerTests(unittest.TestCase):

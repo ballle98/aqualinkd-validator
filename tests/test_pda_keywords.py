@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from pathlib import Path
 
+from aqualinkd_validator.adapters import OutputMonitor
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.engine import ProgrammerMarkers, RestorationSession
 from aqualinkd_validator.protocols.pda.keywords import (
@@ -11,7 +12,6 @@ from aqualinkd_validator.protocols.pda.keywords import (
     PdaKeywordMarkers,
     PdaTestcaseKeywords,
 )
-from aqualinkd_validator.supervisor import OutputMonitor
 from aqualinkd_validator.testcases import (
     AssertDeviceStep,
     AssertLogStep,

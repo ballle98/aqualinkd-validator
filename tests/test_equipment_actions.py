@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from aqualinkd_validator.adapters import OutputMonitor, Timeline
 from aqualinkd_validator.domain import EquipmentSnapshot
 from aqualinkd_validator.engine import (
     EquipmentActions,
@@ -15,7 +16,6 @@ from aqualinkd_validator.engine import (
     RestorationSession,
 )
 from aqualinkd_validator.protocols.pda import PdaProgrammerObserver
-from aqualinkd_validator.supervisor import OutputMonitor, Timeline
 
 
 class FakeApi:

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ...aquapda_client import AquaPdaProtocolError
+from ...adapters.aquapda import AquaPdaProtocolError
 from ...interfaces import AquaPdaClient, OrderedLogEvents
 
 _SERIAL_SEND_TIME = re.compile(

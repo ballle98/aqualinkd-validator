@@ -135,7 +135,7 @@ class RuntimeCaseRunner:
         )
         self._report["status"] = status
         self._report["reason"] = reason
-        self._recorder.write(context.artifact_dir)
+        self._recorder.write(context.artifacts)
         await context.timeline.write(
             "scenario_finished",
             suite=self._suite_name,

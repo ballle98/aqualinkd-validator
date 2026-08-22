@@ -5,10 +5,11 @@ import time
 import unittest
 from pathlib import Path
 
+from aqualinkd_validator.adapters import FileArtifactStore, OutputMonitor, Timeline
 from aqualinkd_validator.engine import RestorationSession, ScenarioRecorder
 from aqualinkd_validator.engine.runtime_cases import RuntimeCaseRunner
+from aqualinkd_validator.interfaces import ScenarioContext
 from aqualinkd_validator.run_targets import RuntimeCaseId
-from aqualinkd_validator.supervisor import OutputMonitor, ScenarioContext, Timeline
 
 
 class RuntimeCaseRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -37,7 +38,7 @@ class RuntimeCaseRunnerTests(unittest.IsolatedAsyncioTestCase):
             artifact_dir = Path(directory)
             timeline = Timeline(artifact_dir / "timeline.jsonl", time.monotonic_ns())
             context = ScenarioContext(
-                artifact_dir=artifact_dir,
+                artifacts=FileArtifactStore(artifact_dir),
                 monitor=OutputMonitor(),
                 timeline=timeline,
             )

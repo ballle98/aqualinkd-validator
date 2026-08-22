@@ -54,7 +54,7 @@ class DeclarativeScenarioRunner:
                 testcase.identifier for testcase in self._testcases
             ]
             self._report.pop("testcase", None)
-            self._recorder.write(context.artifact_dir)
+            self._recorder.write(context.artifacts)
             self._recorder.progress_finished(
                 self._suite_name,
                 suite_started,
@@ -146,7 +146,7 @@ class DeclarativeScenarioRunner:
         self._report["status"] = status
         self._report["reason"] = reason
         self._report["testcase"] = testcase.identifier
-        self._recorder.write(context.artifact_dir)
+        self._recorder.write(context.artifacts)
         await context.timeline.write(
             "scenario_finished",
             suite=self._suite_name,

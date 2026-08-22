@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 from typing import Any
+
+from ..interfaces import ArtifactStore
 
 
 class ScenarioRecorder:
@@ -42,11 +42,8 @@ class ScenarioRecorder:
             return "; ".join(details)
         return f"{type(error).__name__}: {error}"
 
-    def write(self, artifact_dir: Path) -> None:
-        (artifact_dir / "scenario.json").write_text(
-            json.dumps(self.report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+    def write(self, artifacts: ArtifactStore) -> None:
+        artifacts.write_json("scenario.json", self.report)
 
     def skip(self, name: str, reason: str) -> None:
         self.report["skipped"].append({"name": name, "reason": reason})

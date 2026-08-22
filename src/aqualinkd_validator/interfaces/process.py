@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .artifacts import ArtifactStore
 from .events import EventTimeline, OrderedLogEvents
 
 
@@ -23,7 +24,7 @@ class ScenarioOutcome:
 
 @dataclass(frozen=True)
 class ScenarioContext:
-    artifact_dir: Path
+    artifacts: ArtifactStore
     monitor: OrderedLogEvents
     timeline: EventTimeline
 

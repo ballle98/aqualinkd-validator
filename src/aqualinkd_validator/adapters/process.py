@@ -12,13 +12,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from .interfaces import (
+from ..interfaces import (
     LineEvent,
     RunResult,
     Scenario,
     ScenarioContext,
     ScenarioOutcome,
 )
+from .artifacts import FileArtifactStore
 
 
 class OutputMonitor:
@@ -230,7 +231,7 @@ async def supervise(
             scenario_task = asyncio.create_task(
                 scenario.run(
                     ScenarioContext(
-                        artifact_dir=artifact_dir,
+                        artifacts=FileArtifactStore(artifact_dir),
                         monitor=monitor,
                         timeline=timeline,
                     )
@@ -333,6 +334,33 @@ async def supervise(
         child_returncode=returncode,
         duration_ns=time.monotonic_ns() - start_ns,
     )
+
+
+class LocalProcessRunner:
+    """Run and supervise a local AqualinkD subprocess."""
+
+    async def run(
+        self,
+        command: list[str],
+        artifact_dir: Path,
+        *,
+        cwd: Path | None,
+        duration_seconds: float | None,
+        sample_interval_seconds: float,
+        terminate_grace_seconds: float,
+        scenario: Scenario | None = None,
+        scenario_cleanup_seconds: float = 120.0,
+    ) -> RunResult:
+        return await supervise(
+            command,
+            artifact_dir,
+            cwd=cwd,
+            duration_seconds=duration_seconds,
+            sample_interval_seconds=sample_interval_seconds,
+            terminate_grace_seconds=terminate_grace_seconds,
+            scenario=scenario,
+            scenario_cleanup_seconds=scenario_cleanup_seconds,
+        )
 
 
 async def _read_stream(

@@ -4,12 +4,13 @@ import asyncio
 import unittest
 from typing import Any
 
+from aqualinkd_validator.adapters import OutputMonitor
 from aqualinkd_validator.domain import EquipmentSnapshot
+from aqualinkd_validator.interfaces import LineEvent
 from aqualinkd_validator.protocols.pda import (
     PdaEquipmentStatusFailure,
     PdaEquipmentStatusService,
 )
-from aqualinkd_validator.supervisor import LineEvent, OutputMonitor
 
 
 class PdaEquipmentStatusServiceTests(unittest.TestCase):
