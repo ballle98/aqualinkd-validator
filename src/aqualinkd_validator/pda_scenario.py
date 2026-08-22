@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from .adapters import ApiError, AqualinkHttpApi, AquaPdaWebSocketClient
 from .domain import DeviceState, EquipmentSnapshot
@@ -60,6 +60,7 @@ from .protocols.pda.restoration_coordinator import (
     PdaRestorationCoordinator,
     PdaRestorationCoordinatorConfig,
 )
+from .protocols.pda.run_report import PdaRunReport, PdaRunReportConfig
 from .protocols.pda.spa import PdaSpaExercise, SpaExerciseConfig
 from .run_targets import RuntimeCaseId
 from .testcases import (
@@ -172,75 +173,51 @@ class PdaScenarioRuntime:
                 else "aqualinkd_startup_log"
             )
         )
-        self._report: dict[str, Any] = {
-            "schema_version": 1,
-            "suite": config.suite_name,
-            "execution_phase": config.execution_phase,
-            "api_base_url": (
-                api.base_url if api is not None else api_base_url_override
-            ),
-            "api_endpoint_source": endpoint_source,
-            "status": "running",
-            "reason": None,
-            "safe_to_continue": False,
-            "timeouts_seconds": {
-                "activation": config.activation_timeout_seconds,
-                "action": config.action_timeout_seconds,
-                "status": config.status_timeout_seconds,
-                "state": config.state_timeout_seconds,
-                "restoration": config.restoration_timeout_seconds,
-                "init": config.init_timeout_seconds,
-                "sleep": config.sleep_timeout_seconds,
-                "status_retry_command_delay": (
+        selection_mode = (
+            "not_applicable"
+            if not self._uses_selected_devices()
+            else (
+                "restricted"
+                if config.test_devices
+                else (
+                    "all_discovered_switches"
+                    if any(
+                        isinstance(step, ExerciseDiscoveredDevicesStep)
+                        for testcase in self._testcases
+                        for step in testcase.steps
+                    )
+                    else "auto_last_switch"
+                )
+            )
+        )
+        self._run_report = PdaRunReport(
+            PdaRunReportConfig(
+                suite_name=config.suite_name,
+                execution_phase=config.execution_phase,
+                api_base_url=(
+                    api.base_url if api is not None else api_base_url_override
+                ),
+                api_endpoint_source=endpoint_source,
+                activation_timeout_seconds=config.activation_timeout_seconds,
+                action_timeout_seconds=config.action_timeout_seconds,
+                status_timeout_seconds=config.status_timeout_seconds,
+                state_timeout_seconds=config.state_timeout_seconds,
+                restoration_timeout_seconds=config.restoration_timeout_seconds,
+                init_timeout_seconds=config.init_timeout_seconds,
+                sleep_timeout_seconds=config.sleep_timeout_seconds,
+                status_retry_command_delay_seconds=(
                     config.status_retry_command_delay_seconds
                 ),
-                "probe_command_min_delay": (config.probe_command_min_delay_seconds),
-            },
-            "site_profile": {
-                "spa_fill_seconds": config.spa_fill_seconds,
-            },
-            "checks": [],
-            "aqualinkd": None,
-            "panel": None,
-            "equipment_status": None,
-            "equipment_state_observations": [],
-            "sleep_cycle": None,
-            "aquapda_transport": None,
-            "menu_walk": None,
-            "cases": [],
-            "measurements": [],
-            "skipped": [],
-            "device_selection": {
-                "mode": (
-                    "not_applicable"
-                    if (not self._uses_selected_devices())
-                    else (
-                        "restricted"
-                        if config.test_devices
-                        else (
-                            "all_discovered_switches"
-                            if any(
-                                isinstance(step, ExerciseDiscoveredDevicesStep)
-                                for testcase in self._testcases
-                                for step in testcase.steps
-                            )
-                            else "auto_last_switch"
-                        )
-                    )
+                probe_command_min_delay_seconds=(
+                    config.probe_command_min_delay_seconds
                 ),
-                "requested": list(config.test_devices),
-                "resolved": [],
-                "configured_none_buttons": list(config.disabled_button_numbers),
-                "reported_panel_size": None,
-                "excluded": [],
-            },
-            "restoration": {
-                "attempted": False,
-                "status": "not-needed",
-                "actions": [],
-                "errors": [],
-            },
-        }
+                spa_fill_seconds=config.spa_fill_seconds,
+                device_selection_mode=selection_mode,
+                requested_devices=config.test_devices,
+                disabled_button_numbers=config.disabled_button_numbers,
+            )
+        )
+        self._report = self._run_report.data
         self._recorder = ScenarioRecorder(self._report)
         self._initial_snapshot: EquipmentSnapshot | None = None
         self._restoration = RestorationSession()
@@ -479,24 +456,11 @@ class PdaScenarioRuntime:
         self._require_device(self._initial_snapshot, FILTER_PUMP)
 
     def _record_startup_session(self, result: pda_session.PdaStartupResult) -> None:
-        self._report["aqualinkd"] = result.aqualinkd_identity
-        self._recorder.append_measurement(
-            name="pda.init",
-            category="initialization",
-            phase="startup",
-            target="PDA_INIT",
-            requested_value=None,
-            start_offset_ns=0,
-            api_ack_offset_ns=None,
-            task_active_offset_ns=result.active.offset_ns,
-            log_completion_offset_ns=result.completed.offset_ns,
-            state_observed_offset_ns=None,
-        )
+        self._run_report.record_startup(result, self._recorder)
 
     def _api_configured(self, api: AqualinkApi, source: str) -> None:
         self._api = api
-        self._report["api_base_url"] = self._api.base_url
-        self._report["api_endpoint_source"] = source
+        self._run_report.configure_api(api.base_url, source)
 
     @property
     def _api_client(self) -> AqualinkApi:
@@ -508,13 +472,9 @@ class PdaScenarioRuntime:
         self,
         result: PdaPanelIdentityResult,
     ) -> None:
-        self._report["panel"] = result.panel
-        self._report["checks"].extend(result.checks)
         self._reported_panel_size = result.reported_panel_size
         self._reported_panel_combo = result.reported_panel_combo
-        self._report["device_selection"]["reported_panel_size"] = (
-            self._reported_panel_size
-        )
+        self._run_report.record_panel_identity(result)
 
     async def _wait_for_stable_equipment_snapshot(
         self,
@@ -934,10 +894,9 @@ class PdaScenarioRuntime:
         self,
         context: ScenarioContext,
     ) -> list[str]:
-        restoration = self._report["restoration"]
         if self._initial_snapshot is None:
             return []
-        restoration["attempted"] = True
+        self._run_report.begin_restoration()
 
         result = await PdaRestorationCoordinator(
             api=self._api_client,
@@ -965,17 +924,7 @@ class PdaScenarioRuntime:
             ),
             progress=lambda message: print(message, flush=True),
         ).restore(self._initial_snapshot)
-        restoration["actions"].extend(
-            {
-                "target": action.target,
-                "property": action.property,
-                "value": action.value,
-                "status": action.status,
-            }
-            for action in result.actions
-        )
-        restoration["errors"].extend(result.errors)
-        restoration["status"] = "passed" if result.passed else "failed"
+        self._run_report.record_restoration(result)
         return list(result.errors)
 
     @staticmethod
