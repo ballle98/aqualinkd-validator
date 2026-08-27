@@ -197,7 +197,9 @@ class AquaPdaMenuWalker:
 
     async def _return_home(self) -> None:
         for _ in range(self._config.home_attempts):
-            visible = {line.strip() for line in self._client.screen.lines}
+            visible = {
+                line.strip().upper() for line in self._client.screen.lines
+            }
             if {"MENU", "EQUIPMENT ON/OFF"}.issubset(visible):
                 self._progress("[STATE ] AquaPDA returned to the home screen")
                 return
@@ -236,7 +238,8 @@ class AquaPdaMenuWalker:
         candidates = [
             option
             for option in options
-            if option in {"MENU", "EQUIPMENT ON/OFF"} or option.endswith(">")
+            if option.upper() in {"MENU", "EQUIPMENT ON/OFF"}
+            or option.endswith(">")
         ]
         for option in candidates:
             await self._move_to_option(option)

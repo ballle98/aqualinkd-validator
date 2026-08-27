@@ -101,7 +101,7 @@ class PdaSessionInitializer:
                     )
                 )
                 screen_task = tasks.create_task(
-                    self._capture_init_screen(after=active.sequence)
+                    self._capture_init_screen(after=0)
                 )
         except PdaProgrammerFailure as error:
             raise PdaSessionFailure(str(error)) from error

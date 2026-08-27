@@ -51,10 +51,12 @@ class PdaSessionInitializerTests(unittest.TestCase):
                 "NetService:Starting web server on port 8080",
                 "AqualinkD: Starting Aqualink Daemon v3.1.1 (Dev2) !",
                 "AqualinkD: panel type = PDA-6 Combo (Pool & Spa)",
-                INIT_ACTIVE,
+                # Power Center can finish drawing this screen before the
+                # Init PDA programmer thread reports that it is active.
                 "PDA Menu Line 1 = PDA-PS6 Combo",
                 "PDA Menu Line 3 = Firmware Version",
                 "PDA Menu Line 5 = PDA: 7.1.0",
+                INIT_ACTIVE,
                 INIT_FINISHED,
             )
             for sequence, line in enumerate(lines, start=1):
@@ -90,7 +92,7 @@ class PdaSessionInitializerTests(unittest.TestCase):
                     "source": "pda_firmware_version_screen",
                 },
             )
-            self.assertEqual(result.active.offset_ns, 400)
+            self.assertEqual(result.active.offset_ns, 700)
             self.assertEqual(result.completed.offset_ns, 800)
             timeline_events = [
                 json.loads(line)

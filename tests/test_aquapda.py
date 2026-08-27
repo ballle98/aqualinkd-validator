@@ -107,7 +107,7 @@ class FakeAquaPdaClient:
 class FakeAquaPdaMenuClient:
     MENUS = {
         "INIT": [],
-        "HOME": ["POOL MODE OFF", "MENU", "EQUIPMENT ON/OFF"],
+        "HOME": ["POOL MODE OFF", "Menu", "Equipment ON/OFF"],
         "MAIN MENU": ["HELP >", "PROGRAM >", "SET TEMP >"],
         "EQUIPMENT ON/OFF": ["FILTER PUMP OFF", "AUX 1 OFF"],
         "HELP": ["ONLY ITEM"],
@@ -115,8 +115,8 @@ class FakeAquaPdaMenuClient:
         "SET TEMP": [],
     }
     TARGETS = {
-        ("HOME", "MENU"): "MAIN MENU",
-        ("HOME", "EQUIPMENT ON/OFF"): "EQUIPMENT ON/OFF",
+        ("HOME", "Menu"): "MAIN MENU",
+        ("HOME", "Equipment ON/OFF"): "EQUIPMENT ON/OFF",
         ("MAIN MENU", "HELP >"): "HELP",
         ("MAIN MENU", "PROGRAM >"): "PROGRAM",
         ("MAIN MENU", "SET TEMP >"): "SET TEMP",
@@ -298,11 +298,11 @@ class AquaPdaTransportTests(unittest.IsolatedAsyncioTestCase):
             [screen["path"] for screen in result.report["screens"]],
             [
                 ["HOME"],
-                ["HOME", "MENU"],
-                ["HOME", "MENU", "HELP"],
-                ["HOME", "MENU", "PROGRAM"],
-                ["HOME", "MENU", "SET TEMP"],
-                ["HOME", "EQUIPMENT ON/OFF"],
+                ["HOME", "Menu"],
+                ["HOME", "Menu", "HELP"],
+                ["HOME", "Menu", "PROGRAM"],
+                ["HOME", "Menu", "SET TEMP"],
+                ["HOME", "Equipment ON/OFF"],
             ],
         )
         self.assertTrue(client.closed)
