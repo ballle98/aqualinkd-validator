@@ -43,11 +43,13 @@ source modules are:
 | `adapters/aquapda.py` | Local WebSocket client and AquaPDA screen reconstruction |
 | `adapters/artifacts.py` | Filesystem-backed run artifacts |
 | `adapters/serial.py` | Nonblocking POSIX serial-device and PTY byte transport |
+| `adapters/power_center.py` | Wine helper execution and serial-verified Power Center power orchestration |
 | `adapters/clock.py` | System monotonic time and asynchronous sleeping |
 | `interfaces/events.py` | Typed ordered-log and monotonic-timeline boundaries |
 | `interfaces/aquapda.py` | AquaPDA client and read-only screen-view boundaries |
 | `interfaces/process.py` | Supervised process and scenario lifecycle boundaries |
 | `interfaces/serial.py` | Bidirectional RS485 byte-transport boundary |
+| `interfaces/power_center.py` | Typed Power Center preparation and command-result boundary |
 | `interfaces/artifacts.py` | Run-scoped artifact persistence boundary |
 | `interfaces/clock.py` | Monotonic time and asynchronous sleep boundary |
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
