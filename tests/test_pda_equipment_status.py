@@ -33,7 +33,7 @@ class PdaEquipmentStatusServiceTests(unittest.TestCase):
         progress: list[str] = []
         service = self._service(events, snapshot, progress)
         lines = (
-            "PDA Menu Line 1 = AIR         POOL",
+            "PDA Menu Line 1 = Air         Pool",
             "*** Pass Equiptment msg 'EQUIPMENT STATUS'",
             "Found Status for Filter Pump = 'Filter Pump ON'",
             "Found Status for Pool Heater = 'Pool Heater ENA'",

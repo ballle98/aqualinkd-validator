@@ -5,3 +5,12 @@ schema: 1
 # pool mode before changing to spa mode.
 spa:
   fill_time: 8m
+
+# Optional automation for the externally managed Jandy Power Center emulator.
+# Start Pwrcntr.exe in this Wine prefix and connect COM3 to the serial_port in
+# aqualinkd.conf before selecting a pda-power-center-* suite.
+# power_center:
+#   helper: ../contrib/power-center-helper/build/pwrcntr-control.exe
+#   wine_prefix: ~/.wine-aqualink
+#   model: "E260808 (PD 8 Combo)"
+#   port: COM3

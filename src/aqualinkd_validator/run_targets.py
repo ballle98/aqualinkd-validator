@@ -57,6 +57,14 @@ class PythonTargetDefinition:
 
 
 @dataclass(frozen=True)
+class DeclarativeTargetDefinition:
+    source: Path
+    mode: RunMode = "live-panel"
+    description: str | None = None
+    artifact_suffix: str | None = None
+
+
+@dataclass(frozen=True)
 class ResolvedRunTarget:
     """One normalized execution target, independent of its source format."""
 
@@ -99,7 +107,7 @@ class RunTargetRegistry:
 
     def __init__(
         self,
-        declarative_suites: dict[str, Path],
+        declarative_suites: dict[str, DeclarativeTargetDefinition],
         python_targets: dict[str, PythonTargetDefinition],
     ) -> None:
         self._declarative_suites = declarative_suites
@@ -113,9 +121,15 @@ class RunTargetRegistry:
         if Path(value).suffix.casefold() in {".yaml", ".yml"}:
             source = Path(value).expanduser().resolve()
             return self._from_document(source)
-        declarative_source = self._declarative_suites.get(value)
-        if declarative_source is not None:
-            return self._from_document(declarative_source)
+        declarative_target = self._declarative_suites.get(value)
+        if declarative_target is not None:
+            return self._from_document(
+                declarative_target.source,
+                identifier=value,
+                mode=declarative_target.mode,
+                description=declarative_target.description,
+                artifact_suffix=declarative_target.artifact_suffix,
+            )
         try:
             target = self._python_targets[value]
         except KeyError as error:
@@ -123,6 +137,14 @@ class RunTargetRegistry:
 
         if target.members:
             members = tuple(self.resolve(member) for member in target.members)
+            incompatible = [
+                member.identifier for member in members if member.mode != target.mode
+            ]
+            if incompatible:
+                raise ValueError(
+                    f"{target.identifier} has members for the wrong run mode: "
+                    + ", ".join(incompatible)
+                )
             return ResolvedRunTarget(
                 identifier=target.identifier,
                 description=target.description,
@@ -152,7 +174,15 @@ class RunTargetRegistry:
             case_ids=target.cases,
         )
 
-    def _from_document(self, source: Path) -> ResolvedRunTarget:
+    def _from_document(
+        self,
+        source: Path,
+        *,
+        identifier: str | None = None,
+        mode: RunMode = "live-panel",
+        description: str | None = None,
+        artifact_suffix: str | None = None,
+    ) -> ResolvedRunTarget:
         document = load_testcase_document(source)
         if document.mode != "physical-panel":
             raise ValueError(
@@ -161,10 +191,10 @@ class RunTargetRegistry:
             )
         if isinstance(document, TestcaseDefinition):
             return ResolvedRunTarget(
-                identifier=document.identifier,
-                description=document.description,
+                identifier=identifier or document.identifier,
+                description=description or document.description,
                 kind="testcase",
-                mode="live-panel",
+                mode=mode,
                 mutates_panel=document.access == "read-write",
                 uses_selected_devices=False,
                 aqualinkd_args=("-vv",),
@@ -178,15 +208,16 @@ class RunTargetRegistry:
 
         assert isinstance(document, TestcaseSuiteDefinition)
         return ResolvedRunTarget(
-            identifier=document.identifier,
-            description=document.description,
+            identifier=identifier or document.identifier,
+            description=description or document.description,
             kind="suite",
-            mode="live-panel",
+            mode=mode,
             mutates_panel=document.mutates_panel,
             uses_selected_devices=document.uses_selected_devices,
             aqualinkd_args=document.config.aqualinkd_args,
             config_overrides=document.config.overrides,
             execution_role=document.config.execution_role,
+            artifact_suffix=artifact_suffix,
             source=source,
             schema=document.schema,
             access=document.access,
@@ -197,12 +228,32 @@ class RunTargetRegistry:
 _ROOT = Path(__file__).parents[2]
 RUN_TARGETS = RunTargetRegistry(
     {
-        name: _ROOT / "testcases" / "suites" / f"{name}.yaml"
+        name: DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / f"{name}.yaml"
+        )
         for name in (
             "pda-live-fast",
             "pda-live-awake",
             "pda-live-sleep",
             "pda-live-spa",
+        )
+    }
+    | {
+        f"pda-power-center-{phase}": DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / f"pda-live-{phase}.yaml",
+            mode="jandy-power-center",
+            description=(
+                f"PDA {phase} validation against the Jandy Power Center emulator"
+            ),
+            artifact_suffix=phase,
+        )
+        for phase in ("fast", "awake", "spa")
+    }
+    | {
+        "pda-power-center-sleep": DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / "pda-power-center-sleep.yaml",
+            mode="jandy-power-center",
+            artifact_suffix="sleep",
         )
     },
     {
@@ -210,6 +261,19 @@ RUN_TARGETS = RunTargetRegistry(
             identifier="pda-live-long",
             description="Composite awake and sleep PDA live-panel validation",
             members=("pda-live-awake", "pda-live-sleep"),
+        ),
+        "pda-power-center-full": PythonTargetDefinition(
+            identifier="pda-power-center-full",
+            description=(
+                "Complete awake, sleep, and AquaPDA menu validation against "
+                "the Jandy Power Center emulator"
+            ),
+            mode="jandy-power-center",
+            members=(
+                "pda-power-center-awake",
+                "pda-power-center-sleep",
+                "aquapda-power-center-menu-walk",
+            ),
         ),
         "aquapda-websocket-transport": PythonTargetDefinition(
             identifier="aquapda-websocket-transport",

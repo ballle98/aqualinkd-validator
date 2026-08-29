@@ -6,6 +6,11 @@ from .artifacts import ArtifactStore
 from .clock import MonotonicClock
 from .events import EventTimeline, LineEvent, OrderedLogEvents
 from .http import HttpTransport
+from .power_center import (
+    PowerCenterCommand,
+    PowerCenterController,
+    PowerCenterPreparation,
+)
 from .process import (
     ProcessRunner,
     RunResult,
@@ -26,6 +31,9 @@ __all__ = [
     "OrderedLogEvents",
     "PdaScreenView",
     "ProcessRunner",
+    "PowerCenterCommand",
+    "PowerCenterController",
+    "PowerCenterPreparation",
     "RunResult",
     "Scenario",
     "ScenarioContext",

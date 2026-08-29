@@ -21,9 +21,22 @@ class SpaSiteConfig:
 
 
 @dataclass(frozen=True)
+class PowerCenterSiteConfig:
+    helper: Path
+    wine_prefix: Path
+    model: str
+    port: str
+    wine: str = "wine"
+    command_timeout_seconds: float = 10.0
+    power_timeout_seconds: float = 8.0
+    observation_seconds: float = 0.75
+
+
+@dataclass(frozen=True)
 class SiteConfig:
     source: Path | None = None
     spa: SpaSiteConfig = SpaSiteConfig()
+    power_center: PowerCenterSiteConfig | None = None
 
 
 def load_site_config(
@@ -50,7 +63,7 @@ def load_site_config(
         raise SiteConfigError(f"Unable to read site config {path}: {error}") from error
     if not isinstance(raw, dict):
         raise SiteConfigError(f"{path}: root must be a mapping")
-    _only_keys(raw, {"schema", "spa"}, str(path))
+    _only_keys(raw, {"schema", "spa", "power_center"}, str(path))
     if raw.get("schema") != 1:
         raise SiteConfigError(f"{path}: schema must be 1")
 
@@ -63,7 +76,60 @@ def load_site_config(
         if "fill_time" in spa_raw
         else None
     )
-    return SiteConfig(source=path, spa=SpaSiteConfig(fill_seconds=fill_seconds))
+    power_center = _power_center_config(raw.get("power_center"), path)
+    return SiteConfig(
+        source=path,
+        spa=SpaSiteConfig(fill_seconds=fill_seconds),
+        power_center=power_center,
+    )
+
+
+def _power_center_config(value: object, source: Path) -> PowerCenterSiteConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise SiteConfigError(f"{source}: power_center must be a mapping")
+    location = f"{source}: power_center"
+    _only_keys(
+        value,
+        {
+            "helper",
+            "wine_prefix",
+            "model",
+            "port",
+            "wine",
+            "command_timeout",
+            "power_timeout",
+            "observation_time",
+        },
+        location,
+    )
+    missing = [
+        key for key in ("helper", "wine_prefix", "model", "port") if key not in value
+    ]
+    if missing:
+        raise SiteConfigError(f"{location}: missing {', '.join(missing)}")
+    helper = _config_path(value["helper"], source, f"{location}.helper", file=True)
+    wine_prefix = _config_path(
+        value["wine_prefix"], source, f"{location}.wine_prefix", file=False
+    )
+    model = _nonempty_string(value["model"], f"{location}.model")
+    port = _nonempty_string(value["port"], f"{location}.port")
+    wine = _nonempty_string(value.get("wine", "wine"), f"{location}.wine")
+    return PowerCenterSiteConfig(
+        helper=helper,
+        wine_prefix=wine_prefix,
+        model=model,
+        port=port,
+        wine=wine,
+        command_timeout_seconds=_optional_duration(
+            value, "command_timeout", 10.0, location
+        ),
+        power_timeout_seconds=_optional_duration(value, "power_timeout", 8.0, location),
+        observation_seconds=_optional_duration(
+            value, "observation_time", 0.75, location
+        ),
+    )
 
 
 def _only_keys(value: dict[object, object], allowed: set[str], path: str) -> None:
@@ -82,3 +148,31 @@ def _duration_seconds(value: object, path: str) -> float:
     if seconds <= 0:
         raise SiteConfigError(f"{path} must be greater than zero")
     return seconds
+
+
+def _optional_duration(
+    value: dict[object, object], key: str, default: float, path: str
+) -> float:
+    return _duration_seconds(value[key], f"{path}.{key}") if key in value else default
+
+
+def _nonempty_string(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SiteConfigError(f"{path} must be a non-empty string")
+    return value.strip()
+
+
+def _config_path(value: object, source: Path, path: str, *, file: bool) -> Path:
+    raw = _nonempty_string(value, path)
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = source.parent / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise SiteConfigError(f"{path} does not exist: {candidate}") from error
+    if file and not resolved.is_file():
+        raise SiteConfigError(f"{path} must be a file: {resolved}")
+    if not file and not resolved.is_dir():
+        raise SiteConfigError(f"{path} must be a directory: {resolved}")
+    return resolved

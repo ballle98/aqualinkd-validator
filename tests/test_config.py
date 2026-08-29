@@ -36,6 +36,36 @@ class ConfigTests(unittest.TestCase):
             config.touch()
             self.assertIsNone(load_site_config(config).source)
 
+    def test_loads_power_center_automation_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "aqualinkd.conf"
+            config.touch()
+            helper = root / "pwrcntr-control.exe"
+            helper.touch()
+            prefix = root / "wine-prefix"
+            prefix.mkdir()
+            profile = root / "site.yaml"
+            profile.write_text(
+                "schema: 1\n"
+                "power_center:\n"
+                "  helper: pwrcntr-control.exe\n"
+                "  wine_prefix: wine-prefix\n"
+                '  model: "E260808 (PD 8 Combo)"\n'
+                "  port: COM3\n"
+                "  observation_time: 500ms\n",
+                encoding="utf-8",
+            )
+
+            site = load_site_config(config, profile)
+
+            assert site.power_center is not None
+            self.assertEqual(site.power_center.helper, helper)
+            self.assertEqual(site.power_center.wine_prefix, prefix)
+            self.assertEqual(site.power_center.model, "E260808 (PD 8 Combo)")
+            self.assertEqual(site.power_center.port, "COM3")
+            self.assertEqual(site.power_center.observation_seconds, 0.5)
+
     def test_explicit_site_config_must_be_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

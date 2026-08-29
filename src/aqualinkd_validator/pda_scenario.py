@@ -24,6 +24,11 @@ from .protocols.pda.aquapda import (
     AquaPdaTransportConfig,
     AquaPdaTransportValidator,
     AquaPdaValidationFailure,
+    return_aquapda_home,
+)
+from .protocols.pda.equipment_status import (
+    STATUS_MENU_FINISHED_MARKERS,
+    STATUS_MENU_PRESENT_MARKERS,
 )
 from .protocols.pda.keywords import PdaKeywordMarkers, PdaTestcaseKeywords
 from .protocols.pda.live_exercises import (
@@ -144,7 +149,14 @@ class PdaScenarioRuntime:
             report=self._run_report,
             device_selector=device_selector,
         )
-        self._exercises = PdaLiveExercises(self._session)
+        self._exercises = PdaLiveExercises(
+            self._session,
+            return_home_for_status=(
+                self._return_home_for_status
+                if config.force_status_home_with_aquapda
+                else None
+            ),
+        )
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         if self._testcases:
@@ -292,6 +304,62 @@ class PdaScenarioRuntime:
         except AquaPdaValidationFailure as error:
             raise ScenarioFailure(str(error)) from error
         self._session.report["aquapda_transport"] = result.report
+
+    async def _return_home_for_status(self, context: ScenarioContext) -> None:
+        recent = context.monitor.recent_events()
+        last_started = max(
+            (
+                event.sequence
+                for event in recent
+                if any(
+                    marker in event.text for marker in STATUS_MENU_PRESENT_MARKERS
+                )
+            ),
+            default=0,
+        )
+        last_finished = max(
+            (
+                event.sequence
+                for event in recent
+                if any(
+                    marker in event.text
+                    for marker in STATUS_MENU_FINISHED_MARKERS
+                )
+            ),
+            default=0,
+        )
+        if last_started > last_finished:
+            print(
+                "[STATE ] Equipment status is already active; "
+                "leaving SimPDA navigation unchanged",
+                flush=True,
+            )
+            return
+        client = self._aquapda_client_factory(self._session.api_client.base_url)
+        print(
+            "[ WAIT ] Equipment status: returning the simulated PDA to home",
+            flush=True,
+        )
+        try:
+            await client.connect()
+            packet_start = client.packet_count
+            await client.wait_for_packets(
+                6,
+                after=packet_start,
+                timeout_seconds=self._config.aquapda_timeout_seconds,
+            )
+            await return_aquapda_home(
+                client,
+                timeout_seconds=self._config.aquapda_timeout_seconds,
+                home_attempts=8,
+                progress=lambda message: print(message, flush=True),
+            )
+        except Exception as error:
+            raise ScenarioFailure(
+                f"could not return the simulated PDA home: {error}"
+            ) from error
+        finally:
+            await client.close()
 
     async def _test_menu_walk(self, context: ScenarioContext) -> None:
         try:

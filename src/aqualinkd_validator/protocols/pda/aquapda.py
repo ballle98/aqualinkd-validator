@@ -50,6 +50,43 @@ class AquaPdaMenuWalkResult:
     report: dict[str, Any]
 
 
+async def return_aquapda_home(
+    client: AquaPdaClient,
+    *,
+    timeout_seconds: float,
+    home_attempts: int,
+    progress: Callable[[str], None],
+) -> None:
+    """Use the AquaPDA northbound interface to reach the PDA home screen."""
+    for _ in range(home_attempts):
+        visible = {line.strip().upper() for line in client.screen.lines}
+        if {"MENU", "EQUIPMENT ON/OFF"}.issubset(visible):
+            progress("[STATE ] AquaPDA returned to the home screen")
+            return
+        previous = tuple(client.screen.lines)
+        after = client.screen_update_count
+        await client.send_key("back")
+        try:
+            await client.wait_for_screen_change(
+                previous,
+                after=after,
+                timeout_seconds=timeout_seconds,
+            )
+            await client.wait_for_screen_settle(
+                after=after,
+                timeout_seconds=timeout_seconds,
+            )
+        except AquaPdaProtocolError:
+            # A BACK from an already transitioning screen can be accepted
+            # without producing a distinct intermediate display. Recheck the
+            # reconstructed screen before consuming another bounded attempt.
+            continue
+    raise AquaPdaValidationFailure(
+        "AquaPDA could not identify the home screen containing MENU and "
+        "EQUIPMENT ON/OFF"
+    )
+
+
 class AquaPdaTransportValidator:
     """Validate the northbound AquaPDA WebSocket and its RS485 ACK path."""
 
@@ -196,15 +233,11 @@ class AquaPdaMenuWalker:
         )
 
     async def _return_home(self) -> None:
-        for _ in range(self._config.home_attempts):
-            visible = {line.strip() for line in self._client.screen.lines}
-            if {"MENU", "EQUIPMENT ON/OFF"}.issubset(visible):
-                self._progress("[STATE ] AquaPDA returned to the home screen")
-                return
-            await self._send_and_wait_for_screen("back")
-        raise AquaPdaValidationFailure(
-            "AquaPDA menu walk could not identify the home screen containing "
-            "MENU and EQUIPMENT ON/OFF"
+        await return_aquapda_home(
+            self._client,
+            timeout_seconds=self._config.timeout_seconds,
+            home_attempts=self._config.home_attempts,
+            progress=self._progress,
         )
 
     async def _walk_menus(
@@ -236,7 +269,8 @@ class AquaPdaMenuWalker:
         candidates = [
             option
             for option in options
-            if option in {"MENU", "EQUIPMENT ON/OFF"} or option.endswith(">")
+            if option.upper() in {"MENU", "EQUIPMENT ON/OFF"}
+            or option.endswith(">")
         ]
         for option in candidates:
             await self._move_to_option(option)

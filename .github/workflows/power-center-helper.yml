@@ -1,0 +1,56 @@
+name: Power Center helper
+
+on:
+  push:
+    paths:
+      - ".github/workflows/power-center-helper.yml"
+      - "contrib/power-center-helper/**"
+  pull_request:
+    paths:
+      - ".github/workflows/power-center-helper.yml"
+      - "contrib/power-center-helper/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install 32-bit MinGW compiler
+        run: sudo apt-get update && sudo apt-get install --yes gcc-mingw-w64-i686
+      - name: Cross-compile and checksum
+        run: make -C contrib/power-center-helper package
+      - name: Verify PE architecture
+        run: file contrib/power-center-helper/build/pwrcntr-control.exe | grep -F "PE32 executable"
+      - name: Upload helper
+        uses: actions/upload-artifact@v6
+        with:
+          name: pwrcntr-control-win32
+          if-no-files-found: error
+          path: |
+            contrib/power-center-helper/build/pwrcntr-control.exe
+            contrib/power-center-helper/build/pwrcntr-control.exe.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: pwrcntr-control-win32
+          path: dist
+      - name: Publish helper files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            dist/pwrcntr-control.exe \
+            dist/pwrcntr-control.exe.sha256

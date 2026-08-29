@@ -69,3 +69,4 @@ class PdaScenarioConfig:
     case_ids: tuple[RuntimeCaseId, ...] = ()
     aquapda_packet_count: int = 20
     aquapda_timeout_seconds: float = 20.0
+    force_status_home_with_aquapda: bool = False

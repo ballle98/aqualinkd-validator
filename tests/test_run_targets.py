@@ -27,6 +27,48 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertTrue(target.uses_selected_devices)
         self.assertEqual(target.members, ("pda-live-awake", "pda-live-sleep"))
 
+    def test_power_center_suite_reuses_live_pda_testcases(self) -> None:
+        live = RUN_TARGETS.resolve("pda-live-awake")
+        power_center = RUN_TARGETS.resolve("pda-power-center-awake")
+
+        self.assertEqual(power_center.identifier, "pda-power-center-awake")
+        self.assertEqual(power_center.mode, "jandy-power-center")
+        self.assertEqual(power_center.source, live.source)
+        self.assertEqual(power_center.testcases, live.testcases)
+        self.assertEqual(power_center.override_map(), {"pda_sleep_mode": "no"})
+        self.assertEqual(power_center.artifact_suffix, "awake")
+
+    def test_power_center_sleep_omits_unsupported_natural_wake(self) -> None:
+        target = RUN_TARGETS.resolve("pda-power-center-sleep")
+
+        self.assertEqual(target.mode, "jandy-power-center")
+        self.assertEqual(
+            [testcase.identifier for testcase in target.testcases],
+            [
+                "pda.initialization",
+                "pda.status-retry-command",
+                "pda.probe-transition-command",
+            ],
+        )
+        self.assertEqual(target.override_map(), {"pda_sleep_mode": "yes"})
+        self.assertEqual(target.execution_role, "sleep")
+
+    def test_power_center_full_serializes_awake_sleep_and_menu_walk(self) -> None:
+        target = RUN_TARGETS.resolve("pda-power-center-full")
+
+        self.assertTrue(target.is_composite)
+        self.assertEqual(target.mode, "jandy-power-center")
+        self.assertTrue(target.mutates_panel)
+        self.assertTrue(target.uses_selected_devices)
+        self.assertEqual(
+            target.members,
+            (
+                "pda-power-center-awake",
+                "pda-power-center-sleep",
+                "aquapda-power-center-menu-walk",
+            ),
+        )
+
     def test_aquapda_python_suite_uses_same_resolved_model(self) -> None:
         target = RUN_TARGETS.resolve("aquapda-live-panel-menu-walk")
 

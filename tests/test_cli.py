@@ -387,6 +387,24 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_context.exception.code, 2)
             self.assertIn("requires --mode live-panel", stderr.getvalue())
 
+    def test_power_center_full_accepts_power_center_mode_and_panel_write(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--mode",
+                "jandy-power-center",
+                "--panel-read-write",
+                "pda-power-center-full",
+            ]
+        )
+
+        with patch("aqualinkd_validator.cli._run_one", return_value=0) as run_one:
+            self.assertEqual(_run(args), 0)
+
+        target = run_one.call_args.args[0].run_target
+        self.assertEqual(target.identifier, "pda-power-center-full")
+        self.assertEqual(target.mode, "jandy-power-center")
+
     def test_run_requires_matching_explicit_character_device(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "aqualinkd.conf"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from ...domain import EquipmentSnapshot
 from ...interfaces import ScenarioContext
 from .device_selection import PdaDeviceSelectionFailure
@@ -26,6 +28,7 @@ from .sleep import (
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
+    PdaStatusRetryUnavailable,
 )
 from .spa import PdaSpaExercise, SpaExerciseConfig
 from .status_exercise import PdaEquipmentStatusExercise
@@ -38,11 +41,26 @@ class PdaLiveExerciseFailure(RuntimeError):
 class PdaLiveExercises:
     """Run the higher-level physical-panel exercises for one PDA session."""
 
-    def __init__(self, session: PdaRunSession) -> None:
+    def __init__(
+        self,
+        session: PdaRunSession,
+        *,
+        return_home_for_status: (
+            Callable[[ScenarioContext], Awaitable[None]] | None
+        ) = None,
+    ) -> None:
         self._session = session
+        self._return_home_for_status = return_home_for_status
 
     async def verify_equipment_status(self, context: ScenarioContext) -> None:
         initial = self._require_initial_snapshot()
+        prepare_for_status: Callable[[], Awaitable[None]] | None = None
+        if self._return_home_for_status is not None:
+            return_home = self._return_home_for_status
+
+            async def prepare_for_status() -> None:
+                await return_home(context)
+
         candidates = self._session.device_selector.status_candidates(
             phase="devices.status_menu.setup"
         )
@@ -69,6 +87,7 @@ class PdaLiveExercises:
                 record_skip=self._session.recorder.skip,
                 record_measurement=self._session.recorder.append_measurement,
                 progress=lambda message: print(message, flush=True),
+                prepare_for_status=prepare_for_status,
             ).run(initial_snapshot=initial, candidates=candidates)
         except (PdaEquipmentSetupFailure, PdaRunSessionFailure) as error:
             raise PdaLiveExerciseFailure(str(error)) from error
@@ -173,10 +192,24 @@ class PdaLiveExercises:
         identifier = self._sleep_test_device(phase=phase)
         if identifier is None:
             return
+        service = self._sleep_wake_service(context)
         try:
-            window = await self._sleep_wake_service(
-                context
-            ).wait_for_status_retry_window()
+            window = await service.wait_for_status_retry_window()
+        except PdaStatusRetryUnavailable:
+            print(
+                "[STATE ] Initial sleep followed a non-STATUS packet; "
+                f"priming a clean wake/sleep cycle with {identifier}",
+                flush=True,
+            )
+            await self._toggle_round_trip(
+                context,
+                identifier,
+                phase=f"{phase}.prime",
+            )
+            try:
+                window = await service.wait_for_status_retry_window()
+            except PdaSleepWakeFailure as error:
+                raise PdaLiveExerciseFailure(str(error)) from error
         except PdaSleepWakeFailure as error:
             raise PdaLiveExerciseFailure(str(error)) from error
         print(

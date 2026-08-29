@@ -19,7 +19,11 @@ from typing import Any, Literal, TextIO
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import __version__
-from .adapters import LocalProcessRunner
+from .adapters import (
+    LocalProcessRunner,
+    PowerCenterAutomationError,
+    WinePowerCenterController,
+)
 from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
@@ -89,9 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     panel_free.add_argument("--label", default="panel-free")
     panel_free.add_argument("--duration", type=_positive_float, default=60.0)
-    panel_free.add_argument(
-        "--http-ready-timeout", type=_positive_float, default=10.0
-    )
+    panel_free.add_argument("--http-ready-timeout", type=_positive_float, default=10.0)
     panel_free.add_argument("--sample-interval", type=_positive_float, default=1.0)
     panel_free.add_argument("--terminate-grace", type=_positive_float, default=10.0)
 
@@ -449,7 +451,9 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
         member_args = copy.copy(args)
         member = RUN_TARGETS.resolve(member_name)
         member_args.run_target = member
-        suffix = member.artifact_suffix or member_name.removeprefix("pda-live-")
+        suffix = member.artifact_suffix or member_name.removeprefix(
+            "pda-live-"
+        ).removeprefix("pda-power-center-")
         member_args.label = f"{original_label}-{suffix}"
         print(
             f"\n=== {composite.identifier} member: {member_name} ===",
@@ -569,6 +573,7 @@ def _run_process(args: argparse.Namespace) -> int:
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
                 spa_fill_seconds=site_config.spa.fill_seconds,
                 case_ids=target.case_ids,
+                force_status_home_with_aquapda=(target.mode == "jandy-power-center"),
             ),
             api_base_url_override=api_base_url,
             testcase=target.testcase,
@@ -622,6 +627,49 @@ def _run_in_artifact(
     api_base_url: str | None,
     suite_test_devices: list[str],
 ) -> int:
+    power_center_metadata: dict[str, Any] | None = None
+    if args.mode == "jandy-power-center" and site_config.power_center is not None:
+        print("[ SETUP ] Configuring Jandy Power Center emulator", flush=True)
+        try:
+            preparation = WinePowerCenterController(site_config.power_center).prepare(
+                serial_device
+            )
+        except PowerCenterAutomationError as error:
+            failure = {
+                "schema_version": 1,
+                "status": "failed",
+                "reason": "power_center_setup_failed",
+                "error": str(error),
+                "commands": [asdict(command) for command in error.commands],
+                "finished_at": datetime.now(UTC).isoformat(),
+            }
+            _write_json(artifact_dir / "power-center.json", failure)
+            _write_json(artifact_dir / "result.json", failure)
+            print(f"[ FAIL ] Power Center setup: {error}", file=sys.stderr)
+            return 1
+        power_center_metadata = {
+            "automation": "native-helper",
+            "model": preparation.model,
+            "port": preparation.port,
+            "wine_version": preparation.wine_version,
+            "wine_prefix": str(site_config.power_center.wine_prefix),
+            "helper": {
+                "path": str(preparation.helper),
+                "sha256": preparation.helper_sha256,
+            },
+            "power": {
+                "initial": preparation.initial_power,
+                "final": preparation.final_power,
+                "verification": "serial-traffic",
+            },
+            "commands": [asdict(command) for command in preparation.commands],
+        }
+        _write_json(artifact_dir / "power-center.json", power_center_metadata)
+        print(
+            "[STATE ] Power Center "
+            f"{preparation.model} on {preparation.port}; power verified on",
+            flush=True,
+        )
     command = build_aqualinkd_command(
         binary,
         config,
@@ -633,6 +681,15 @@ def _run_in_artifact(
         "created_at": datetime.now(UTC).isoformat(),
         "label": args.label,
         "mode": args.mode,
+        "power_center": (
+            power_center_metadata
+            if power_center_metadata is not None
+            else (
+                {"automation": "external"}
+                if args.mode == "jandy-power-center"
+                else None
+            )
+        ),
         "suite": _suite_manifest(target, execution_phase),
         "testcase": (
             {
@@ -699,6 +756,15 @@ def _run_in_artifact(
                 "name": site_config.source.name,
                 "sha256": sha256_file(site_config.source),
                 "spa": {"fill_seconds": site_config.spa.fill_seconds},
+                "power_center": (
+                    {
+                        "configured": True,
+                        "model": site_config.power_center.model,
+                        "port": site_config.power_center.port,
+                    }
+                    if site_config.power_center is not None
+                    else None
+                ),
             }
             if site_config.source is not None
             else None
@@ -817,7 +883,7 @@ def _suite_manifest(
     manifest: dict[str, Any] = {
         "name": target.identifier,
         "description": target.description,
-        "mode": "physical-panel" if target.source is not None else target.mode,
+        "mode": target.mode,
         "aqualinkd_args": list(target.aqualinkd_args),
         "execution_phase": execution_phase,
     }

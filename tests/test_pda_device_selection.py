@@ -23,6 +23,7 @@ class PdaDeviceSelectorTests(unittest.TestCase):
                     "Spa_Mode": self._switch("Spa"),
                     "Aux_1": self._switch("Cleaner"),
                     "Aux_2": self._switch("NONE"),
+                    "Extra_Aux": self._switch("Extra Aux"),
                     "Aux_3": self._switch("NONE"),
                     "Aux_4": self._switch("Pool Light"),
                     "Aux_5": self._switch("Spa Light"),
@@ -87,6 +88,7 @@ class PdaDeviceSelectorTests(unittest.TestCase):
                     "Spa_Mode": self._switch("Spa"),
                     "Aux_1": self._switch("Cleaner"),
                     "Aux_2": self._switch("NONE"),
+                    "Extra_Aux": self._switch("Extra Aux"),
                 },
             ),
             reported_panel_size=6,
@@ -99,7 +101,11 @@ class PdaDeviceSelectorTests(unittest.TestCase):
         )
         self.assertEqual(
             [name for name, _ in skips],
-            ["devices.consecutive.Spa_Mode", "devices.consecutive.Aux_2"],
+            [
+                "devices.consecutive.Spa_Mode",
+                "devices.consecutive.Aux_2",
+                "devices.consecutive.Extra_Aux",
+            ],
         )
 
     def test_status_selection_defers_hydraulic_controls(self) -> None:
@@ -110,6 +116,7 @@ class PdaDeviceSelectorTests(unittest.TestCase):
                 devices={
                     "Filter_Pump": self._switch("Filter Pump"),
                     "Spa": self._switch("Spa"),
+                    "Extra_Aux": self._switch("Extra Aux"),
                     "Solar_Heater": self._switch("Solar Heater"),
                     "Pool_Heater": {
                         "type": "setpoint_thermo",
@@ -131,7 +138,8 @@ class PdaDeviceSelectorTests(unittest.TestCase):
                 (
                     "devices.status_menu.spa_hydraulics",
                     "Left unchanged because the general status test must not "
-                    "route water or demand solar heat: Solar_Heater, Spa",
+                    "route water or demand solar heat: Extra_Aux, "
+                    "Solar_Heater, Spa",
                 )
             ],
         )

@@ -9,6 +9,7 @@ from ...interfaces import EventTimeline, LineEvent, OrderedLogEvents
 from .programmer import PdaProgrammerFailure, PdaProgrammerObserver
 
 PDA_SLEEPING = "PDA Aqualink daemon in sleep mode"
+PDA_WAKING = "PDA Aqualink daemon waking from sleep mode"
 PDA_ADDRESS_STATUS = "To 0x60 of type           Status"
 PDA_ADDRESS_PROBE = "To 0x60 of type            Probe"
 WAKE_INIT_ACTIVE = "is active (PDA init after wake)"
@@ -61,6 +62,10 @@ class PdaProbeWindow:
 
 class PdaSleepWakeFailure(RuntimeError):
     """Raised when an expected PDA sleep/wake transition is not observed."""
+
+
+class PdaStatusRetryUnavailable(PdaSleepWakeFailure):
+    """Raised when sleep began while the panel was retrying another packet."""
 
 
 class PdaSleepWakeService:
@@ -183,7 +188,7 @@ class PdaSleepWakeService:
             )
         retry_count = sum(PDA_ADDRESS_STATUS in event.text for event in events)
         if retry_count == 0:
-            raise PdaSleepWakeFailure(
+            raise PdaStatusRetryUnavailable(
                 "No repeated PDA STATUS packet was observed before the "
                 "STATUS-retry command"
             )
@@ -231,11 +236,16 @@ class PdaSleepWakeService:
     ) -> LineEvent:
         cursor = self._events.cursor
         started = self._timeline.offset_ns()
-        event = await self._events.wait_for(
-            PDA_SLEEPING,
-            after=cursor,
-            timeout_seconds=self._config.sleep_timeout_seconds,
-        )
+        event = self._current_sleep_event()
+        if event is None:
+            event = await self._events.wait_for(
+                PDA_SLEEPING,
+                after=cursor,
+                timeout_seconds=self._config.sleep_timeout_seconds,
+            )
+        else:
+            started = event.offset_ns
+            self._progress("[STATE ] PDA was already asleep when the test started")
         self._record_measurement(
             name=measurement_name,
             category="state_wait",
@@ -248,6 +258,21 @@ class PdaSleepWakeService:
             state_observed_offset_ns=None,
         )
         return event
+
+    def _current_sleep_event(self) -> LineEvent | None:
+        events = self._events.recent_events()
+        sleeping = next(
+            (event for event in reversed(events) if PDA_SLEEPING in event.text),
+            None,
+        )
+        if sleeping is None:
+            return None
+        woke_afterward = any(
+            event.sequence > sleeping.sequence
+            and (PDA_WAKING in event.text or WAKE_INIT_ACTIVE in event.text)
+            for event in events
+        )
+        return None if woke_afterward else sleeping
 
     def _record_cycle_measurements(
         self,
