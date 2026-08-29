@@ -390,6 +390,12 @@ Each member writes a separate artifact directory and must restore any changed
 equipment before the composite continues. Use `pda-power-center-fast`,
 `pda-power-center-awake`, or `pda-power-center-sleep` for focused runs.
 
+The optional native [Power Center helper](contrib/power-center-helper/README.md)
+can select the emulated panel model and COM port or toggle panel power without
+AutoHotkey or fixed screen coordinates. It controls an already running
+`Pwrcntr.exe`; probe traffic and PDA initialization remain the authoritative
+checks that the requested setup is operational.
+
 The active Spa Heater/cooldown test remains explicit because it uses the
 installation-specific `spa.fill_time` setting. Run it separately when the
 selected Power Center model supplies the required Pool/Spa equipment and
