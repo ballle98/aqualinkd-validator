@@ -112,6 +112,21 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertEqual(sleep.config.override_map(), {"pda_sleep_mode": "yes"})
         self.assertTrue(sleep.uses_selected_devices)
 
+        power_center_sleep = load_testcase_suite(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "suites"
+            / "pda-power-center-sleep.yaml"
+        )
+        self.assertEqual(len(power_center_sleep.members), 3)
+        self.assertNotIn(
+            "pda.sleep-cycle",
+            [
+                member.testcase.identifier
+                for member in power_center_sleep.members
+            ],
+        )
+
         spa = load_testcase_suite(
             Path(__file__).parents[1] / "testcases" / "suites" / "pda-live-spa.yaml"
         )

@@ -38,6 +38,21 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertEqual(power_center.override_map(), {"pda_sleep_mode": "no"})
         self.assertEqual(power_center.artifact_suffix, "awake")
 
+    def test_power_center_sleep_omits_unsupported_natural_wake(self) -> None:
+        target = RUN_TARGETS.resolve("pda-power-center-sleep")
+
+        self.assertEqual(target.mode, "jandy-power-center")
+        self.assertEqual(
+            [testcase.identifier for testcase in target.testcases],
+            [
+                "pda.initialization",
+                "pda.status-retry-command",
+                "pda.probe-transition-command",
+            ],
+        )
+        self.assertEqual(target.override_map(), {"pda_sleep_mode": "yes"})
+        self.assertEqual(target.execution_role, "sleep")
+
     def test_power_center_full_serializes_awake_sleep_and_menu_walk(self) -> None:
         target = RUN_TARGETS.resolve("pda-power-center-full")
 

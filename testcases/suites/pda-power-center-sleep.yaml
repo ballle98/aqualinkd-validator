@@ -1,0 +1,18 @@
+schema: 1
+kind: suite
+id: pda-power-center-sleep
+description: Command-driven PDA sleep and wake validation against Power Center
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: yes
+  execution_role: sleep
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/status-retry-command.yaml
+  - ../pda/probe-transition-command.yaml

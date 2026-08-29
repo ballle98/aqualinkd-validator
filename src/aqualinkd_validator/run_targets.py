@@ -247,7 +247,14 @@ RUN_TARGETS = RunTargetRegistry(
             ),
             artifact_suffix=phase,
         )
-        for phase in ("fast", "awake", "sleep", "spa")
+        for phase in ("fast", "awake", "spa")
+    }
+    | {
+        "pda-power-center-sleep": DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / "pda-power-center-sleep.yaml",
+            mode="jandy-power-center",
+            artifact_suffix="sleep",
+        )
     },
     {
         "pda-live-long": PythonTargetDefinition(

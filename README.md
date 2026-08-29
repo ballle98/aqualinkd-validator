@@ -285,7 +285,7 @@ one composite suite:
 | `aquapda-power-center-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
 | `pda-power-center-fast` | Fast Power Center regression | Reuses the initialization, filter-pump, and non-heating pool-heater cases from `pda-live-fast` |
 | `pda-power-center-awake` | Awake Power Center regression | Reuses all awake equipment-control and Equipment Status cases with PDA sleep disabled |
-| `pda-power-center-sleep` | Sleep Power Center regression | Reuses the sleep-cycle, STATUS-retry, and probe-transition cases with PDA sleep enabled |
+| `pda-power-center-sleep` | Sleep Power Center regression | Tests commands during STATUS retries and after probe resumption with PDA sleep enabled; the emulator does not provide a physical panel's periodic natural wake |
 | `pda-power-center-full` | Complete general Power Center regression | Serially runs Power Center awake, sleep, and read-only AquaPDA menu-walk suites in separate AqualinkD processes |
 | `pda-power-center-spa` | Explicit Power Center spa/heating regression | Reuses the site-configured Spa-mode, active-heating, and cooldown test; excluded from `pda-power-center-full` because it has special timing requirements |
 
@@ -381,11 +381,12 @@ connection, grant equipment-control access and select the full composite:
   pda-power-center-full
 ```
 
-The Power Center targets reuse the exact declarative testcase definitions used
-for physical panels. Only the target binding, run label, and serial endpoint
-differ. `pda-power-center-full` starts three serialized AqualinkD processes:
-awake validation with `pda_sleep_mode=no`, sleep validation with
-`pda_sleep_mode=yes`, and the AquaPDA menu walk with sleep disabled again.
+The Power Center targets reuse the declarative testcase definitions used for
+physical panels. `pda-power-center-full` starts three serialized AqualinkD
+processes: awake validation with `pda_sleep_mode=no`, command-driven sleep
+validation with `pda_sleep_mode=yes`, and the AquaPDA menu walk with sleep
+disabled again. The sleep target omits the physical panel's periodic natural
+wake cycle because `Pwrcntr.exe` does not generate it.
 Each member writes a separate artifact directory and must restore any changed
 equipment before the composite continues. Use `pda-power-center-fast`,
 `pda-power-center-awake`, or `pda-power-center-sleep` for focused runs.
