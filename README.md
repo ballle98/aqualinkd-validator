@@ -283,6 +283,11 @@ one composite suite:
 | `aquapda-websocket-transport` | AquaPDA interface transport regression on a physical panel | Opens the same northbound AquaPDA WebSocket as `aquapda_sim.html`, observes at least 20 PDA packets, sends a read-only Back key, and fails on slow ACKs, bad checksums, BAD PACKET messages, or resulting navigation failures |
 | `aquapda-live-panel-menu-walk` | Extensive AquaPDA interface-emulator navigation against a physical panel | Runs the AquaPDA transport regression, reconstructs the PDA display, walks the full Equipment On/Off list, and recursively visits every read-only submenu advertised with `>` without selecting equipment or setting actions |
 | `aquapda-power-center-menu-walk` | Extensive validation against the Jandy Power Center emulator | Performs the same AquaPDA interface-emulator traversal with the Power Center emulator acting as AqualinkD's southbound panel |
+| `pda-power-center-fast` | Fast Power Center regression | Reuses the initialization, filter-pump, and non-heating pool-heater cases from `pda-live-fast` |
+| `pda-power-center-awake` | Awake Power Center regression | Reuses all awake equipment-control and Equipment Status cases with PDA sleep disabled |
+| `pda-power-center-sleep` | Sleep Power Center regression | Reuses the sleep-cycle, STATUS-retry, and probe-transition cases with PDA sleep enabled |
+| `pda-power-center-full` | Complete general Power Center regression | Serially runs Power Center awake, sleep, and read-only AquaPDA menu-walk suites in separate AqualinkD processes |
+| `pda-power-center-spa` | Explicit Power Center spa/heating regression | Reuses the site-configured Spa-mode, active-heating, and cooldown test; excluded from `pda-power-center-full` because it has special timing requirements |
 
 Multiple positional suites are serialized. For example,
 `run --panel-read-write pda-live-fast pda-live-long` completes the fast suite,
@@ -364,6 +369,38 @@ serial port to the Jandy **Power Center emulator**, then run:
   --mode jandy-power-center \
   --panel \
   aquapda-power-center-menu-walk
+```
+
+To run the complete general PDA regression against that same Power Center
+connection, grant equipment-control access and select the full composite:
+
+```bash
+.venv/bin/aqualinkd-validator run \
+  --mode jandy-power-center \
+  --panel-read-write \
+  pda-power-center-full
+```
+
+The Power Center targets reuse the exact declarative testcase definitions used
+for physical panels. Only the target binding, run label, and serial endpoint
+differ. `pda-power-center-full` starts three serialized AqualinkD processes:
+awake validation with `pda_sleep_mode=no`, sleep validation with
+`pda_sleep_mode=yes`, and the AquaPDA menu walk with sleep disabled again.
+Each member writes a separate artifact directory and must restore any changed
+equipment before the composite continues. Use `pda-power-center-fast`,
+`pda-power-center-awake`, or `pda-power-center-sleep` for focused runs.
+
+The active Spa Heater/cooldown test remains explicit because it uses the
+installation-specific `spa.fill_time` setting. Run it separately when the
+selected Power Center model supplies the required Pool/Spa equipment and
+temperature behavior:
+
+```bash
+.venv/bin/aqualinkd-validator run \
+  --mode jandy-power-center \
+  --panel-read-write \
+  --site-config /path/to/aqualinkd-validator.yaml \
+  pda-power-center-spa
 ```
 
 The AquaPDA WebSocket is the northbound key/display interface; the Jandy Power

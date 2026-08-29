@@ -11,7 +11,13 @@ FILTER_PUMP = "Filter_Pump"
 _AUX_IDENTIFIER = re.compile(r"Aux_(\d+)$", re.IGNORECASE)
 _SPA_MODE_IDENTIFIERS = frozenset({"Spa", "Spa_Mode"})
 _STATUS_HYDRAULIC_CONTROLS = frozenset(
-    {*_SPA_MODE_IDENTIFIERS, "Solar_Heater"}
+    {
+        *_SPA_MODE_IDENTIFIERS,
+        # AqualinkD exposes the PDA solar-heater position under this legacy
+        # identifier even when the panel does not have solar configured.
+        "Extra_Aux",
+        "Solar_Heater",
+    }
 )
 
 SkipSink = Callable[[str, str], None]
@@ -125,7 +131,7 @@ class PdaDeviceSelector:
         selected = tuple(
             identifier
             for identifier in identifiers
-            if not self._skip_spa_mode(identifier, phase=phase)
+            if not self._skip_hydraulic_control(identifier, phase=phase)
             and not self.skip_unactionable(identifier, phase=phase)
         )
         if not selected:
@@ -210,12 +216,17 @@ class PdaDeviceSelector:
         )
         return (1, button_number, identifier)
 
-    def _skip_spa_mode(self, identifier: str, *, phase: str) -> bool:
-        if identifier not in _SPA_MODE_IDENTIFIERS:
+    def _skip_hydraulic_control(self, identifier: str, *, phase: str) -> bool:
+        if identifier not in _STATUS_HYDRAULIC_CONTROLS:
             return False
+        reason = (
+            "Spa mode changes water routing and is covered by pda-live-spa"
+            if identifier in _SPA_MODE_IDENTIFIERS
+            else "Solar heating is excluded from general equipment tests"
+        )
         self._record_skip(
             f"{phase}.{identifier}",
-            "Spa mode changes water routing and is covered by pda-live-spa",
+            reason,
         )
         return True
 

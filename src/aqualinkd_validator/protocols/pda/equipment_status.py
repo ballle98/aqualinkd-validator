@@ -23,7 +23,11 @@ STATUS_MENU_FINISHED_MARKERS = (
 )
 
 _STATUS_HEADER = "Pass Equiptment msg 'EQUIPMENT STATUS"
-_STATUS_MESSAGE = re.compile(r"\*\*\* Pass Equiptment msg '([^']*)'")
+_STATUS_MESSAGE = re.compile(
+    r"\*\*\* Pass Equiptment msg '([^']*)'",
+    re.IGNORECASE,
+)
+_HOME_LINE = re.compile(r"PDA Menu Line 1\s*=\s*AIR\b", re.IGNORECASE)
 _FOUND_STATUS = re.compile(
     r"Found(?: EQ CTL)? Status for (.+?)\s*=\s*['\"]?(.+?)['\"]?\s*$",
     re.IGNORECASE,
@@ -102,8 +106,9 @@ class PdaEquipmentStatusService:
             "[ WAIT ] Equipment status: waiting for the PDA home menu "
             f"(timeout {self._status_timeout_seconds:g}s)"
         )
-        home = await self._events.wait_for(
-            "PDA Menu Line 1 = AIR",
+        home = await self._events.wait_for_match(
+            lambda event: _HOME_LINE.search(event.text) is not None,
+            description="PDA home-menu AIR line",
             after=after,
             timeout_seconds=self._status_timeout_seconds,
         )
@@ -206,7 +211,7 @@ class PdaEquipmentStatusService:
         for event in reversed(history):
             if event.sequence >= started.sequence:
                 continue
-            if _STATUS_HEADER in event.text:
+            if _STATUS_HEADER.casefold() in event.text.casefold():
                 first_sequence = event.sequence
                 break
         return tuple(

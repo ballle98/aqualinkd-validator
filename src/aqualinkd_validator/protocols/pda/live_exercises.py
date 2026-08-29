@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from ...domain import EquipmentSnapshot
 from ...interfaces import ScenarioContext
 from .device_selection import PdaDeviceSelectionFailure
@@ -38,11 +40,26 @@ class PdaLiveExerciseFailure(RuntimeError):
 class PdaLiveExercises:
     """Run the higher-level physical-panel exercises for one PDA session."""
 
-    def __init__(self, session: PdaRunSession) -> None:
+    def __init__(
+        self,
+        session: PdaRunSession,
+        *,
+        return_home_for_status: (
+            Callable[[ScenarioContext], Awaitable[None]] | None
+        ) = None,
+    ) -> None:
         self._session = session
+        self._return_home_for_status = return_home_for_status
 
     async def verify_equipment_status(self, context: ScenarioContext) -> None:
         initial = self._require_initial_snapshot()
+        prepare_for_status: Callable[[], Awaitable[None]] | None = None
+        if self._return_home_for_status is not None:
+            return_home = self._return_home_for_status
+
+            async def prepare_for_status() -> None:
+                await return_home(context)
+
         candidates = self._session.device_selector.status_candidates(
             phase="devices.status_menu.setup"
         )
@@ -69,6 +86,7 @@ class PdaLiveExercises:
                 record_skip=self._session.recorder.skip,
                 record_measurement=self._session.recorder.append_measurement,
                 progress=lambda message: print(message, flush=True),
+                prepare_for_status=prepare_for_status,
             ).run(initial_snapshot=initial, candidates=candidates)
         except (PdaEquipmentSetupFailure, PdaRunSessionFailure) as error:
             raise PdaLiveExerciseFailure(str(error)) from error

@@ -449,7 +449,9 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
         member_args = copy.copy(args)
         member = RUN_TARGETS.resolve(member_name)
         member_args.run_target = member
-        suffix = member.artifact_suffix or member_name.removeprefix("pda-live-")
+        suffix = member.artifact_suffix or member_name.removeprefix(
+            "pda-live-"
+        ).removeprefix("pda-power-center-")
         member_args.label = f"{original_label}-{suffix}"
         print(
             f"\n=== {composite.identifier} member: {member_name} ===",
@@ -569,6 +571,9 @@ def _run_process(args: argparse.Namespace) -> int:
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
                 spa_fill_seconds=site_config.spa.fill_seconds,
                 case_ids=target.case_ids,
+                force_status_home_with_aquapda=(
+                    target.mode == "jandy-power-center"
+                ),
             ),
             api_base_url_override=api_base_url,
             testcase=target.testcase,
@@ -817,7 +822,7 @@ def _suite_manifest(
     manifest: dict[str, Any] = {
         "name": target.identifier,
         "description": target.description,
-        "mode": "physical-panel" if target.source is not None else target.mode,
+        "mode": target.mode,
         "aqualinkd_args": list(target.aqualinkd_args),
         "execution_phase": execution_phase,
     }

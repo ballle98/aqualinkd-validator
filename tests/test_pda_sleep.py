@@ -17,6 +17,7 @@ from aqualinkd_validator.protocols.pda.sleep import (
     PDA_ADDRESS_PROBE,
     PDA_ADDRESS_STATUS,
     PDA_SLEEPING,
+    PDA_WAKING,
     WAKE_INIT_ACTIVE,
     WAKE_INIT_FINISHED,
 )
@@ -25,6 +26,9 @@ from aqualinkd_validator.protocols.pda.sleep import (
 class PdaSleepWakeServiceTests(unittest.TestCase):
     def test_natural_cycle_records_duty_cycle_and_measurements(self) -> None:
         asyncio.run(self._observe_natural_cycle())
+
+    def test_natural_cycle_accepts_sleep_entered_during_initialization(self) -> None:
+        asyncio.run(self._observe_cycle_that_started_before_testcase())
 
     def test_status_retry_window_rejects_probe_transition(self) -> None:
         asyncio.run(self._reject_probe_during_status_retry())
@@ -71,6 +75,31 @@ class PdaSleepWakeServiceTests(unittest.TestCase):
                     "pda.wake.duration",
                     "pda.sleep_wake.cycle",
                 ],
+            )
+
+    async def _observe_cycle_that_started_before_testcase(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            events = OutputMonitor()
+            timeline = Timeline(Path(directory) / "timeline.jsonl", 0)
+            measurements: list[dict[str, Any]] = []
+            await events.publish(1_000_000_000, "stdout", PDA_SLEEPING)
+            service = self._service(events, timeline, measurements)
+            task = asyncio.create_task(service.observe_natural_cycle())
+            await asyncio.sleep(0)
+            await events.publish(11_000_000_000, "stdout", PDA_WAKING)
+            await events.publish(12_000_000_000, "stdout", WAKE_INIT_ACTIVE)
+            await events.publish(16_000_000_000, "stdout", WAKE_INIT_FINISHED)
+            await events.publish(20_000_000_000, "stdout", PDA_SLEEPING)
+            try:
+                result = await task
+            finally:
+                timeline.close()
+
+            self.assertEqual(result.report["cycle_ms"], 19000.0)
+            self.assertEqual(measurements[0]["name"], "pda.sleep.enter")
+            self.assertEqual(
+                measurements[0]["start_offset_ns"],
+                measurements[0]["log_completion_offset_ns"],
             )
 
     async def _reject_probe_during_status_retry(self) -> None:

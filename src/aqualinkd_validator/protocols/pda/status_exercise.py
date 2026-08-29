@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -12,6 +12,7 @@ from .equipment_status import PdaEquipmentStatusResult, PdaEquipmentStatusServic
 ProgressSink = Callable[[str], None]
 SkipSink = Callable[[str, str], None]
 MeasurementSink = Callable[..., None]
+PrepareForStatus = Callable[[], Awaitable[None]]
 
 
 class EquipmentStatusSetup(Protocol):
@@ -40,6 +41,7 @@ class PdaEquipmentStatusExercise:
         record_skip: SkipSink,
         record_measurement: MeasurementSink,
         progress: ProgressSink,
+        prepare_for_status: PrepareForStatus | None = None,
     ) -> None:
         self._events = events
         self._timeline = timeline
@@ -48,6 +50,7 @@ class PdaEquipmentStatusExercise:
         self._record_skip = record_skip
         self._record_measurement = record_measurement
         self._progress = progress
+        self._prepare_for_status = prepare_for_status
 
     async def run(
         self,
@@ -64,8 +67,10 @@ class PdaEquipmentStatusExercise:
             )
             return PdaEquipmentStatusExerciseResult(verification=None)
 
-        cursor = self._events.cursor
         wait_started = self._timeline.offset_ns()
+        cursor = self._events.cursor
+        if self._prepare_for_status is not None:
+            await self._prepare_for_status()
         loop = await self._status.wait_for_complete_loop(after=cursor)
         verification = await self._status.verify(
             initial_snapshot=initial_snapshot,
