@@ -12,6 +12,7 @@ from aqualinkd_validator.protocols.pda import (
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
+    PdaStatusRetryUnavailable,
 )
 from aqualinkd_validator.protocols.pda.sleep import (
     PDA_ADDRESS_PROBE,
@@ -32,6 +33,9 @@ class PdaSleepWakeServiceTests(unittest.TestCase):
 
     def test_status_retry_window_rejects_probe_transition(self) -> None:
         asyncio.run(self._reject_probe_during_status_retry())
+
+    def test_status_retry_window_identifies_non_status_sleep(self) -> None:
+        asyncio.run(self._reject_non_status_sleep())
 
     def test_probe_window_reports_transition_delay(self) -> None:
         asyncio.run(self._observe_probe_window())
@@ -140,6 +144,20 @@ class PdaSleepWakeServiceTests(unittest.TestCase):
             finally:
                 timeline.close()
             self.assertEqual(result.probe_delay_seconds, 2.5)
+
+    async def _reject_non_status_sleep(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            events = OutputMonitor()
+            timeline = Timeline(Path(directory) / "timeline.jsonl", 0)
+            service = self._service(events, timeline, [])
+            task = asyncio.create_task(service.wait_for_status_retry_window())
+            await asyncio.sleep(0)
+            await events.publish(1_000_000_000, "stdout", PDA_SLEEPING)
+            try:
+                with self.assertRaises(PdaStatusRetryUnavailable):
+                    await task
+            finally:
+                timeline.close()
 
     @staticmethod
     def _service(

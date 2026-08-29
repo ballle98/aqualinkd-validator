@@ -28,6 +28,7 @@ from .sleep import (
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
+    PdaStatusRetryUnavailable,
 )
 from .spa import PdaSpaExercise, SpaExerciseConfig
 from .status_exercise import PdaEquipmentStatusExercise
@@ -191,10 +192,24 @@ class PdaLiveExercises:
         identifier = self._sleep_test_device(phase=phase)
         if identifier is None:
             return
+        service = self._sleep_wake_service(context)
         try:
-            window = await self._sleep_wake_service(
-                context
-            ).wait_for_status_retry_window()
+            window = await service.wait_for_status_retry_window()
+        except PdaStatusRetryUnavailable:
+            print(
+                "[STATE ] Initial sleep followed a non-STATUS packet; "
+                f"priming a clean wake/sleep cycle with {identifier}",
+                flush=True,
+            )
+            await self._toggle_round_trip(
+                context,
+                identifier,
+                phase=f"{phase}.prime",
+            )
+            try:
+                window = await service.wait_for_status_retry_window()
+            except PdaSleepWakeFailure as error:
+                raise PdaLiveExerciseFailure(str(error)) from error
         except PdaSleepWakeFailure as error:
             raise PdaLiveExerciseFailure(str(error)) from error
         print(

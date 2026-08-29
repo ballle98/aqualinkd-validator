@@ -64,6 +64,10 @@ class PdaSleepWakeFailure(RuntimeError):
     """Raised when an expected PDA sleep/wake transition is not observed."""
 
 
+class PdaStatusRetryUnavailable(PdaSleepWakeFailure):
+    """Raised when sleep began while the panel was retrying another packet."""
+
+
 class PdaSleepWakeService:
     """Observe PDA sleep, wake, STATUS-retry, and probe transitions."""
 
@@ -184,7 +188,7 @@ class PdaSleepWakeService:
             )
         retry_count = sum(PDA_ADDRESS_STATUS in event.text for event in events)
         if retry_count == 0:
-            raise PdaSleepWakeFailure(
+            raise PdaStatusRetryUnavailable(
                 "No repeated PDA STATUS packet was observed before the "
                 "STATUS-retry command"
             )

@@ -33,6 +33,7 @@ from .sleep import (
     PdaSleepWakeConfig,
     PdaSleepWakeFailure,
     PdaSleepWakeService,
+    PdaStatusRetryUnavailable,
     PdaStatusRetryWindow,
 )
 from .startup import PdaStartupConfig, PdaStartupCoordinator, PdaStartupOutcome
@@ -70,6 +71,7 @@ __all__ = [
     "PdaSleepWakeConfig",
     "PdaSleepWakeFailure",
     "PdaSleepWakeService",
+    "PdaStatusRetryUnavailable",
     "PdaStatusRetryWindow",
     "PdaStartupConfig",
     "PdaStartupCoordinator",
