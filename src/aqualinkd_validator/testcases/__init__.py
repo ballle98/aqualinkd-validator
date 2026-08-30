@@ -2,6 +2,7 @@
 
 from .executor import (
     StepExecution,
+    StepProgress,
     TestcaseExecution,
     TestcaseExecutionFailure,
     TestcaseExecutor,
@@ -65,6 +66,7 @@ __all__ = [
     "SetDeviceStep",
     "SetSetpointStep",
     "StepExecution",
+    "StepProgress",
     "TestcaseDefinition",
     "TestcaseSuiteConfig",
     "TestcaseSuiteDefinition",

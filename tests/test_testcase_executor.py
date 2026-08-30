@@ -112,9 +112,12 @@ class TestcaseExecutorTests(unittest.TestCase):
     async def _execute_success(self) -> None:
         keywords = RecordingKeywords()
         progress: list[str] = []
-        result = await DeclarativeExecutor(keywords, progress=progress.append).execute(
-            make_testcase()
-        )
+        observed = []
+        result = await DeclarativeExecutor(
+            keywords,
+            progress=progress.append,
+            observer=observed.append,
+        ).execute(make_testcase())
 
         self.assertEqual(
             keywords.calls,
@@ -131,6 +134,8 @@ class TestcaseExecutorTests(unittest.TestCase):
             "[ PASS ] pda.filter finally[0] restore_original_state",
             progress[-1],
         )
+        self.assertEqual(observed[0].state, "running")
+        self.assertEqual(observed[-1].state, "passed")
 
     async def _execute_failure(self) -> None:
         keywords = RecordingKeywords(fail_keyword="assert_device")

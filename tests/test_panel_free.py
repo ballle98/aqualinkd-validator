@@ -122,6 +122,7 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transport.outgoing, [b"\x10\x02"])
         self.assertFalse(transport.is_open)
         self.assertEqual(artifacts.json("scenario.json")["status"], "passed")
+        self.assertEqual(artifacts.json("active-step.json")["state"], "passed")
         self.assertTrue(artifacts.binary_values["serial.pcapng"])
         history = artifacts.values["http.jsonl"].splitlines()
         self.assertEqual(len(history), 1)
@@ -232,6 +233,80 @@ class PanelFreeCompositionTests(unittest.TestCase):
             self.assertIn(
                 "HTTP API: http://127.0.0.1:", process.output_before_run
             )
+
+    def test_child_exit_preserves_active_phase_and_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "aqualinkd"
+            binary.write_text(
+                "#!/bin/sh\nprintf 'mock child failure\\n' >&2\nexit 7\n",
+                encoding="utf-8",
+            )
+            binary.chmod(0o755)
+            web = root / "web"
+            web.mkdir()
+            artifacts = root / "artifacts"
+
+            result = asyncio.run(
+                run_panel_free_testcase(
+                    testcase=_testcase(),
+                    aqualinkd=binary,
+                    web_directory=web,
+                    artifact_dir=artifacts,
+                    duration_seconds=2,
+                )
+            )
+
+            self.assertEqual(result.reason, "child_exit_during_scenario")
+            self.assertEqual(result.child_returncode, 7)
+            active = json.loads((artifacts / "active-step.json").read_text())
+            self.assertEqual(active["phase"], "http_readiness")
+            self.assertIn(
+                "scenario phase http_readiness",
+                (artifacts / "failure-summary.txt").read_text(),
+            )
+            self.assertIn("mock child failure", (artifacts / "stderr.log").read_text())
+            for name in ("scenario.json", "timeline.jsonl", "http.jsonl"):
+                self.assertTrue((artifacts / name).exists(), name)
+
+    def test_scenario_timeout_preserves_active_testcase_step(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = root / "artifacts"
+            mock = Path(__file__).parents[1] / "test-support" / "mock-aqualinkd"
+            web = Path(__file__).parents[1] / "test-support" / "web"
+            testcase = CaseDefinition(
+                schema=1,
+                identifier="rs485.timeout",
+                description="Wait forever for a serial frame",
+                mode="rs485-panel-emulator",
+                access="read-only",
+                requirements=CaseRequirements("rs485"),
+                steps=(ExpectSerialStep(b"never", 30),),
+                finally_steps=(),
+                fixture=PanelFixtureDefinition("RS-4 Combo", "0x0a"),
+            )
+
+            result = asyncio.run(
+                run_panel_free_testcase(
+                    testcase=testcase,
+                    aqualinkd=mock,
+                    web_directory=web,
+                    artifact_dir=artifacts,
+                    duration_seconds=2,
+                    http_ready_timeout_seconds=1,
+                )
+            )
+
+            self.assertEqual(result.reason, "scenario_timeout")
+            active = json.loads((artifacts / "active-step.json").read_text())
+            self.assertEqual(active["keyword"], "expect_serial")
+            self.assertEqual(active["state"], "failed")
+            summary = (artifacts / "failure-summary.txt").read_text()
+            self.assertIn("steps[0] expect_serial (failed)", summary)
+            self.assertIn("CancelledError", summary)
+            for name in ("stdout.log", "stderr.log", "timeline.jsonl", "http.jsonl"):
+                self.assertTrue((artifacts / name).exists(), name)
 
 
 class _IdentityProcessRunner(FakeProcessRunner):

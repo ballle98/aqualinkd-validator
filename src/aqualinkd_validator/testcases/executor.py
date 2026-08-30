@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from .model import (
     AssertDeviceStep,
@@ -175,6 +175,17 @@ class StepExecution:
 
 
 @dataclass(frozen=True)
+class StepProgress:
+    testcase_id: str
+    section: str
+    index: int
+    keyword: str
+    state: Literal["running", "passed", "failed"]
+    duration_seconds: float | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class TestcaseExecution:
     identifier: str
     steps: tuple[StepExecution, ...]
@@ -194,10 +205,12 @@ class TestcaseExecutor:
         *,
         clock: Callable[[], float] = time.monotonic,
         progress: Callable[[str], None] | None = None,
+        observer: Callable[[StepProgress], None] | None = None,
     ) -> None:
         self._keywords = keywords
         self._clock = clock
         self._progress = progress or (lambda message: None)
+        self._observer = observer or (lambda event: None)
 
     async def execute(self, testcase: TestcaseDefinition) -> TestcaseExecution:
         started = self._clock()
@@ -262,6 +275,15 @@ class TestcaseExecutor:
         started = self._clock()
         label = f"{testcase_id} {section}[{index}] {step.keyword}"
         self._progress(f"[ RUN  ] {label}")
+        self._observer(
+            StepProgress(
+                testcase_id,
+                section,
+                index,
+                step.keyword,
+                "running",
+            )
+        )
         try:
             await self._dispatch(step)
         except BaseException as error:
@@ -269,6 +291,17 @@ class TestcaseExecutor:
             self._progress(
                 f"[ FAIL ] {label} completed in {duration:.3f}s — "
                 f"{type(error).__name__}: {error}"
+            )
+            self._observer(
+                StepProgress(
+                    testcase_id,
+                    section,
+                    index,
+                    step.keyword,
+                    "failed",
+                    duration,
+                    f"{type(error).__name__}: {error}",
+                )
             )
             if isinstance(
                 error,
@@ -280,6 +313,16 @@ class TestcaseExecutor:
             ) from error
         duration = self._clock() - started
         self._progress(f"[ PASS ] {label} completed in {duration:.3f}s")
+        self._observer(
+            StepProgress(
+                testcase_id,
+                section,
+                index,
+                step.keyword,
+                "passed",
+                duration,
+            )
+        )
         return StepExecution(
             section=section,
             index=index,

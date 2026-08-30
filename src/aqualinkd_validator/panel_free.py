@@ -39,6 +39,7 @@ from .testcases import (
     ExpectSerialStep,
     HttpRequestStep,
     SerialSendStep,
+    StepProgress,
     TestcaseDefinition,
     TestcaseExecutor,
     UnsupportedTestcaseKeywords,
@@ -128,6 +129,22 @@ class PanelFreeScenario:
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
         started = time.monotonic()
+        current_step: dict[str, Any] = {}
+
+        def record_phase(phase: str) -> None:
+            nonlocal current_step
+            current_step = {
+                "kind": "scenario_phase",
+                "phase": phase,
+                "state": "running",
+            }
+            context.artifacts.write_json("active-step.json", current_step)
+
+        def record_step(event: StepProgress) -> None:
+            nonlocal current_step
+            current_step = {"kind": "testcase_step", **asdict(event)}
+            context.artifacts.write_json("active-step.json", current_step)
+
         report: dict[str, Any] = {
             "testcase": self._testcase.identifier,
             "api_base_url": self._api.base_url,
@@ -163,6 +180,7 @@ class PanelFreeScenario:
             f"(timeout {self._http_ready_timeout_seconds:g}s)",
             flush=True,
         )
+        record_phase("http_readiness")
         try:
             if panel_driver is None:
                 await serial.open()
@@ -176,12 +194,15 @@ class PanelFreeScenario:
             )
             print("[STATE ] AqualinkD HTTP API ready", flush=True)
             if panel_driver is not None:
+                record_phase("panel_driver_startup")
                 print("[ WAIT ] AllButton panel probe/STATUS/ACK", flush=True)
                 await panel_driver.start()
                 print("[STATE ] AllButton panel driver active", flush=True)
+            record_phase("testcase_startup")
             execution = await TestcaseExecutor(
                 PanelFreeKeywords(serial, http, panel_driver),
                 progress=lambda message: print(message, flush=True),
+                observer=record_step,
             ).execute(self._testcase)
             report.update(
                 status="passed",
@@ -191,7 +212,11 @@ class PanelFreeScenario:
             )
             outcome = ScenarioOutcome("passed", "scenario_completed")
         except asyncio.CancelledError:
-            report.update(status="failed", reason="scenario_cancelled")
+            report.update(
+                status="failed",
+                reason="scenario_cancelled",
+                error="CancelledError: scenario cancelled by process supervisor",
+            )
             raise
         except BaseException as error:
             report.update(
@@ -205,7 +230,13 @@ class PanelFreeScenario:
             http.close()
             if panel_driver is not None:
                 await panel_driver.stop()
+            report["last_step"] = current_step
             context.artifacts.write_json("scenario.json", report)
+            if report["status"] == "failed":
+                context.artifacts.write_text(
+                    "failure-summary.txt",
+                    _failure_summary(report, current_step),
+                )
         state = "PASS" if outcome.status == "passed" else "FAIL"
         print(
             f"[{state:^6}] {self._testcase.identifier} completed in "
@@ -349,3 +380,21 @@ def _read_aqualinkd_identity(artifact_dir: Path) -> dict[str, str]:
                 if panel_match is not None:
                     identity["configured_panel_type"] = panel_match.group(1).strip()
     return identity
+
+
+def _failure_summary(report: dict[str, Any], step: dict[str, Any]) -> str:
+    if step.get("kind") == "testcase_step":
+        location = (
+            f"{step.get('testcase_id')} {step.get('section')}"
+            f"[{step.get('index')}] {step.get('keyword')} ({step.get('state')})"
+        )
+    else:
+        location = f"scenario phase {step.get('phase', 'unknown')}"
+    return (
+        f"Testcase: {report['testcase']}\n"
+        f"Reason: {report['reason']}\n"
+        f"Active or last step: {location}\n"
+        f"Error: {report.get('error', 'not reported')}\n"
+        "Diagnostics: scenario.json, timeline.jsonl, stdout.log, stderr.log, "
+        "http.jsonl, and active-step.json\n"
+    )
