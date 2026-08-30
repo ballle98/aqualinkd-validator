@@ -36,3 +36,12 @@ jobs:
         run: docker build --tag aqualinkd-validator:test .
       - name: Run doctor
         run: docker run --rm aqualinkd-validator:test doctor --json
+      - name: Run panel-free mock daemon
+        run: |
+          docker run --rm aqualinkd-validator:test run-panel-free \
+            --aqualinkd /opt/aqualinkd-validator/test-support/mock-aqualinkd \
+            --web-directory /opt/aqualinkd-validator/test-support/web \
+            --duration 10 \
+            --http-ready-timeout 5 \
+            --label ci-mock \
+            /opt/aqualinkd-validator/testcases/rs485/probe-ack.yaml

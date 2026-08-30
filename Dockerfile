@@ -14,6 +14,7 @@ RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
 COPY src ./src
 COPY testcases ./testcases
+COPY test-support ./test-support
 
 ENV PYTHONPATH=/opt/aqualinkd-validator/src
 
