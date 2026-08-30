@@ -20,6 +20,7 @@ from .model import (
     HttpRequestStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -36,6 +37,8 @@ class TestcaseKeywords(Protocol):
     """Operations that a protocol/runtime adapter exposes to YAML tests."""
 
     async def wait_for(self, step: WaitForStep) -> None: ...
+
+    async def return_pda_home(self, step: ReturnPdaHomeStep) -> None: ...
 
     async def serial_send(self, step: SerialSendStep) -> None: ...
 
@@ -92,6 +95,9 @@ class UnsupportedTestcaseKeywords:
     """Explicit defaults for runtimes that implement only some keywords."""
 
     async def wait_for(self, step: WaitForStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def return_pda_home(self, step: ReturnPdaHomeStep) -> None:
         self._unsupported(step.keyword)
 
     async def serial_send(self, step: SerialSendStep) -> None:
@@ -333,6 +339,8 @@ class TestcaseExecutor:
     async def _dispatch(self, step: TestcaseStep) -> None:
         if isinstance(step, WaitForStep):
             await self._keywords.wait_for(step)
+        elif isinstance(step, ReturnPdaHomeStep):
+            await self._keywords.return_pda_home(step)
         elif isinstance(step, SerialSendStep):
             await self._keywords.serial_send(step)
         elif isinstance(step, ExpectSerialStep):

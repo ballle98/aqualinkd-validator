@@ -15,6 +15,9 @@ steps:
       activation_timeout: 130s
       completion_timeout: 90s
       convergence_timeout: 10s
+  - assert_no_log:
+      contains: Ignoring invalid PDA character highlight
+      duration: 100ms
 finally:
   - restore_original_state:
       timeout: 300s

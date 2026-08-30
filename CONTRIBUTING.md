@@ -167,6 +167,7 @@ finally:
 The physical-panel PDA keyword set should remain deliberately small:
 
 - `wait_for`
+- `return_pda_home`
 - `set_device`
 - `set_setpoint`
 - `exercise_heater`
@@ -175,6 +176,11 @@ The physical-panel PDA keyword set should remain deliberately small:
 - `assert_no_log`
 - `wait_for_stable_equipment`
 - `restore_original_state`
+
+`return_pda_home` uses AqualinkD's AquaPDA HTML/WebSocket interface to put the
+southbound PDA session at a known Home-menu starting point. This makes menu
+transition regressions reproducible without encoding a particular panel size
+or menu layout in YAML.
 
 RS485 panel-emulator cases use the transport-oriented `serial_send`,
 `expect_serial`, `http_request`, `wait_http_json`, and

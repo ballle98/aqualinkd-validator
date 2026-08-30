@@ -1,0 +1,47 @@
+schema: 1
+id: pda.device-from-home
+description: Toggle the filter pump in both directions from the PDA Home menu
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - return_pda_home:
+      timeout: 30s
+  - set_device:
+      id: Filter_Pump
+      state: opposite-of-original
+      activation_timeout: 130s
+      completion_timeout: 90s
+      convergence_timeout: 10s
+  - assert_device:
+      id: Filter_Pump
+      state: requested
+      timeout: 10s
+  - return_pda_home:
+      timeout: 30s
+  - set_device:
+      id: Filter_Pump
+      state: original
+      activation_timeout: 130s
+      completion_timeout: 90s
+      convergence_timeout: 10s
+  - assert_device:
+      id: Filter_Pump
+      state: original
+      timeout: 10s
+  - assert_no_log:
+      contains: waitForPDAnextMenu - received STATUS instead of CLEAR
+      duration: 100ms
+  - assert_no_log:
+      contains: BAD PACKET
+      duration: 100ms
+  - assert_no_log:
+      contains: Ignoring invalid PDA character highlight
+      duration: 100ms
+finally:
+  - restore_original_state:
+      timeout: 300s

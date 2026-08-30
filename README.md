@@ -435,6 +435,8 @@ steps:
   - wait_for:
       condition: pda.initialized
       timeout: 180s
+  - return_pda_home:
+      timeout: 30s
   - set_device:
       id: Filter_Pump
       state: opposite-of-original

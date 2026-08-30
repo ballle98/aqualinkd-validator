@@ -21,6 +21,7 @@ from ...testcases.model import (
     ExerciseStatusRetryStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    ReturnPdaHomeStep,
     SetDeviceStep,
     SetSetpointStep,
     VerifyEquipmentStatusStep,
@@ -94,6 +95,7 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         restoration: RestorationSession,
         markers: PdaKeywordMarkers,
         initialize: InitializePda,
+        return_home: Callable[[float], Awaitable[None]] | None = None,
         wait_for_stable: StableEquipmentWaiter,
         restore: RestoreEquipment,
         verify_status: ComplexPdaOperation | None = None,
@@ -110,6 +112,7 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         self._restoration = restoration
         self._markers = markers
         self._initialize = initialize
+        self._return_home = return_home
         self._wait_for_stable = wait_for_stable
         self._restore = restore
         self._verify_status = verify_status
@@ -141,6 +144,18 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
                 "PDA initialization did not capture initial equipment state"
             )
         self._initialized = True
+
+    async def return_pda_home(self, step: ReturnPdaHomeStep) -> None:
+        self._require_initialized()
+        if self._return_home is None:
+            raise PdaKeywordFailure("AquaPDA home navigation is unavailable")
+        try:
+            async with asyncio.timeout(step.timeout_seconds):
+                await self._return_home(step.timeout_seconds)
+        except TimeoutError as error:
+            raise PdaKeywordFailure(
+                f"AquaPDA did not return home within {step.timeout_seconds:g}s"
+            ) from error
 
     async def set_device(self, step: SetDeviceStep) -> None:
         self._require_initialized()

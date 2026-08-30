@@ -232,6 +232,9 @@ class PdaScenarioRuntime:
                 },
             ),
             initialize=lambda: self._session.initialize(context),
+            return_home=lambda timeout: self._return_aquapda_home(
+                timeout_seconds=timeout,
+            ),
             wait_for_stable=wait_for_stable,
             restore=restore,
             verify_status=lambda: self._exercises.verify_equipment_status(context),
@@ -335,22 +338,24 @@ class PdaScenarioRuntime:
                 flush=True,
             )
             return
-        client = self._aquapda_client_factory(self._session.api_client.base_url)
-        print(
-            "[ WAIT ] Equipment status: returning the simulated PDA to home",
-            flush=True,
+        await self._return_aquapda_home(
+            timeout_seconds=self._config.aquapda_timeout_seconds,
         )
+
+    async def _return_aquapda_home(self, *, timeout_seconds: float) -> None:
+        client = self._aquapda_client_factory(self._session.api_client.base_url)
+        print("[ WAIT ] Returning the simulated PDA to home", flush=True)
         try:
             await client.connect()
             packet_start = client.packet_count
             await client.wait_for_packets(
                 6,
                 after=packet_start,
-                timeout_seconds=self._config.aquapda_timeout_seconds,
+                timeout_seconds=timeout_seconds,
             )
             await return_aquapda_home(
                 client,
-                timeout_seconds=self._config.aquapda_timeout_seconds,
+                timeout_seconds=timeout_seconds,
                 home_attempts=8,
                 progress=lambda message: print(message, flush=True),
             )

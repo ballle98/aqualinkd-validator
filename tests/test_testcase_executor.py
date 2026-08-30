@@ -12,6 +12,7 @@ from aqualinkd_validator.testcases import (
     ExpectSerialStep,
     HttpRequestStep,
     RestoreOriginalStateStep,
+    ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -40,6 +41,9 @@ class RecordingKeywords(UnsupportedTestcaseKeywords):
         self._fail_keyword = fail_keyword
 
     async def wait_for(self, step: WaitForStep) -> None:
+        await self._record(step.keyword)
+
+    async def return_pda_home(self, step: ReturnPdaHomeStep) -> None:
         await self._record(step.keyword)
 
     async def serial_send(self, step: SerialSendStep) -> None:
@@ -121,14 +125,20 @@ class TestcaseExecutorTests(unittest.TestCase):
 
         self.assertEqual(
             keywords.calls,
-            ["wait_for", "set_device", "assert_device", "restore_original_state"],
+            [
+                "wait_for",
+                "return_pda_home",
+                "set_device",
+                "assert_device",
+                "restore_original_state",
+            ],
         )
         self.assertEqual(result.identifier, "pda.filter")
         self.assertEqual(
             [execution.section for execution in result.steps],
-            ["steps", "steps", "steps", "finally"],
+            ["steps", "steps", "steps", "steps", "finally"],
         )
-        self.assertEqual(len(progress), 8)
+        self.assertEqual(len(progress), 10)
         self.assertEqual(progress[0], "[ RUN  ] pda.filter steps[0] wait_for")
         self.assertIn(
             "[ PASS ] pda.filter finally[0] restore_original_state",
@@ -142,18 +152,24 @@ class TestcaseExecutorTests(unittest.TestCase):
         progress: list[str] = []
         with self.assertRaisesRegex(
             ExecutionFailure,
-            r"pda\.filter\.steps\[2\]\.assert_device: simulated timeout",
+            r"pda\.filter\.steps\[3\]\.assert_device: simulated timeout",
         ):
             await DeclarativeExecutor(keywords, progress=progress.append).execute(
                 make_testcase()
             )
         self.assertEqual(
             keywords.calls,
-            ["wait_for", "set_device", "assert_device", "restore_original_state"],
+            [
+                "wait_for",
+                "return_pda_home",
+                "set_device",
+                "assert_device",
+                "restore_original_state",
+            ],
         )
         self.assertTrue(
             any(
-                line.startswith("[ FAIL ] pda.filter steps[2] assert_device")
+                line.startswith("[ FAIL ] pda.filter steps[3] assert_device")
                 for line in progress
             )
         )
@@ -263,6 +279,7 @@ def make_testcase() -> DeclarativeCase:
         requirements=CaseRequirements(protocol="pda"),
         steps=(
             WaitForStep("pda.initialized", 180),
+            ReturnPdaHomeStep(30),
             SetDeviceStep("Filter_Pump", "on", 130, 90, 10),
             AssertDeviceStep("Filter_Pump", "requested", 10),
         ),

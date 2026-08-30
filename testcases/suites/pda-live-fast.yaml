@@ -15,4 +15,5 @@ config:
 testcases:
   - ../pda/initialization.yaml
   - ../pda/filter-after-init.yaml
+  - ../pda/device-from-home.yaml
   - ../pda/pool-heater.yaml

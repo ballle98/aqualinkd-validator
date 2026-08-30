@@ -17,6 +17,7 @@ from aqualinkd_validator.testcases import (
     HttpRequestStep,
     ObserveSleepCycleStep,
     RestoreOriginalStateStep,
+    ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
     VerifyEquipmentStatusStep,
@@ -47,7 +48,7 @@ class TestcaseYamlTests(unittest.TestCase):
         with redirect_stdout(output), self.assertRaises(SystemExit) as result:
             main(["validate-testcase", str(path)])
         self.assertEqual(result.exception.code, 0)
-        self.assertIn("pda-live-fast, 3 testcase(s)", output.getvalue())
+        self.assertIn("pda-live-fast, 4 testcase(s)", output.getvalue())
 
     def test_loads_versioned_testcase_into_typed_steps(self) -> None:
         testcase = load_testcase(
@@ -95,8 +96,17 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertEqual(suite.config.override_map(), {"pda_sleep_mode": "no"})
         self.assertEqual(
             [member.testcase.identifier for member in suite.members],
-            ["pda.initialization", "pda.filter-after-init", "pda.pool-heater"],
+            [
+                "pda.initialization",
+                "pda.filter-after-init",
+                "pda.device-from-home",
+                "pda.pool-heater",
+            ],
         )
+        home = suite.members[2].testcase.steps[1]
+        self.assertIsInstance(home, ReturnPdaHomeStep)
+        assert isinstance(home, ReturnPdaHomeStep)
+        self.assertEqual(home.timeout_seconds, 30)
         self.assertTrue(suite.mutates_panel)
 
         awake = load_testcase_suite(

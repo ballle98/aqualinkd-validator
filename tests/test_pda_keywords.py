@@ -17,6 +17,7 @@ from aqualinkd_validator.testcases import (
     AssertLogStep,
     AssertNoLogStep,
     ExerciseHeaterStep,
+    ReturnPdaHomeStep,
     SetSetpointStep,
     WaitForStep,
     load_testcase,
@@ -115,6 +116,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
 
     def test_sleep_operations_stay_behind_typed_keywords(self) -> None:
         asyncio.run(self._sleep_operations())
+
+    def test_home_navigation_stays_behind_typed_keyword(self) -> None:
+        asyncio.run(self._home_navigation())
 
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
@@ -227,6 +231,11 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         self.assertEqual(fixture.spa_heating_exercises, 1)
         self.assertEqual(fixture.restore_timeouts, [600])
 
+    async def _home_navigation(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        await fixture.keywords.return_pda_home(ReturnPdaHomeStep(30))
+        self.assertEqual(fixture.home_timeouts, [30])
+
 
 class KeywordFixture:
     def __init__(self, *, initialized: bool = False) -> None:
@@ -242,6 +251,7 @@ class KeywordFixture:
         self.status_retry_exercises = 0
         self.probe_transition_exercises = 0
         self.spa_heating_exercises = 0
+        self.home_timeouts: list[float] = []
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -260,6 +270,7 @@ class KeywordFixture:
                 },
             ),
             initialize=self.initialize,
+            return_home=self.return_home,
             wait_for_stable=self.wait_for_stable,
             restore=self.restore,
             verify_status=self.verify_status,
@@ -283,6 +294,9 @@ class KeywordFixture:
     ) -> EquipmentSnapshot:
         del identifiers, timeout_seconds
         return snapshot()
+
+    async def return_home(self, timeout_seconds: float) -> None:
+        self.home_timeouts.append(timeout_seconds)
 
     async def restore(self, timeout_seconds: float) -> None:
         self.restore_timeouts.append(timeout_seconds)

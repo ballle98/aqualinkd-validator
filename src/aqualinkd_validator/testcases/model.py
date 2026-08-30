@@ -43,6 +43,12 @@ class WaitForStep:
 
 
 @dataclass(frozen=True)
+class ReturnPdaHomeStep:
+    timeout_seconds: float
+    keyword: str = "return_pda_home"
+
+
+@dataclass(frozen=True)
 class SerialSendStep:
     payload: bytes
     timeout_seconds: float
@@ -187,6 +193,7 @@ class ExerciseProbeTransitionStep:
 
 TestcaseStep: TypeAlias = (
     WaitForStep
+    | ReturnPdaHomeStep
     | SerialSendStep
     | ExpectSerialStep
     | HttpRequestStep

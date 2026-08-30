@@ -35,6 +35,7 @@ from aqualinkd_validator.protocols.pda.runtime_config import (
     PdaScenarioConfig,
 )
 from aqualinkd_validator.testcases import load_testcase, load_testcase_suite
+from aqualinkd_validator.testing import FakeAquaPdaClient
 
 
 class FakeApi:
@@ -275,6 +276,9 @@ class PdaScenarioTests(unittest.TestCase):
 
     def test_declarative_suite_reuses_one_initialized_runtime(self) -> None:
         asyncio.run(self._run_declarative_filter_test(as_suite=True))
+
+    def test_declarative_device_from_home_uses_aquapda_navigation(self) -> None:
+        asyncio.run(self._run_declarative_filter_test(from_home=True))
 
     def test_single_exception_group_reports_underlying_failure(self) -> None:
         error = ExceptionGroup(
@@ -533,6 +537,7 @@ class PdaScenarioTests(unittest.TestCase):
         *,
         discover_api: bool = False,
         as_suite: bool = False,
+        from_home: bool = False,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact_dir = Path(directory)
@@ -551,7 +556,11 @@ class PdaScenarioTests(unittest.TestCase):
                 Path(__file__).parents[1]
                 / "testcases"
                 / "pda"
-                / "filter-after-init.yaml"
+                / (
+                    "device-from-home.yaml"
+                    if from_home
+                    else "filter-after-init.yaml"
+                )
             )
             suite = load_testcase_suite(
                 Path(__file__).parents[1]
@@ -559,6 +568,16 @@ class PdaScenarioTests(unittest.TestCase):
                 / "suites"
                 / "pda-live-fast.yaml"
             )
+            aquapda_clients: list[FakeAquaPdaClient] = []
+
+            def aquapda_client_factory(base_url: str) -> FakeAquaPdaClient:
+                self.assertEqual(base_url, api.base_url)
+                client = FakeAquaPdaClient()
+                client.screen.lines[1] = "MENU"
+                client.screen.lines[2] = "EQUIPMENT ON/OFF"
+                aquapda_clients.append(client)
+                return client
+
             scenario = PdaScenarioRuntime(
                 None if discover_api else api,
                 PdaScenarioConfig(
@@ -567,6 +586,7 @@ class PdaScenarioTests(unittest.TestCase):
                     panel_timezone="UTC",
                 ),
                 api_factory=lambda base_url: api,
+                aquapda_client_factory=aquapda_client_factory,
                 testcase=None if as_suite else testcase,
                 testcases=(
                     tuple(member.testcase for member in suite.members[:2])
@@ -610,21 +630,46 @@ class PdaScenarioTests(unittest.TestCase):
                 self.assertEqual(len(report["testcase_executions"]), 2)
                 self.assertEqual(len(report["cases"]), 2)
             else:
-                self.assertEqual(report["testcase"], "pda.filter-after-init")
+                self.assertEqual(report["testcase"], testcase.identifier)
             self.assertEqual(
                 report["api_endpoint_source"],
                 "aqualinkd_startup_log" if discover_api else "injected",
             )
             self.assertEqual(report["restoration"]["status"], "passed")
-            self.assertEqual(
-                [step["keyword"] for step in report["testcase_execution"]["steps"]],
-                [
-                    "wait_for",
-                    "set_device",
-                    "assert_device",
-                    "restore_original_state",
-                ],
-            )
+            keywords = [
+                step["keyword"]
+                for step in report["testcase_execution"]["steps"]
+            ]
+            if from_home:
+                self.assertEqual(
+                    keywords,
+                    [
+                        "wait_for",
+                        "return_pda_home",
+                        "set_device",
+                        "assert_device",
+                        "return_pda_home",
+                        "set_device",
+                        "assert_device",
+                        "assert_no_log",
+                        "assert_no_log",
+                        "assert_no_log",
+                        "restore_original_state",
+                    ],
+                )
+                self.assertEqual(len(aquapda_clients), 2)
+                self.assertTrue(all(not client.connected for client in aquapda_clients))
+                self.assertTrue(all(not client.keys for client in aquapda_clients))
+            else:
+                self.assertEqual(
+                    keywords,
+                    [
+                        "wait_for",
+                        "set_device",
+                        "assert_device",
+                        "restore_original_state",
+                    ],
+                )
             self.assertFalse(
                 (await api.devices()).devices["Filter_Pump"].enabled
             )

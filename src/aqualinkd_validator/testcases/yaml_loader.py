@@ -26,6 +26,7 @@ from .model import (
     PanelDriver,
     PanelFixtureDefinition,
     RestoreOriginalStateStep,
+    ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
     SetSetpointStep,
@@ -499,6 +500,11 @@ def _wait_for(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _return_pda_home(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"timeout"})
+    return ReturnPdaHomeStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
 def _serial_send(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"bytes", "timeout"})
     return SerialSendStep(
@@ -748,6 +754,7 @@ def _exercise_probe_transition(value: Mapping[str, object], path: str) -> Testca
 
 _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
+    "return_pda_home": _return_pda_home,
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
     "http_request": _http_request,
