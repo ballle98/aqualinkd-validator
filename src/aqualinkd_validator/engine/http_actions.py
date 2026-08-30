@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TextIO
+from typing import Any, TextIO
 
 from ..interfaces import ArtifactStore, EventTimeline, HttpTransport
+
+_MISSING = object()
 
 
 class HttpActionFailure(RuntimeError):
@@ -23,6 +25,7 @@ class HttpActions:
     ) -> None:
         self._transport = transport
         self._timeline = timeline
+        self._artifacts = artifacts
         self._history: TextIO = artifacts.open_text("http.jsonl")
         self._closed = False
 
@@ -130,6 +133,91 @@ class HttpActions:
         )
         return response
 
+    async def wait_json(
+        self,
+        path: str,
+        pointer: str,
+        expected: str | int | float | bool | None,
+        *,
+        timeout_seconds: float,
+        poll_seconds: float,
+        request_timeout_seconds: float,
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        attempts = 0
+        last_response: str | None = None
+        last_value: Any = _MISSING
+        last_error: str | None = None
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            attempts += 1
+            try:
+                last_response = await self.request(
+                    "GET",
+                    path,
+                    value=None,
+                    timeout_seconds=min(request_timeout_seconds, remaining),
+                    purpose="json_poll",
+                )
+                last_value = _resolve_json_pointer(
+                    json.loads(last_response),
+                    pointer,
+                )
+                last_error = None
+                if _json_values_equal(last_value, expected):
+                    await self._timeline.write(
+                        "http_json_matched",
+                        path=path,
+                        pointer=pointer,
+                        expected=expected,
+                        attempts=attempts,
+                    )
+                    return
+            except (HttpActionFailure, json.JSONDecodeError, ValueError) as error:
+                last_error = f"{type(error).__name__}: {error}"
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(poll_seconds, remaining))
+
+        failure = {
+            "schema_version": 1,
+            "method": "GET",
+            "url": f"{self.base_url}{path}",
+            "pointer": pointer,
+            "expected": expected,
+            "timeout_seconds": timeout_seconds,
+            "attempts": attempts,
+            "last_response": last_response,
+            "last_value_available": last_value is not _MISSING,
+            "last_value": None if last_value is _MISSING else last_value,
+            "last_error": last_error,
+            "request_history": "http.jsonl",
+        }
+        self._artifacts.write_json("http-poll-failure.json", failure)
+        await self._timeline.write(
+            "http_json_poll_failed",
+            path=path,
+            pointer=pointer,
+            expected=expected,
+            attempts=attempts,
+            last_value=None if last_value is _MISSING else last_value,
+            last_error=last_error,
+        )
+        detail = (
+            last_error
+            if last_error is not None
+            else f"last value was {last_value!r}"
+        )
+        raise HttpActionFailure(
+            f"GET {path} JSON pointer {pointer!r} did not equal "
+            f"{expected!r} within {timeout_seconds:g}s; {detail}; "
+            "see http-poll-failure.json and http.jsonl"
+        )
+
     def close(self) -> None:
         if self._closed:
             return
@@ -160,3 +248,32 @@ class HttpActions:
         }
         self._history.write(json.dumps(record, separators=(",", ":")) + "\n")
         self._history.flush()
+
+
+def _resolve_json_pointer(document: Any, pointer: str) -> Any:
+    if pointer == "":
+        return document
+    current = document
+    for encoded_token in pointer[1:].split("/"):
+        token = encoded_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                raise ValueError(f"JSON pointer token {token!r} was not found")
+            current = current[token]
+        elif isinstance(current, list):
+            if not token.isdigit():
+                raise ValueError(f"JSON pointer token {token!r} is not an array index")
+            index = int(token)
+            if index >= len(current):
+                raise ValueError(f"JSON pointer array index {index} is out of range")
+            current = current[index]
+        else:
+            raise ValueError(
+                f"JSON pointer token {token!r} cannot traverse "
+                f"{type(current).__name__}"
+            )
+    return current
+
+
+def _json_values_equal(actual: Any, expected: Any) -> bool:
+    return type(actual) is type(expected) and actual == expected

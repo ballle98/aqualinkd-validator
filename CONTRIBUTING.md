@@ -55,6 +55,7 @@ source modules are:
 | `engine/restoration.py` | Initial-state capture, touched-resource tracking, dependency-aware restoration ordering, and retry suppression |
 | `engine/equipment_actions.py` | Measured device and setpoint mutations, PDA programmer correlation, API convergence, and restoration tracking |
 | `engine/equipment_stability.py` | Typed transition interpretation, stable-state polling, observation artifacts, and timeout evidence |
+| `engine/http_actions.py` | Bounded raw HTTP requests, JSON Pointer polling, request history, and timeout evidence |
 | `engine/reporting.py` | Scenario artifact serialization, timing measurements, exception formatting, skips, and console progress |
 | `engine/runtime_cases.py` | Lifecycle, failure continuation, cleanup gating, and finalization for the remaining Python-only interface cases |
 | `protocols/pda/programmer.py` | PDA programmer activation, completion, error correlation, and timing |
@@ -163,7 +164,7 @@ finally:
   - restore_original_state: {}
 ```
 
-The initial keyword set should remain deliberately small:
+The physical-panel PDA keyword set should remain deliberately small:
 
 - `wait_for`
 - `set_device`
@@ -174,6 +175,13 @@ The initial keyword set should remain deliberately small:
 - `assert_no_log`
 - `wait_for_stable_equipment`
 - `restore_original_state`
+
+RS485 panel-emulator cases use the transport-oriented `serial_send`,
+`expect_serial`, `http_request`, `wait_http_json`, and
+`expect_panel_command` keywords. `wait_http_json` uses an RFC 6901 JSON Pointer
+and requires total, polling, and per-request deadlines; it preserves the last
+response and complete request history when the expected scalar value is not
+observed.
 
 `exercise_heater` is deliberately a higher-level PDA keyword: Python selects
 the bounded ±1 setpoint values for Fahrenheit or Celsius, handles an optional

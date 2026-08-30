@@ -36,6 +36,7 @@ from .model import (
     VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
+    WaitHttpJsonStep,
 )
 from .yaml_loader import (
     TestcaseValidationError,
@@ -77,6 +78,7 @@ __all__ = [
     "TestcaseValidationError",
     "UnsupportedTestcaseKeywords",
     "WaitForStableEquipmentStep",
+    "WaitHttpJsonStep",
     "WaitForStep",
     "VerifyEquipmentStatusStep",
     "load_testcase",

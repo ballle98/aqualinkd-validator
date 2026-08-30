@@ -41,6 +41,7 @@ from .model import (
     VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
+    WaitHttpJsonStep,
 )
 
 _DURATION = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>ms|s|m)$")
@@ -284,6 +285,7 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
                 SerialSendStep,
                 ExpectSerialStep,
                 HttpRequestStep,
+                WaitHttpJsonStep,
                 ExpectPanelCommandStep,
             ),
         )
@@ -540,6 +542,34 @@ def _http_request(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _wait_http_json(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(
+        value,
+        path,
+        required={"path", "pointer", "equals", "timeout"},
+        optional={"poll", "request_timeout"},
+    )
+    request_path = _string(value["path"], f"{path}.path")
+    if not request_path.startswith("/api/") or any(
+        character.isspace() for character in request_path
+    ):
+        raise TestcaseValidationError(
+            f"{path}.path: expected an absolute /api/ path without whitespace"
+        )
+    pointer = _json_pointer(value["pointer"], f"{path}.pointer")
+    return WaitHttpJsonStep(
+        path=request_path,
+        pointer=pointer,
+        expected=_json_scalar(value["equals"], f"{path}.equals"),
+        timeout_seconds=_duration(value["timeout"], f"{path}.timeout"),
+        poll_seconds=_duration(value.get("poll", "100ms"), f"{path}.poll"),
+        request_timeout_seconds=_duration(
+            value.get("request_timeout", "1s"),
+            f"{path}.request_timeout",
+        ),
+    )
+
+
 def _expect_panel_command(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"command", "timeout"})
     return ExpectPanelCommandStep(
@@ -721,6 +751,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
     "http_request": _http_request,
+    "wait_http_json": _wait_http_json,
     "expect_panel_command": _expect_panel_command,
     "set_device": _set_device,
     "set_setpoint": _set_setpoint,
@@ -792,6 +823,23 @@ def _scalar_string(raw: object, path: str) -> str:
     if isinstance(raw, (int, float, str)) and str(raw).strip():
         return str(raw).strip()
     raise TestcaseValidationError(f"{path}: expected a scalar string or number")
+
+
+def _json_scalar(raw: object, path: str) -> str | int | float | bool | None:
+    if raw is None or isinstance(raw, (str, int, float, bool)):
+        return raw
+    raise TestcaseValidationError(
+        f"{path}: expected a JSON string, number, boolean, or null"
+    )
+
+
+def _json_pointer(raw: object, path: str) -> str:
+    if not isinstance(raw, str):
+        raise TestcaseValidationError(f"{path}: expected an RFC 6901 JSON Pointer")
+    pointer = raw.strip()
+    if pointer and not pointer.startswith("/"):
+        raise TestcaseValidationError(f"{path}: expected an RFC 6901 JSON Pointer")
+    return pointer
 
 
 def _integer(raw: object, path: str) -> int:

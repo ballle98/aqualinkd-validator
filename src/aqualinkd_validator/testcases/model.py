@@ -8,6 +8,7 @@ TestcaseMode: TypeAlias = Literal["physical-panel", "rs485-panel-emulator"]
 TestcaseAccess: TypeAlias = Literal["read-only", "read-write"]
 TestcaseProtocol: TypeAlias = Literal["pda", "rs485"]
 HttpMethod: TypeAlias = Literal["GET", "PUT"]
+JsonScalar: TypeAlias = str | int | float | bool | None
 PanelDriver: TypeAlias = Literal["raw", "allbutton"]
 DeviceTargetState: TypeAlias = Literal[
     "on",
@@ -62,6 +63,17 @@ class HttpRequestStep:
     value: str | None
     timeout_seconds: float
     keyword: str = "http_request"
+
+
+@dataclass(frozen=True)
+class WaitHttpJsonStep:
+    path: str
+    pointer: str
+    expected: JsonScalar
+    timeout_seconds: float
+    poll_seconds: float
+    request_timeout_seconds: float
+    keyword: str = "wait_http_json"
 
 
 @dataclass(frozen=True)
@@ -178,6 +190,7 @@ TestcaseStep: TypeAlias = (
     | SerialSendStep
     | ExpectSerialStep
     | HttpRequestStep
+    | WaitHttpJsonStep
     | ExpectPanelCommandStep
     | SetDeviceStep
     | SetSetpointStep

@@ -18,6 +18,7 @@ from aqualinkd_validator.testcases import (
     UnsupportedTestcaseKeywords,
     WaitForStableEquipmentStep,
     WaitForStep,
+    WaitHttpJsonStep,
 )
 from aqualinkd_validator.testcases import (
     TestcaseDefinition as DeclarativeCase,
@@ -48,6 +49,9 @@ class RecordingKeywords(UnsupportedTestcaseKeywords):
         await self._record(step.keyword)
 
     async def http_request(self, step: HttpRequestStep) -> None:
+        await self._record(step.keyword)
+
+    async def wait_http_json(self, step: WaitHttpJsonStep) -> None:
         await self._record(step.keyword)
 
     async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None:
@@ -190,6 +194,7 @@ class TestcaseExecutorTests(unittest.TestCase):
                 SerialSendStep(bytes.fromhex("100260001003"), 1),
                 ExpectSerialStep(bytes.fromhex("1002000100031003"), 1),
                 HttpRequestStep("PUT", "/api/Filter_Pump/set", "1", 2),
+                WaitHttpJsonStep("/api/status", "/leds/Filter_Pump", "on", 2, 0.1, 1),
                 ExpectPanelCommandStep(0x02, 2),
             ),
             finally_steps=(),
@@ -201,6 +206,7 @@ class TestcaseExecutorTests(unittest.TestCase):
                 "serial_send",
                 "expect_serial",
                 "http_request",
+                "wait_http_json",
                 "expect_panel_command",
             ],
         )
@@ -210,6 +216,7 @@ class TestcaseExecutorTests(unittest.TestCase):
                 "serial_send",
                 "expect_serial",
                 "http_request",
+                "wait_http_json",
                 "expect_panel_command",
             ],
         )

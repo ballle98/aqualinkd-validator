@@ -394,6 +394,24 @@ the Filter Pump command to its next status packet, and verifies that the HTTP
 request produced key command `0x02`. This is a bounded feasibility driver, not
 yet a general replacement for a physical panel or Power Center.
 
+Panel-free YAML can use `serial_send`, `expect_serial`, `http_request`,
+`wait_http_json`, and `expect_panel_command`. `wait_http_json` repeatedly reads
+an API endpoint until an RFC 6901 JSON Pointer has the expected scalar value:
+
+```yaml
+- wait_http_json:
+    path: /api/status
+    pointer: /leds/Filter_Pump
+    equals: on
+    timeout: 10s
+    poll: 100ms
+    request_timeout: 1s
+```
+
+Every attempt is appended to `http.jsonl`. A timeout also writes
+`http-poll-failure.json` with the expected value, last decoded value, last raw
+response, and any parsing or transport error.
+
 ## Declarative testcases
 
 Ordinary PDA cases and suites are versioned YAML under `testcases/`. A testcase

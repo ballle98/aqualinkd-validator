@@ -42,6 +42,7 @@ from .testcases import (
     TestcaseDefinition,
     TestcaseExecutor,
     UnsupportedTestcaseKeywords,
+    WaitHttpJsonStep,
 )
 
 _AQUALINKD_VERSION = re.compile(
@@ -82,6 +83,16 @@ class PanelFreeKeywords(UnsupportedTestcaseKeywords):
             step.path,
             value=step.value,
             timeout_seconds=step.timeout_seconds,
+        )
+
+    async def wait_http_json(self, step: WaitHttpJsonStep) -> None:
+        await self._http.wait_json(
+            step.path,
+            step.pointer,
+            step.expected,
+            timeout_seconds=step.timeout_seconds,
+            poll_seconds=step.poll_seconds,
+            request_timeout_seconds=step.request_timeout_seconds,
         )
 
     async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None:

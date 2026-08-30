@@ -21,6 +21,7 @@ from aqualinkd_validator.testcases import (
     SetDeviceStep,
     VerifyEquipmentStatusStep,
     WaitForStep,
+    WaitHttpJsonStep,
     load_testcase,
     load_testcase_suite,
 )
@@ -173,6 +174,13 @@ steps:
       path: /api/Filter_Pump/set
       value: 1
       timeout: 2s
+  - wait_http_json:
+      path: /api/status
+      pointer: /leds/Filter_Pump
+      equals: on
+      timeout: 3s
+      poll: 200ms
+      request_timeout: 500ms
 """,
                 encoding="utf-8",
             )
@@ -181,6 +189,7 @@ steps:
         self.assertIsInstance(testcase.steps[0], SerialSendStep)
         self.assertIsInstance(testcase.steps[1], ExpectSerialStep)
         self.assertIsInstance(testcase.steps[2], HttpRequestStep)
+        self.assertIsInstance(testcase.steps[3], WaitHttpJsonStep)
         assert isinstance(testcase.steps[0], SerialSendStep)
         assert isinstance(testcase.steps[1], ExpectSerialStep)
         self.assertEqual(testcase.steps[0].payload.hex(), "10026000721003")
@@ -188,6 +197,12 @@ steps:
         self.assertEqual(testcase.steps[1].timeout_seconds, 2)
         assert isinstance(testcase.steps[2], HttpRequestStep)
         self.assertEqual(testcase.steps[2].value, "1")
+        poll = testcase.steps[3]
+        assert isinstance(poll, WaitHttpJsonStep)
+        self.assertEqual(poll.pointer, "/leds/Filter_Pump")
+        self.assertEqual(poll.expected, "on")
+        self.assertEqual(poll.poll_seconds, 0.2)
+        self.assertEqual(poll.request_timeout_seconds, 0.5)
         self.assertIsNotNone(testcase.fixture)
         assert testcase.fixture is not None
         self.assertEqual(testcase.fixture.panel_type, "RS-4 Combo")

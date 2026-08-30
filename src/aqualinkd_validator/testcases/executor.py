@@ -28,6 +28,7 @@ from .model import (
     VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
+    WaitHttpJsonStep,
 )
 
 
@@ -41,6 +42,8 @@ class TestcaseKeywords(Protocol):
     async def expect_serial(self, step: ExpectSerialStep) -> None: ...
 
     async def http_request(self, step: HttpRequestStep) -> None: ...
+
+    async def wait_http_json(self, step: WaitHttpJsonStep) -> None: ...
 
     async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None: ...
 
@@ -98,6 +101,9 @@ class UnsupportedTestcaseKeywords:
         self._unsupported(step.keyword)
 
     async def http_request(self, step: HttpRequestStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def wait_http_json(self, step: WaitHttpJsonStep) -> None:
         self._unsupported(step.keyword)
 
     async def expect_panel_command(self, step: ExpectPanelCommandStep) -> None:
@@ -279,6 +285,8 @@ class TestcaseExecutor:
             await self._keywords.expect_serial(step)
         elif isinstance(step, HttpRequestStep):
             await self._keywords.http_request(step)
+        elif isinstance(step, WaitHttpJsonStep):
+            await self._keywords.wait_http_json(step)
         elif isinstance(step, ExpectPanelCommandStep):
             await self._keywords.expect_panel_command(step)
         elif isinstance(step, SetDeviceStep):
