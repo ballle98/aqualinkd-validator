@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 PDA_PROBE = bytes.fromhex("10 02 60 00 72 10 03")
 PDA_STATUS = bytes.fromhex("10 02 60 02 00 00 00 00 00 74 10 03")
-PDA_ACK = bytes.fromhex("10 02 00 01 40 00 53 10 03")
+PDA_ACK = bytes.fromhex("00 10 02 00 01 40 00 53 10 03")
 
 
 def main() -> None:
@@ -41,14 +41,26 @@ def main() -> None:
     print(f"AqualinkD: panel type = {config['panel_type']}", flush=True)
     print(f"NetService:Starting web server on port {listener.port}", flush=True)
     received = bytearray()
+    probe_count = 0
     while True:
         readable, _, _ = select.select([serial_fd], [], [], 1)
         if not readable:
             continue
         received.extend(os.read(serial_fd, 4096))
-        if PDA_PROBE in received or PDA_STATUS in received:
-            os.write(serial_fd, PDA_ACK)
-            received.clear()
+        while True:
+            if PDA_PROBE in received:
+                end = received.index(PDA_PROBE) + len(PDA_PROBE)
+                del received[:end]
+                probe_count += 1
+                if probe_count > 1:
+                    os.write(serial_fd, PDA_ACK)
+                continue
+            if PDA_STATUS in received:
+                end = received.index(PDA_STATUS) + len(PDA_STATUS)
+                del received[:end]
+                os.write(serial_fd, PDA_ACK)
+                continue
+            break
 
 
 def _read_config(path: Path) -> dict[str, str]:
