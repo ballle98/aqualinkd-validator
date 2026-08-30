@@ -113,7 +113,9 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
             transport=transport,
             api=FakeAqualinkApi(EquipmentSnapshot(temp_units="F", devices={})),
         )
-        outcome = await scenario.run(context)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            outcome = await scenario.run(context)
         await scenario.close()
 
         self.assertEqual(outcome.status, "passed")
@@ -124,6 +126,9 @@ class PanelFreeScenarioTests(unittest.IsolatedAsyncioTestCase):
         history = artifacts.values["http.jsonl"].splitlines()
         self.assertEqual(len(history), 1)
         self.assertEqual(json.loads(history[0])["purpose"], "readiness")
+        rendered = output.getvalue()
+        self.assertIn("[ RUN  ] rs485.probe steps[0] serial_send", rendered)
+        self.assertIn("[ PASS ] rs485.probe steps[1] expect_serial", rendered)
 
     async def test_runs_http_action_against_stateful_allbutton_driver(self) -> None:
         transport = _AllButtonTransport()

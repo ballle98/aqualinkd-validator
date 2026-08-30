@@ -111,7 +111,10 @@ class TestcaseExecutorTests(unittest.TestCase):
 
     async def _execute_success(self) -> None:
         keywords = RecordingKeywords()
-        result = await DeclarativeExecutor(keywords).execute(make_testcase())
+        progress: list[str] = []
+        result = await DeclarativeExecutor(keywords, progress=progress.append).execute(
+            make_testcase()
+        )
 
         self.assertEqual(
             keywords.calls,
@@ -122,17 +125,40 @@ class TestcaseExecutorTests(unittest.TestCase):
             [execution.section for execution in result.steps],
             ["steps", "steps", "steps", "finally"],
         )
+        self.assertEqual(len(progress), 8)
+        self.assertEqual(progress[0], "[ RUN  ] pda.filter steps[0] wait_for")
+        self.assertIn(
+            "[ PASS ] pda.filter finally[0] restore_original_state",
+            progress[-1],
+        )
 
     async def _execute_failure(self) -> None:
         keywords = RecordingKeywords(fail_keyword="assert_device")
+        progress: list[str] = []
         with self.assertRaisesRegex(
             ExecutionFailure,
             r"pda\.filter\.steps\[2\]\.assert_device: simulated timeout",
         ):
-            await DeclarativeExecutor(keywords).execute(make_testcase())
+            await DeclarativeExecutor(keywords, progress=progress.append).execute(
+                make_testcase()
+            )
         self.assertEqual(
             keywords.calls,
             ["wait_for", "set_device", "assert_device", "restore_original_state"],
+        )
+        self.assertTrue(
+            any(
+                line.startswith("[ FAIL ] pda.filter steps[2] assert_device")
+                for line in progress
+            )
+        )
+        self.assertTrue(
+            any(
+                line.startswith(
+                    "[ PASS ] pda.filter finally[0] restore_original_state"
+                )
+                for line in progress
+            )
         )
 
     async def _execute_two_failures(self) -> None:

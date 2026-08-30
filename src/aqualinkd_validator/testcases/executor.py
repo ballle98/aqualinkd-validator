@@ -193,9 +193,11 @@ class TestcaseExecutor:
         keywords: TestcaseKeywords,
         *,
         clock: Callable[[], float] = time.monotonic,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         self._keywords = keywords
         self._clock = clock
+        self._progress = progress or (lambda message: None)
 
     async def execute(self, testcase: TestcaseDefinition) -> TestcaseExecution:
         started = self._clock()
@@ -258,9 +260,16 @@ class TestcaseExecutor:
         step: TestcaseStep,
     ) -> StepExecution:
         started = self._clock()
+        label = f"{testcase_id} {section}[{index}] {step.keyword}"
+        self._progress(f"[ RUN  ] {label}")
         try:
             await self._dispatch(step)
         except BaseException as error:
+            duration = self._clock() - started
+            self._progress(
+                f"[ FAIL ] {label} completed in {duration:.3f}s — "
+                f"{type(error).__name__}: {error}"
+            )
             if isinstance(
                 error,
                 (asyncio.CancelledError, KeyboardInterrupt, SystemExit),
@@ -269,11 +278,13 @@ class TestcaseExecutor:
             raise TestcaseExecutionFailure(
                 f"{testcase_id}.{section}[{index}].{step.keyword}: {error}"
             ) from error
+        duration = self._clock() - started
+        self._progress(f"[ PASS ] {label} completed in {duration:.3f}s")
         return StepExecution(
             section=section,
             index=index,
             keyword=step.keyword,
-            duration_seconds=self._clock() - started,
+            duration_seconds=duration,
         )
 
     async def _dispatch(self, step: TestcaseStep) -> None:

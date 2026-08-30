@@ -180,7 +180,8 @@ class PanelFreeScenario:
                 await panel_driver.start()
                 print("[STATE ] AllButton panel driver active", flush=True)
             execution = await TestcaseExecutor(
-                PanelFreeKeywords(serial, http, panel_driver)
+                PanelFreeKeywords(serial, http, panel_driver),
+                progress=lambda message: print(message, flush=True),
             ).execute(self._testcase)
             report.update(
                 status="passed",
