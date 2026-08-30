@@ -236,6 +236,7 @@ RUN_TARGETS = RunTargetRegistry(
             "pda-live-awake",
             "pda-live-sleep",
             "pda-live-spa",
+            "pda-live-auto-config",
         )
     }
     | {

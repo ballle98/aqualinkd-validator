@@ -31,6 +31,7 @@ class PdaDeviceSelectionFailure(RuntimeError):
 class PdaDeviceSelectionConfig:
     requested: tuple[str, ...] = ()
     disabled_button_numbers: tuple[int, ...] = ()
+    configured_button_labels: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,28 @@ class PdaDeviceSelector:
             for identifier in snapshot.devices
             if (number := self._button_number(identifier)) is not None
         }
+        configured_labels = dict(self._config.configured_button_labels)
+        mismatches = [
+            (
+                identifier,
+                number,
+                configured_labels[number],
+                snapshot.devices[identifier].name.strip(),
+            )
+            for identifier, number in button_numbers.items()
+            if number in configured_labels
+            and self._normalize_label(snapshot.devices[identifier].name)
+            != self._normalize_label(configured_labels[number])
+        ]
+        if mismatches:
+            details = "; ".join(
+                f"{identifier} (button_{number:02d}) expected {expected!r}, "
+                f"API reported {actual!r}"
+                for identifier, number, expected, actual in mismatches
+            )
+            raise PdaDeviceSelectionFailure(
+                "Configured button labels were not preserved: " + details
+            )
         disabled = set(self._config.disabled_button_numbers)
         excluded: list[dict[str, Any]] = []
         for identifier, device in snapshot.devices.items():
@@ -215,6 +238,10 @@ class PdaDeviceSelector:
             identifier, 0
         )
         return (1, button_number, identifier)
+
+    @staticmethod
+    def _normalize_label(value: str) -> str:
+        return " ".join(value.split()).casefold()
 
     def _skip_hydraulic_control(self, identifier: str, *, phase: str) -> bool:
         if identifier not in _STATUS_HYDRAULIC_CONTROLS:

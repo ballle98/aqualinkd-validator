@@ -63,6 +63,7 @@ class PdaScenarioConfig:
     probe_command_min_delay_seconds: float = 3.0
     test_devices: tuple[str, ...] = ()
     disabled_button_numbers: tuple[int, ...] = ()
+    configured_button_labels: tuple[tuple[int, str], ...] = ()
     panel_timezone: str = "UTC"
     panel_time_tolerance_seconds: float = 120.0
     spa_fill_seconds: float | None = None

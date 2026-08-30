@@ -33,6 +33,7 @@ from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
     normalize_api_base_url,
+    read_button_labels,
     read_config_value,
     read_config_values,
     read_disabled_button_numbers,
@@ -556,6 +557,7 @@ def _run_process(args: argparse.Namespace) -> int:
             )
     site_config = load_site_config(source_config, args.site_config)
     disabled_button_numbers = read_disabled_button_numbers(source_config)
+    configured_button_labels = read_button_labels(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
     source_tree = (
         args.source_tree.expanduser().resolve(strict=True)
@@ -598,6 +600,7 @@ def _run_process(args: argparse.Namespace) -> int:
                 sleep_timeout_seconds=args.pda_sleep_timeout,
                 test_devices=tuple(suite_test_devices),
                 disabled_button_numbers=disabled_button_numbers,
+                configured_button_labels=configured_button_labels,
                 panel_timezone=args.panel_timezone,
                 panel_time_tolerance_seconds=args.panel_time_tolerance,
                 spa_fill_seconds=site_config.spa.fill_seconds,

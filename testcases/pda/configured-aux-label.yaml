@@ -1,0 +1,34 @@
+schema: 1
+id: pda.configured-aux-label
+description: Verify a configured Aux 1 label controls the physical PDA entry
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - set_device:
+      id: Aux_1
+      state: opposite-of-original
+      activation_timeout: 130s
+      completion_timeout: 90s
+      convergence_timeout: 10s
+  - assert_device:
+      id: Aux_1
+      state: requested
+      timeout: 10s
+  - set_device:
+      id: Aux_1
+      state: original
+      activation_timeout: 130s
+      completion_timeout: 90s
+      convergence_timeout: 10s
+  - assert_device:
+      id: Aux_1
+      state: original
+      timeout: 10s
+finally:
+  - restore_original_state:
+      timeout: 300s

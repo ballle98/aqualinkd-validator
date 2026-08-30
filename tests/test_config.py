@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aqualinkd_validator.config import (
     ConfigurationError,
+    read_button_labels,
     read_config_value,
     read_config_values,
     read_disabled_button_numbers,
@@ -108,6 +109,10 @@ class ConfigTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(read_disabled_button_numbers(path), (2, 3))
+            self.assertEqual(
+                read_button_labels(path),
+                ((2, "NONE"), (3, "none"), (4, "Waterfall")),
+            )
 
     def test_derived_config_applies_final_private_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -166,11 +166,43 @@ class PdaDeviceSelectorTests(unittest.TestCase):
         ):
             selector.consecutive_switches(phase="devices.consecutive")
 
+    def test_rejects_configured_label_lost_from_api_metadata(self) -> None:
+        selector, _ = self._selector(
+            configured_button_labels=((3, "CLEANER"),),
+        )
+
+        with self.assertRaisesRegex(
+            PdaDeviceSelectionFailure,
+            "Aux_1 .* expected 'CLEANER', API reported 'AUX1'",
+        ):
+            selector.configure(
+                EquipmentSnapshot(
+                    temp_units="f",
+                    devices={"Aux_1": self._switch("AUX1")},
+                ),
+                reported_panel_size=6,
+                reported_panel_combo=True,
+            )
+
+    def test_accepts_configured_label_with_cosmetic_whitespace(self) -> None:
+        selector, _ = self._selector(
+            configured_button_labels=((3, "Pool   Cleaner"),),
+        )
+        selector.configure(
+            EquipmentSnapshot(
+                temp_units="f",
+                devices={"Aux_1": self._switch("POOL CLEANER")},
+            ),
+            reported_panel_size=6,
+            reported_panel_combo=True,
+        )
+
     @staticmethod
     def _selector(
         *,
         requested: tuple[str, ...] = (),
         disabled_button_numbers: tuple[int, ...] = (),
+        configured_button_labels: tuple[tuple[int, str], ...] = (),
     ) -> tuple[PdaDeviceSelector, list[tuple[str, str]]]:
         skips: list[tuple[str, str]] = []
         return (
@@ -178,6 +210,7 @@ class PdaDeviceSelectorTests(unittest.TestCase):
                 PdaDeviceSelectionConfig(
                     requested=requested,
                     disabled_button_numbers=disabled_button_numbers,
+                    configured_button_labels=configured_button_labels,
                 ),
                 record_skip=lambda name, reason: skips.append((name, reason)),
             ),

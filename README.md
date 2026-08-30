@@ -150,6 +150,7 @@ are executed serially and never compete for the serial bus.
 | Suite | Access | Coverage |
 | --- | --- | --- |
 | `pda-live-fast` | Read-write | PDA initialization, identity, clock, filter-pump round trip, and optional non-heating Pool Heater checks |
+| `pda-live-auto-config` | Read-write | Forces `device_id=0xFF`, verifies configured labels survive panel detection, and exercises the configured Aux 1 entry |
 | `pda-live-awake` | Read-write | Fast coverage, safe Equipment Status reconciliation, and consecutive-device operations with PDA sleep disabled |
 | `pda-live-sleep` | Read-write | Natural sleep/wake timing plus commands during STATUS retries and after probing resumes |
 | `pda-live-long` | Read-write | Composite awake and sleep suites in separate AqualinkD processes |

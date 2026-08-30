@@ -138,6 +138,7 @@ class PdaScenarioRuntime:
             PdaDeviceSelectionConfig(
                 requested=config.test_devices,
                 disabled_button_numbers=config.disabled_button_numbers,
+                configured_button_labels=config.configured_button_labels,
             ),
             record_skip=self._run_report.recorder.skip,
         )

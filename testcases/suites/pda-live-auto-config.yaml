@@ -1,0 +1,18 @@
+schema: 1
+kind: suite
+id: pda-live-auto-config
+description: Validate PDA auto-detection while preserving configured labels
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    device_id: "0xFF"
+    pda_sleep_mode: no
+  execution_role: awake
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/configured-aux-label.yaml

@@ -37,8 +37,8 @@ def read_config_values(path: Path, key: str) -> tuple[str, ...]:
     return tuple(result)
 
 
-def read_disabled_button_numbers(path: Path) -> tuple[int, ...]:
-    """Return buttons whose effective configured label is ``NONE``."""
+def read_button_labels(path: Path) -> tuple[tuple[int, str], ...]:
+    """Return effective configured button labels ordered by button number."""
     labels: dict[int, str] = {}
     with path.open(encoding="utf-8") as handle:
         for raw_line in handle:
@@ -52,8 +52,15 @@ def read_disabled_button_numbers(path: Path) -> tuple[int, ...]:
             if button is None:
                 continue
             labels[int(button.group(1))] = _unquote(assignment.group(2).strip())
+    return tuple(sorted(labels.items()))
+
+
+def read_disabled_button_numbers(path: Path) -> tuple[int, ...]:
+    """Return buttons whose effective configured label is ``NONE``."""
     return tuple(
-        number for number, label in sorted(labels.items()) if label.casefold() == "none"
+        number
+        for number, label in read_button_labels(path)
+        if label.casefold() == "none"
     )
 
 
