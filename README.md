@@ -332,6 +332,12 @@ The `jandy-power-center` mode tests AqualinkD against Jandy's legacy Alwin32
 It is different from AqualinkD's northbound AquaPDA, AllButton, and OneTouch
 browser interfaces.
 
+The tested software-only host is x86-64 Ubuntu 24.04 under WSL 2. On macOS,
+the closest equivalent topology is an x86-64 Ubuntu virtual machine containing
+AqualinkD, the validator, Wine, Power Center, and the virtual serial link. That
+topology is documented but not yet validated; Apple Silicon also requires
+x86-64 guest emulation. Native macOS Wine is not currently a tested host.
+
 Follow the [Power Center emulator setup
 guide](https://github.com/ballle98/aqualinkd-validator/wiki/Jandy-Windows-Panel-Simulator)
 to:
