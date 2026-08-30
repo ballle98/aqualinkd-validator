@@ -40,6 +40,7 @@ from .config import (
     validate_live_serial_device,
     write_config_with_overrides,
 )
+from .correlation import correlate_http_actions_with_serial
 from .interfaces import ArtifactStore, EventTimeline, ProcessOutputObserver
 from .metadata import (
     collect_binary_metadata,
@@ -947,15 +948,38 @@ def _run_in_artifact(
             f"{supplemental['name']}: {supplemental['status']}",
             flush=True,
         )
+    serial_path = artifact_dir / "serial.jsonl"
+    if scenario_path.exists() and serial_path.exists():
+        correlation = correlate_http_actions_with_serial(
+            artifact_dir / "timeline.jsonl",
+            serial_path,
+        )
+        _write_json(artifact_dir / "serial-correlations.json", correlation)
+        manifest["serial"]["correlation"] = {
+            "status": correlation["status"],
+            "action_count": correlation["action_count"],
+            "passed_count": correlation["passed_count"],
+            "failed_count": correlation["failed_count"],
+            "artifact": "serial-correlations.json",
+        }
+        print(
+            "[CAPTURE] HTTP/RS485 correlation: "
+            f"{correlation['status']} "
+            f"({correlation['passed_count']}/{correlation['action_count']} actions)",
+            flush=True,
+        )
+        if correlation["status"] == "failed" and result_data["status"] == "passed":
+            result_data["status"] = "failed"
+            result_data["reason"] = "serial_correlation_failed"
     _write_json(artifact_dir / "manifest.yaml", manifest)
     _write_json(artifact_dir / "performance.json", performance)
     _write_json(artifact_dir / "result.json", result_data)
     print(
-        f"Result: {result.status} ({result.reason}), "
+        f"Result: {result_data['status']} ({result_data['reason']}), "
         f"child return code {result.child_returncode}",
         flush=True,
     )
-    return 0 if result.status == "passed" else 1
+    return 0 if result_data["status"] == "passed" else 1
 
 
 def _suite_manifest(

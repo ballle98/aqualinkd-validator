@@ -109,6 +109,14 @@ class EquipmentActions:
         )
         await self._api.set_device(identifier, enabled)
         acknowledged = self._timeline.offset_ns()
+        await self._timeline.write(
+            "scenario_http_acknowledged",
+            phase=phase,
+            action="set_device",
+            target=identifier,
+            value=enabled,
+            requested_offset_ns=started,
+        )
         active = await self._programmer.wait_for_active(
             self._events,
             self._timeline,
@@ -209,6 +217,14 @@ class EquipmentActions:
         )
         await self._api.set_setpoint(identifier, value)
         acknowledged = self._timeline.offset_ns()
+        await self._timeline.write(
+            "scenario_http_acknowledged",
+            phase=phase,
+            action="set_setpoint",
+            target=identifier,
+            value=value,
+            requested_offset_ns=started,
+        )
         active = await self._programmer.wait_for_active(
             self._events,
             self._timeline,

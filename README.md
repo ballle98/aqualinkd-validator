@@ -547,6 +547,13 @@ noise, omitted transmit padding, and parser-normalized bytes may be absent. The
 timestamp is when the validator receives the complete log line. These limits
 are recorded in `serial-capture.json` and the run manifest.
 
+For capture-enabled PDA scenarios, `serial-correlations.json` verifies each
+HTTP equipment mutation was acknowledged before AqualinkD transmitted a
+nonzero PDA `Ack w/ Command`, followed by another inbound panel packet within
+the action window. A missing command or response fails an otherwise successful
+scenario; runs that perform no equipment actions report the check as not
+applicable.
+
 `debug_RSProtocol_packets` can also write decoded reads and writes to the
 fixed `/tmp/RS485.log`, but that buffered file has no packet timestamps.
 `debug_RSProtocol_bytes` writes received raw bytes only and is not
