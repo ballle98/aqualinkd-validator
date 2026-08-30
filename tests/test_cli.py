@@ -9,6 +9,7 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
+from aqualinkd_validator.adapters.supplemental_capture import SupplementalLogSpec
 from aqualinkd_validator.cli import (
     _run,
     _run_composite_suite,
@@ -725,6 +726,62 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.exception.code, 2)
             self.assertIn("remove active RSSD_LOG_filter", stderr.getvalue())
+
+    def test_run_snapshots_enabled_supplemental_packet_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixed_log = root / "RS485.log"
+            mock = root / "mock-aqualinkd"
+            mock.write_text(
+                "#!/bin/sh\n"
+                f"printf 'logical packets' > {fixed_log}\n"
+                "exec sleep 60\n",
+                encoding="utf-8",
+            )
+            mock.chmod(0o755)
+            config = root / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\ndebug_RSProtocol_packets=yes\n",
+                encoding="utf-8",
+            )
+            artifacts = root / "artifacts"
+            spec = SupplementalLogSpec(
+                name="aqualinkd_packet_log",
+                source=fixed_log,
+                artifact="RS485.log",
+                fidelity="logical",
+                limitations=("no timestamps",),
+            )
+
+            with (
+                patch("aqualinkd_validator.cli.PACKET_LOG_SPEC", spec),
+                self.assertRaises(SystemExit) as result,
+            ):
+                main(
+                    [
+                        "run",
+                        "--panel-read-only",
+                        "--aqualinkd",
+                        str(mock),
+                        "--config",
+                        str(config),
+                        "--duration",
+                        "0.1",
+                        "--terminate-grace",
+                        "1",
+                        "--artifacts",
+                        str(artifacts),
+                    ]
+                )
+
+            self.assertEqual(result.exception.code, 0)
+            run_dir = next(artifacts.iterdir())
+            self.assertEqual((run_dir / "RS485.log").read_text(), "logical packets")
+            manifest = json.loads((run_dir / "manifest.yaml").read_text())
+            supplemental = manifest["serial"]["supplemental"]
+            self.assertTrue(supplemental["requested"])
+            self.assertEqual(supplemental["files"][0]["status"], "captured")
+            self.assertEqual(supplemental["files"][0]["byte_count"], 15)
 
 
 if __name__ == "__main__":

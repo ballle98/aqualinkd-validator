@@ -9,6 +9,11 @@ from .power_center import PowerCenterAutomationError, WinePowerCenterController
 from .process import LocalProcessRunner, OutputMonitor, Timeline
 from .runtime import IsolatedAqualinkdRuntime, PanelFixture
 from .serial import PosixPtyPair, PosixSerialTransport
+from .supplemental_capture import (
+    PACKET_LOG_SPEC,
+    RAW_READ_LOG_SPEC,
+    SupplementalSerialLogTracker,
+)
 
 __all__ = [
     "ApiError",
@@ -25,7 +30,10 @@ __all__ = [
     "PanelFixture",
     "PosixPtyPair",
     "PosixSerialTransport",
+    "PACKET_LOG_SPEC",
+    "RAW_READ_LOG_SPEC",
     "SystemMonotonicClock",
+    "SupplementalSerialLogTracker",
     "Timeline",
     "WinePowerCenterController",
 ]

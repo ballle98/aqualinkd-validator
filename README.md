@@ -553,6 +553,14 @@ fixed `/tmp/RS485.log`, but that buffered file has no packet timestamps.
 bidirectional. A second process must not read AqualinkD's serial device because
 competing readers divide the bytes.
 
+When either fixed-path logger is enabled in the effective AqualinkD
+configuration (or selected with AqualinkD's `-rsd` / `-rsrd` arguments), the
+validator records its state before startup and snapshots it only after the
+child has stopped. A file is copied into the run artifacts only when the
+current run changed it, preventing a stale `/tmp` file from being presented as
+new evidence. The manifest records missing or unchanged files, source state,
+byte count, SHA-256, and the applicable fidelity limitations.
+
 AQ Manager's **Run Serial Logger** / RS485 Monitor is a diagnostic takeover
 mode and pauses normal packet processing, so it must not be used during a
 timing-sensitive operational test. Dedicated passive adapters, capture replay,

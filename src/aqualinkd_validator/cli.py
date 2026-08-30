@@ -20,15 +20,20 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import __version__
 from .adapters import (
+    PACKET_LOG_SPEC,
+    RAW_READ_LOG_SPEC,
+    FileArtifactStore,
     LocalProcessRunner,
     LogicalSerialLogCapture,
     PowerCenterAutomationError,
+    SupplementalSerialLogTracker,
     WinePowerCenterController,
 )
 from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
     normalize_api_base_url,
+    read_config_value,
     read_config_values,
     read_disabled_button_numbers,
     sha256_file,
@@ -701,6 +706,26 @@ def _run_in_artifact(
         config,
         aqualinkd_args,
     )
+    supplemental_specs = tuple(
+        spec
+        for enabled, spec in (
+            (
+                _config_flag_enabled(config, "debug_RSProtocol_packets")
+                or "-rsd" in aqualinkd_args,
+                PACKET_LOG_SPEC,
+            ),
+            (
+                _config_flag_enabled(config, "debug_RSProtocol_bytes")
+                or "-rsrd" in aqualinkd_args,
+                RAW_READ_LOG_SPEC,
+            ),
+        )
+        if enabled
+    )
+    supplemental_tracker = SupplementalSerialLogTracker(
+        supplemental_specs,
+        artifacts=FileArtifactStore(artifact_dir),
+    )
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "validator_version": __version__,
@@ -811,6 +836,10 @@ def _run_in_artifact(
                 ),
                 "aqualinkd_log_filter": "none",
             },
+            "supplemental": {
+                "requested": bool(supplemental_specs),
+                "files": [spec.name for spec in supplemental_specs],
+            },
         },
         "sampling": {
             "interval_seconds": args.sample_interval,
@@ -910,6 +939,14 @@ def _run_in_artifact(
         manifest["serial"]["capture"] = json.loads(
             capture_path.read_text(encoding="utf-8")
         )
+    supplemental_report = supplemental_tracker.snapshot()
+    manifest["serial"]["supplemental"] = supplemental_report
+    for supplemental in supplemental_report["files"]:
+        print(
+            "[CAPTURE] Supplemental "
+            f"{supplemental['name']}: {supplemental['status']}",
+            flush=True,
+        )
     _write_json(artifact_dir / "manifest.yaml", manifest)
     _write_json(artifact_dir / "performance.json", performance)
     _write_json(artifact_dir / "result.json", result_data)
@@ -961,6 +998,16 @@ def _logical_serial_capture_factory(
     timeline: EventTimeline,
 ) -> ProcessOutputObserver:
     return LogicalSerialLogCapture(artifacts=artifacts, timeline=timeline)
+
+
+def _config_flag_enabled(config: Path, key: str) -> bool:
+    value = read_config_value(config, key)
+    return value is not None and value.strip().casefold() in {
+        "1",
+        "on",
+        "true",
+        "yes",
+    }
 
 
 class _TeeTextIO(io.TextIOBase):
