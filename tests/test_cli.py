@@ -629,6 +629,103 @@ class CliTests(unittest.TestCase):
             self.assertIn("Result: passed (duration_elapsed)", summary)
             self.assertNotIn("mock started", summary)
 
+    def test_run_captures_logical_serial_packets_when_explicitly_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock = root / "mock-aqualinkd"
+            mock.write_text(
+                "#!/bin/sh\n"
+                "printf 'arguments: %s\\n' \"$*\"\n"
+                "printf '%s\\n' 'Debug: RS Serial: Read Jandy packet To 0x60 "
+                "of type Probe | HEX: 0x10|0x02|0x60|0x00|0x72|0x10|0x03|'\n"
+                "printf '%s\\n' 'Debug: RS Serial: Write Jandy packet To 0x00 "
+                "of type Ack | HEX: 0x10|0x02|0x00|0x01|0x40|0x00|0x53|"
+                "0x10|0x03|'\n"
+                "printf '%s\\n' 'Debug: RS Serial: Read Jandy packet To 0x60 "
+                "of type Status | HEX: invalid|'\n"
+                "exec sleep 60\n",
+                encoding="utf-8",
+            )
+            mock.chmod(0o755)
+            config = root / "aqualinkd.conf"
+            config.write_text("serial_port=/dev/null\n", encoding="utf-8")
+            artifacts = root / "artifacts"
+
+            with self.assertRaises(SystemExit) as exit_context:
+                main(
+                    [
+                        "run",
+                        "--panel-read-only",
+                        "--capture-serial",
+                        "aqualinkd-log",
+                        "--aqualinkd",
+                        str(mock),
+                        "--config",
+                        str(config),
+                        "--duration",
+                        "0.1",
+                        "--terminate-grace",
+                        "1",
+                        "--artifacts",
+                        str(artifacts),
+                    ]
+                )
+
+            self.assertEqual(exit_context.exception.code, 0)
+            run_dir = next(artifacts.iterdir())
+            stdout = (run_dir / "stdout.log").read_text(encoding="utf-8")
+            self.assertIn("-d -c", stdout)
+            self.assertIn("-vv", stdout)
+            records = [
+                json.loads(line)
+                for line in (run_dir / "serial.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(len(records), 3)
+            self.assertEqual(
+                [record["direction"] for record in records[:2]],
+                ["panel_to_aqualinkd", "aqualinkd_to_panel"],
+            )
+            self.assertFalse(records[2]["valid"])
+            self.assertTrue((run_dir / "serial.pcapng").stat().st_size > 0)
+            capture = json.loads((run_dir / "serial-capture.json").read_text())
+            self.assertEqual(capture["counts"]["packets"], 2)
+            self.assertEqual(capture["counts"]["unparsed"], 1)
+            manifest = json.loads((run_dir / "manifest.yaml").read_text())
+            self.assertEqual(
+                manifest["serial"]["capture"]["capture_point"],
+                "aqualinkd_packet_log",
+            )
+
+    def test_logical_capture_rejects_filtered_packet_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mock = root / "mock-aqualinkd"
+            mock.write_text("#!/bin/sh\n", encoding="utf-8")
+            mock.chmod(0o755)
+            config = root / "aqualinkd.conf"
+            config.write_text(
+                "serial_port=/dev/null\nRSSD_LOG_filter=0x60\n",
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as result:
+                main(
+                    [
+                        "run",
+                        "--panel-read-only",
+                        "--capture-serial",
+                        "aqualinkd-log",
+                        "--aqualinkd",
+                        str(mock),
+                        "--config",
+                        str(config),
+                    ]
+                )
+
+            self.assertEqual(result.exception.code, 2)
+            self.assertIn("remove active RSSD_LOG_filter", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

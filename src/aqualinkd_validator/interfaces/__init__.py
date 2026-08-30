@@ -4,7 +4,7 @@ from .api import AqualinkApi
 from .aquapda import AquaPdaClient, PdaScreenView
 from .artifacts import ArtifactStore
 from .clock import MonotonicClock
-from .events import EventTimeline, LineEvent, OrderedLogEvents
+from .events import EventTimeline, LineEvent, OrderedLogEvents, ProcessOutputObserver
 from .http import HttpTransport
 from .power_center import (
     PowerCenterCommand,
@@ -12,6 +12,7 @@ from .power_center import (
     PowerCenterPreparation,
 )
 from .process import (
+    ProcessOutputObserverFactory,
     ProcessRunner,
     RunResult,
     Scenario,
@@ -29,8 +30,10 @@ __all__ = [
     "LineEvent",
     "MonotonicClock",
     "OrderedLogEvents",
+    "ProcessOutputObserver",
     "PdaScreenView",
     "ProcessRunner",
+    "ProcessOutputObserverFactory",
     "PowerCenterCommand",
     "PowerCenterController",
     "PowerCenterPreparation",

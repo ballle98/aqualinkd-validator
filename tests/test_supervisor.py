@@ -9,6 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from aqualinkd_validator.adapters import LogicalSerialLogCapture
 from aqualinkd_validator.adapters.process import (
     ScenarioContext,
     ScenarioOutcome,
@@ -22,7 +23,83 @@ class ReadyScenario:
         return ScenarioOutcome(status="passed", reason="scenario_completed")
 
 
+class FailingObserver:
+    async def observe(self, event: object) -> None:
+        del event
+        raise RuntimeError("capture disk failed")
+
+    async def close(self) -> None:
+        return None
+
+
 class SupervisorTests(unittest.TestCase):
+    def test_output_observer_failure_fails_run_and_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory)
+            result = asyncio.run(
+                supervise(
+                    [sys.executable, "-c", "print('packet line', flush=True)"],
+                    artifact_dir,
+                    cwd=None,
+                    duration_seconds=None,
+                    sample_interval_seconds=0.01,
+                    terminate_grace_seconds=1.0,
+                    output_observer_factories=(
+                        lambda artifacts, timeline: FailingObserver(),
+                    ),
+                )
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.reason, "output_reader_error")
+            timeline = (artifact_dir / "timeline.jsonl").read_text()
+            self.assertIn("capture disk failed", timeline)
+
+    def test_output_observer_receives_one_complete_fragmented_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_dir = Path(directory)
+            result = asyncio.run(
+                supervise(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import sys,time;"
+                            "sys.stdout.write('Debug: RS Serial: Read Jandy ');"
+                            "sys.stdout.flush();time.sleep(0.02);"
+                            "sys.stdout.write('packet To 0x60 of type Probe | HEX: ');"
+                            "sys.stdout.flush();time.sleep(0.02);"
+                            "sys.stdout.write('0x10|0x02|0x60|0x00|0x72|0x10|0x03|\\n');"
+                            "sys.stdout.flush()"
+                        ),
+                    ],
+                    artifact_dir,
+                    cwd=None,
+                    duration_seconds=None,
+                    sample_interval_seconds=0.01,
+                    terminate_grace_seconds=1.0,
+                    output_observer_factories=(
+                        lambda artifacts, timeline: LogicalSerialLogCapture(
+                            artifacts=artifacts,
+                            timeline=timeline,
+                        ),
+                    ),
+                )
+            )
+
+            self.assertEqual(result.status, "passed")
+            records = [
+                json.loads(line)
+                for line in (artifact_dir / "serial.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["data"], "10026000721003")
+            self.assertEqual(
+                (artifact_dir / "stdout.log").read_text(),
+                "Debug: RS Serial: Read Jandy packet To 0x60 of type Probe "
+                "| HEX: 0x10|0x02|0x60|0x00|0x72|0x10|0x03|\n",
+            )
+
     def test_scenario_completion_without_duration_stops_process(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact_dir = Path(directory)

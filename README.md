@@ -24,15 +24,16 @@ implemented for tests that do not require pool hardware.
 | --- | --- | --- |
 | Physical panel | AqualinkD process, HTTP API, PDA programming, sleep/wake behavior, AquaPDA WebSocket, equipment state, cleanup, and timing | Implemented and used for live regression testing |
 | Jandy Power Center emulator | The same PDA coverage with Alwin32 `Pwrcntr.exe` supplying the southbound panel conversation | Implemented; Wine helper automation and virtual/physical serial links are supported |
-| RS485 panel emulator | Isolated AqualinkD process using a private PTY, generated configuration, scripted frames, and a minimal stateful AllButton driver | Implemented in automated tests; native AqualinkD verification remains |
+| RS485 panel emulator | Isolated AqualinkD process using a private PTY, generated configuration, scripted frames, and a minimal stateful AllButton driver | Implemented in automated tests and verified against native AqualinkD on ARM64 |
 
 <!-- markdownlint-enable MD013 -->
 
 Every mode captures AqualinkD stdout and stderr. Panel-free mode additionally
 captures both serial directions with monotonic timing and writes PCAPNG.
-Operational live-panel RS485-log collection, capture replay, legacy importers,
-a Wireshark dissector, and broader stateful panel models remain planned under
-[issue #1](https://github.com/ballle98/aqualinkd-validator/issues/1).
+Physical-panel runs can explicitly capture AqualinkD's logical bidirectional
+packet log. Raw-wire capture, replay, legacy importers, a Wireshark dissector,
+and broader stateful panel models remain roadmap work. Live logical capture is
+tracked by [issue #3](https://github.com/ballle98/aqualinkd-validator/issues/3).
 
 Related documentation:
 
@@ -495,7 +496,8 @@ A live-panel run normally contains:
 
 Automated Power Center runs add `power-center.json`. Panel-free runs add the
 effective generated configuration, testcase copy, `http.jsonl`, and
-`serial.pcapng`.
+`serial.pcapng`. Capture-enabled live runs add `serial.jsonl`,
+`serial-capture.json`, and `serial.pcapng`.
 
 The configuration fingerprint is recorded, but a live AqualinkD configuration
 is not copied into artifacts because it may contain credentials. Panel-free
@@ -522,11 +524,34 @@ monotonic clock used for HTTP, process, and scenario events. `serial.pcapng`
 uses a small versioned `AQV1` pseudo-header with `LINKTYPE_USER0`; the original
 RS485 frame bytes remain unchanged.
 
-Live-panel capture is not yet integrated into `run`. The intended first source
-is AqualinkD's operational `debug_RSProtocol_packets` log, which records decoded
-packets without taking over the daemon. `debug_RSProtocol_bytes` is useful for
-received-byte diagnostics but is not bidirectional. A second process must not
-read AqualinkD's serial device because competing readers divide the bytes.
+Live-panel logical capture is explicit because serial-debug formatting and
+artifact writes add overhead:
+
+```sh
+sudo .venv/bin/aqualinkd-validator run \
+  --panel-read-write \
+  --capture-serial aqualinkd-log \
+  pda-live-fast
+```
+
+The validator adds `-vv` when the selected suite does not already request it,
+extracts complete `Read` and `Write` packet lines while retaining normal stdout
+and stderr, and writes `serial.jsonl` incrementally plus `serial.pcapng` after
+each parsed packet. Malformed packet candidates are preserved and counted.
+An active `RSSD_LOG_filter` is rejected because a filtered log cannot be a
+canonical capture.
+
+This source records AqualinkD's logical packet view, not the electrical byte
+stream. Direction and logical packet boundaries are explicit, while discarded
+noise, omitted transmit padding, and parser-normalized bytes may be absent. The
+timestamp is when the validator receives the complete log line. These limits
+are recorded in `serial-capture.json` and the run manifest.
+
+`debug_RSProtocol_packets` can also write decoded reads and writes to the
+fixed `/tmp/RS485.log`, but that buffered file has no packet timestamps.
+`debug_RSProtocol_bytes` writes received raw bytes only and is not
+bidirectional. A second process must not read AqualinkD's serial device because
+competing readers divide the bytes.
 
 AQ Manager's **Run Serial Logger** / RS485 Monitor is a diagnostic takeover
 mode and pauses normal packet processing, so it must not be used during a

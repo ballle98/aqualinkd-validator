@@ -7,6 +7,7 @@ from pathlib import Path
 from aqualinkd_validator.config import (
     ConfigurationError,
     read_config_value,
+    read_config_values,
     read_disabled_button_numbers,
     resolve_api_base_url,
     write_config_with_overrides,
@@ -15,6 +16,21 @@ from aqualinkd_validator.site_config import SiteConfigError, load_site_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_reads_repeatable_assignments_case_insensitively(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "aqualinkd.conf"
+            path.write_text(
+                "RSSD_LOG_filter = 0x60\n"
+                "rssd_log_FILTER = '0x61'\n"
+                "# RSSD_LOG_filter = 0x62\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                read_config_values(path, "RSSD_LOG_filter"),
+                ("0x60", "0x61"),
+            )
+
     def test_loads_site_specific_spa_fill_time(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

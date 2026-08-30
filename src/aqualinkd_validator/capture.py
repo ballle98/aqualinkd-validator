@@ -18,6 +18,7 @@ _PSEUDO_HEADER = struct.Struct("<4sBBBBI")
 _PSEUDO_MAGIC = b"AQV1"
 _PSEUDO_VERSION = 1
 _CAPTURE_POINT_PTY_MASTER = 1
+_CAPTURE_POINT_AQUALINKD_PACKET_LOG = 2
 _FLAG_COMPLETE = 0x01
 _FLAG_FRAMING_EXACT = 0x02
 _FLAG_DIRECTION_EXACT = 0x04
@@ -78,9 +79,22 @@ class JandyFrameBuffer:
 class PcapngSerialWriter:
     """Write nanosecond PCAPNG packets using the AQV1 private pseudo-header."""
 
-    def __init__(self, handle: BinaryIO, *, wall_start_ns: int) -> None:
+    def __init__(
+        self,
+        handle: BinaryIO,
+        *,
+        wall_start_ns: int,
+        capture_point: int = _CAPTURE_POINT_PTY_MASTER,
+        interface_name: bytes = b"aqualinkd-validator PTY",
+        interface_description: bytes = (
+            b"AQV1 pseudo-header followed by unmodified RS485 frame bytes"
+        ),
+    ) -> None:
         self._handle = handle
         self._wall_start_ns = wall_start_ns
+        self._capture_point = capture_point
+        self._interface_name = interface_name
+        self._interface_description = interface_description
         self._write_headers()
 
     def write_frame(
@@ -90,15 +104,24 @@ class PcapngSerialWriter:
         direction: SerialDirection,
         offset_ns: int,
         complete: bool = True,
+        framing_exact: bool = True,
+        direction_exact: bool = True,
+        timing_exact: bool = True,
     ) -> None:
-        flags = _FLAG_FRAMING_EXACT | _FLAG_DIRECTION_EXACT | _FLAG_TIMING_EXACT
+        flags = 0
         if complete:
             flags |= _FLAG_COMPLETE
+        if framing_exact:
+            flags |= _FLAG_FRAMING_EXACT
+        if direction_exact:
+            flags |= _FLAG_DIRECTION_EXACT
+        if timing_exact:
+            flags |= _FLAG_TIMING_EXACT
         pseudo_header = _PSEUDO_HEADER.pack(
             _PSEUDO_MAGIC,
             _PSEUDO_VERSION,
             _DIRECTION_VALUE[direction],
-            _CAPTURE_POINT_PTY_MASTER,
+            self._capture_point,
             flags,
             len(payload),
         )
@@ -124,11 +147,8 @@ class PcapngSerialWriter:
             _SECTION_HEADER_BLOCK,
             struct.pack("<IHHq", _BYTE_ORDER_MAGIC, 1, 0, -1),
         )
-        options = self._option(2, b"aqualinkd-validator PTY")
-        options += self._option(
-            3,
-            b"AQV1 pseudo-header followed by unmodified RS485 frame bytes",
-        )
+        options = self._option(2, self._interface_name)
+        options += self._option(3, self._interface_description)
         options += self._option(9, b"\x09")
         options += struct.pack("<HH", 0, 0)
         self._write_block(
@@ -150,6 +170,24 @@ class PcapngSerialWriter:
             + value
             + b"\0" * ((-len(value)) % 4)
         )
+
+
+def logical_packet_log_writer(
+    handle: BinaryIO,
+    *,
+    wall_start_ns: int,
+) -> PcapngSerialWriter:
+    """Create an AQV1 writer for AqualinkD's logical packet-log boundary."""
+
+    return PcapngSerialWriter(
+        handle,
+        wall_start_ns=wall_start_ns,
+        capture_point=_CAPTURE_POINT_AQUALINKD_PACKET_LOG,
+        interface_name=b"aqualinkd-validator logical packet log",
+        interface_description=(
+            b"AQV1 pseudo-header followed by AqualinkD-logged RS485 packet bytes"
+        ),
+    )
 
 
 class CapturedSerialTransport:

@@ -47,6 +47,14 @@ class OrderedLogEvents(Protocol):
     ) -> LineEvent: ...
 
 
+class ProcessOutputObserver(Protocol):
+    """Incremental observer of complete output lines from the supervised SUT."""
+
+    async def observe(self, event: LineEvent) -> None: ...
+
+    async def close(self) -> None: ...
+
+
 class EventTimeline(Protocol):
     """Monotonic event and measurement sink."""
 

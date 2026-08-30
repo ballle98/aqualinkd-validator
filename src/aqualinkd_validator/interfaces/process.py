@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .artifacts import ArtifactStore
-from .events import EventTimeline, OrderedLogEvents
+from .events import EventTimeline, OrderedLogEvents, ProcessOutputObserver
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,14 @@ class Scenario(Protocol):
     async def run(self, context: ScenarioContext) -> ScenarioOutcome: ...
 
 
+class ProcessOutputObserverFactory(Protocol):
+    def __call__(
+        self,
+        artifacts: ArtifactStore,
+        timeline: EventTimeline,
+    ) -> ProcessOutputObserver: ...
+
+
 class ProcessRunner(Protocol):
     async def run(
         self,
@@ -45,4 +53,5 @@ class ProcessRunner(Protocol):
         terminate_grace_seconds: float,
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
+        output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
     ) -> RunResult: ...

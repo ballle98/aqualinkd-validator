@@ -17,6 +17,7 @@ from ..interfaces import (
     LineEvent,
     MonotonicClock,
     OrderedLogEvents,
+    ProcessOutputObserverFactory,
     ProcessRunner,
     RunResult,
     Scenario,
@@ -347,6 +348,7 @@ class FakeProcessRunner:
         terminate_grace_seconds: float,
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
+        output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
     ) -> RunResult:
         del (
             artifact_dir,
@@ -356,6 +358,7 @@ class FakeProcessRunner:
             terminate_grace_seconds,
             scenario,
             scenario_cleanup_seconds,
+            output_observer_factories,
         )
         self.commands.append(list(command))
         return self.result

@@ -17,17 +17,24 @@ class ConfigurationError(ValueError):
 
 def read_config_value(path: Path, key: str) -> str | None:
     """Return the last active assignment for *key* in an AqualinkD config."""
-    result: str | None = None
+    values = read_config_values(path, key)
+    return values[-1] if values else None
+
+
+def read_config_values(path: Path, key: str) -> tuple[str, ...]:
+    """Return every active assignment for a repeatable AqualinkD setting."""
+
+    result: list[str] = []
     with path.open(encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
             match = _ASSIGNMENT.match(raw_line)
-            if match is None or match.group(1) != key:
+            if match is None or match.group(1).casefold() != key.casefold():
                 continue
-            result = _unquote(match.group(2).strip())
-    return result
+            result.append(_unquote(match.group(2).strip()))
+    return tuple(result)
 
 
 def read_disabled_button_numbers(path: Path) -> tuple[int, ...]:

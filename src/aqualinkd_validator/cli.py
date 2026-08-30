@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from . import __version__
 from .adapters import (
     LocalProcessRunner,
+    LogicalSerialLogCapture,
     PowerCenterAutomationError,
     WinePowerCenterController,
 )
@@ -28,11 +29,13 @@ from .comparison import format_comparison, load_comparison
 from .config import (
     ConfigurationError,
     normalize_api_base_url,
+    read_config_values,
     read_disabled_button_numbers,
     sha256_file,
     validate_live_serial_device,
     write_config_with_overrides,
 )
+from .interfaces import ArtifactStore, EventTimeline, ProcessOutputObserver
 from .metadata import (
     collect_binary_metadata,
     collect_host_metadata,
@@ -142,6 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--serial-device",
         type=Path,
         help="Override and verify the serial_port read from the configuration",
+    )
+    run.add_argument(
+        "--capture-serial",
+        choices=("none", "aqualinkd-log"),
+        default="none",
+        help=(
+            "Capture logical bidirectional RS485 packets from AqualinkD serial "
+            "debug output; this adds logging and artifact overhead"
+        ),
     )
     panel_access = run.add_mutually_exclusive_group()
     panel_access.add_argument(
@@ -524,6 +536,18 @@ def _run_process(args: argparse.Namespace) -> int:
     config = args.config.expanduser().resolve(strict=True)
     source_config = getattr(args, "source_config", config)
     config_overrides: dict[str, str] = getattr(args, "config_overrides", {})
+    if args.capture_serial == "aqualinkd-log":
+        active_log_filters = tuple(
+            value
+            for value in read_config_values(config, "RSSD_LOG_filter")
+            if value.strip().casefold() not in {"", "0", "0x00"}
+        )
+        if active_log_filters:
+            raise ConfigurationError(
+                "--capture-serial aqualinkd-log requires an unfiltered packet "
+                "log; remove active RSSD_LOG_filter assignments from the "
+                f"effective configuration (found: {', '.join(active_log_filters)})"
+            )
     site_config = load_site_config(source_config, args.site_config)
     disabled_button_numbers = read_disabled_button_numbers(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
@@ -669,10 +693,13 @@ def _run_in_artifact(
             f"{preparation.model} on {preparation.port}; power verified on",
             flush=True,
         )
+    aqualinkd_args = list(target.aqualinkd_args if target is not None else ())
+    if args.capture_serial == "aqualinkd-log" and "-vv" not in aqualinkd_args:
+        aqualinkd_args.append("-vv")
     command = build_aqualinkd_command(
         binary,
         config,
-        target.aqualinkd_args if target is not None else (),
+        aqualinkd_args,
     )
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -775,6 +802,15 @@ def _run_in_artifact(
                 if args.serial_device is not None
                 else "aqualinkd_config"
             ),
+            "capture": {
+                "mode": args.capture_serial,
+                "aqualinkd_log_level": (
+                    "DEBUG_SERIAL"
+                    if args.capture_serial == "aqualinkd-log"
+                    else "unchanged"
+                ),
+                "aqualinkd_log_filter": "none",
+            },
         },
         "sampling": {
             "interval_seconds": args.sample_interval,
@@ -793,6 +829,8 @@ def _run_in_artifact(
         )
         print(f"Config overrides: {formatted_overrides}", flush=True)
     print(f"Serial device: {serial_device}", flush=True)
+    print(f"Serial capture: {args.capture_serial}", flush=True)
+    print(f"Command: {' '.join(command)}", flush=True)
     print(f"Mode: {args.mode}", flush=True)
     if target is not None and target.is_testcase:
         print(f"Testcase: {target.identifier}", flush=True)
@@ -819,6 +857,11 @@ def _run_in_artifact(
                 terminate_grace_seconds=args.terminate_grace,
                 scenario=scenario,
                 scenario_cleanup_seconds=args.pda_cleanup_timeout,
+                output_observer_factories=(
+                    (_logical_serial_capture_factory,)
+                    if args.capture_serial == "aqualinkd-log"
+                    else ()
+                ),
             )
         )
     except KeyboardInterrupt:
@@ -862,7 +905,12 @@ def _run_in_artifact(
         manifest["equipment_control"]["api_endpoint_source"] = scenario_data.get(
             "api_endpoint_source"
         )
-        _write_json(artifact_dir / "manifest.yaml", manifest)
+    capture_path = artifact_dir / "serial-capture.json"
+    if capture_path.exists():
+        manifest["serial"]["capture"] = json.loads(
+            capture_path.read_text(encoding="utf-8")
+        )
+    _write_json(artifact_dir / "manifest.yaml", manifest)
     _write_json(artifact_dir / "performance.json", performance)
     _write_json(artifact_dir / "result.json", result_data)
     print(
@@ -906,6 +954,13 @@ def build_aqualinkd_command(
     command = [str(binary), "-d", "-c", str(config)]
     command.extend(aqualinkd_args)
     return command
+
+
+def _logical_serial_capture_factory(
+    artifacts: ArtifactStore,
+    timeline: EventTimeline,
+) -> ProcessOutputObserver:
+    return LogicalSerialLogCapture(artifacts=artifacts, timeline=timeline)
 
 
 class _TeeTextIO(io.TextIOBase):

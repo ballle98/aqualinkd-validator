@@ -14,6 +14,8 @@ from typing import Any, TextIO
 
 from ..interfaces import (
     LineEvent,
+    ProcessOutputObserver,
+    ProcessOutputObserverFactory,
     RunResult,
     Scenario,
     ScenarioContext,
@@ -37,18 +39,18 @@ class OutputMonitor:
             event for event in self._events if before is None or event.sequence < before
         ]
 
-    async def publish(self, offset_ns: int, stream: str, text: str) -> None:
+    async def publish(self, offset_ns: int, stream: str, text: str) -> LineEvent:
         async with self._condition:
             self._sequence += 1
-            self._events.append(
-                LineEvent(
-                    sequence=self._sequence,
-                    offset_ns=offset_ns,
-                    stream=stream,
-                    text=text,
-                )
+            event = LineEvent(
+                sequence=self._sequence,
+                offset_ns=offset_ns,
+                stream=stream,
+                text=text,
             )
+            self._events.append(event)
             self._condition.notify_all()
+            return event
 
     async def wait_for(
         self,
@@ -171,9 +173,14 @@ async def supervise(
     terminate_grace_seconds: float,
     scenario: Scenario | None = None,
     scenario_cleanup_seconds: float = 120.0,
+    output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
 ) -> RunResult:
     start_ns = time.monotonic_ns()
     timeline = Timeline(artifact_dir / "timeline.jsonl", start_ns)
+    artifacts = FileArtifactStore(artifact_dir)
+    output_observers = tuple(
+        factory(artifacts, timeline) for factory in output_observer_factories
+    )
     monitor = OutputMonitor()
     stdout_handle = (artifact_dir / "stdout.log").open("w", encoding="utf-8")
     stderr_handle = (artifact_dir / "stderr.log").open("w", encoding="utf-8")
@@ -206,6 +213,7 @@ async def supervise(
                     "stdout",
                     timeline,
                     monitor,
+                    output_observers,
                 )
             ),
             asyncio.create_task(
@@ -215,6 +223,7 @@ async def supervise(
                     "stderr",
                     timeline,
                     monitor,
+                    output_observers,
                 )
             ),
         ]
@@ -231,7 +240,7 @@ async def supervise(
             scenario_task = asyncio.create_task(
                 scenario.run(
                     ScenarioContext(
-                        artifacts=FileArtifactStore(artifact_dir),
+                        artifacts=artifacts,
                         monitor=monitor,
                         timeline=timeline,
                     )
@@ -316,7 +325,26 @@ async def supervise(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler
         if readers:
-            await asyncio.gather(*readers, return_exceptions=True)
+            reader_results = await asyncio.gather(*readers, return_exceptions=True)
+            for reader_result in reader_results:
+                if not isinstance(reader_result, BaseException):
+                    continue
+                status = "failed"
+                reason = "output_reader_error"
+                await timeline.write(
+                    "output_reader_error",
+                    error=f"{type(reader_result).__name__}: {reader_result}",
+                )
+        for observer in output_observers:
+            try:
+                await observer.close()
+            except Exception as error:
+                status = "failed"
+                reason = "output_observer_close_error"
+                await timeline.write(
+                    "output_observer_close_error",
+                    error=f"{type(error).__name__}: {error}",
+                )
         await timeline.write(
             "process_finished",
             status=status,
@@ -350,6 +378,7 @@ class LocalProcessRunner:
         terminate_grace_seconds: float,
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
+        output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
     ) -> RunResult:
         return await supervise(
             command,
@@ -360,6 +389,7 @@ class LocalProcessRunner:
             terminate_grace_seconds=terminate_grace_seconds,
             scenario=scenario,
             scenario_cleanup_seconds=scenario_cleanup_seconds,
+            output_observer_factories=output_observer_factories,
         )
 
 
@@ -369,6 +399,7 @@ async def _read_stream(
     name: str,
     timeline: Timeline,
     monitor: OutputMonitor,
+    observers: tuple[ProcessOutputObserver, ...],
 ) -> None:
     while line := await stream.readline():
         text = line.decode("utf-8", errors="replace")
@@ -380,7 +411,9 @@ async def _read_stream(
             stream=name,
             text=stripped,
         )
-        await monitor.publish(offset_ns, name, stripped)
+        event = await monitor.publish(offset_ns, name, stripped)
+        for observer in observers:
+            await observer.observe(event)
         _echo_process_update(name, stripped)
 
 
