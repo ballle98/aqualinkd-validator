@@ -7,6 +7,8 @@ requires: {protocol: rs485}
 fixture:
   panel_type: PDA-PS4 Combo
   device_id: "0x60"
+  overrides:
+    pda_sleep_mode: "no"
 steps:
   - serial_send:
       bytes: "10 02 60 00 72 10 03"
