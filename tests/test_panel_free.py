@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -180,17 +182,18 @@ class PanelFreeCompositionTests(unittest.TestCase):
             web = root / "web"
             web.mkdir()
             artifacts = root / "artifacts"
-            process = FakeProcessRunner()
-
-            result = asyncio.run(
-                run_panel_free_testcase(
-                    testcase=_testcase(),
-                    aqualinkd=binary,
-                    web_directory=web,
-                    artifact_dir=artifacts,
-                    process_runner=process,
+            output = io.StringIO()
+            process = _IdentityProcessRunner(output)
+            with contextlib.redirect_stdout(output):
+                result = asyncio.run(
+                    run_panel_free_testcase(
+                        testcase=_testcase(),
+                        aqualinkd=binary,
+                        web_directory=web,
+                        artifact_dir=artifacts,
+                        process_runner=process,
+                    )
                 )
-            )
 
             self.assertEqual(result.status, "passed")
             self.assertEqual(process.commands[0][0], str(binary))
@@ -199,7 +202,47 @@ class PanelFreeCompositionTests(unittest.TestCase):
             self.assertIn("panel_type = RS-4 Combo", config)
             self.assertIn("serial_port = /dev/pts/", config)
             manifest = json.loads((artifacts / "manifest.yaml").read_text())
-            self.assertEqual(manifest["testcase"], "rs485.probe")
+            self.assertEqual(manifest["testcase"]["id"], "rs485.probe")
+            self.assertEqual(manifest["aqualinkd"]["reported_version"], "v3.1.1")
+            self.assertEqual(
+                manifest["aqualinkd"]["configured_panel_type"],
+                "RS-4 Combo (Pool Only)",
+            )
+            self.assertEqual(manifest["fixture"]["panel_type"], "RS-4 Combo")
+            self.assertEqual(
+                manifest["serial"]["capture"]["fidelity"],
+                {
+                    "bytes": "exact",
+                    "direction": "exact",
+                    "framing": "exact_for_complete_dle_frames",
+                    "timing": "exact_monotonic_at_frame_completion",
+                },
+            )
+            self.assertEqual(manifest["config"]["name"], "effective-aqualinkd.conf")
+            self.assertEqual(len(manifest["config"]["sha256"]), 64)
+            self.assertEqual(len(manifest["aqualinkd"]["sha256"]), 64)
+            self.assertIn(f"AqualinkD: {binary}", process.output_before_run)
+            self.assertIn("Generated config: ", process.output_before_run)
+            self.assertIn("Serial PTY: /dev/pts/", process.output_before_run)
+            self.assertIn(
+                "HTTP API: http://127.0.0.1:", process.output_before_run
+            )
+
+
+class _IdentityProcessRunner(FakeProcessRunner):
+    def __init__(self, output: io.StringIO) -> None:
+        super().__init__()
+        self._output = output
+        self.output_before_run = ""
+
+    async def run(self, command, artifact_dir, **kwargs):
+        self.output_before_run = self._output.getvalue()
+        (artifact_dir / "stdout.log").write_text(
+            "AqualinkD: Starting Aqualink Daemon v3.1.1 !\n"
+            "AqualinkD: panel type = RS-4 Combo (Pool Only)\n",
+            encoding="utf-8",
+        )
+        return await super().run(command, artifact_dir, **kwargs)
 
 
 if __name__ == "__main__":

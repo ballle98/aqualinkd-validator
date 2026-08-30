@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .adapters import (
     AqualinkHttpApi,
     FileArtifactStore,
@@ -14,6 +17,7 @@ from .adapters import (
     PanelFixture,
 )
 from .capture import CapturedSerialTransport
+from .config import sha256_file
 from .engine.http_actions import HttpActions
 from .engine.serial_actions import SerialActions
 from .interfaces import (
@@ -24,6 +28,11 @@ from .interfaces import (
     ScenarioOutcome,
     SerialTransport,
 )
+from .metadata import (
+    collect_binary_metadata,
+    collect_host_metadata,
+    collect_source_metadata,
+)
 from .protocols.rs485 import AllButtonPanelDriver
 from .testcases import (
     ExpectPanelCommandStep,
@@ -33,6 +42,15 @@ from .testcases import (
     TestcaseDefinition,
     TestcaseExecutor,
     UnsupportedTestcaseKeywords,
+)
+
+_AQUALINKD_VERSION = re.compile(
+    r"(?:Starting\s+)?Aqualink Daemon\s+(v.+?)(?:\s+!\s*)?$",
+    re.IGNORECASE,
+)
+_CONFIGURED_PANEL = re.compile(
+    r"(?:Panel set to|panel type\s*=)\s*(.+?)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -224,21 +242,48 @@ async def run_panel_free_testcase(
         artifacts=artifacts,
     )
     command = [str(binary), "-d", "-c", str(runtime.config_path)]
-    artifacts.write_json(
-        "manifest.yaml",
-        {
-            "schema_version": 1,
-            "mode": "rs485-panel-emulator",
-            "testcase": testcase.identifier,
-            "command": command,
-            "api_base_url": runtime.api_base_url,
-            "serial": {
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "validator_version": __version__,
+        "created_at": datetime.now(UTC).isoformat(),
+        "mode": "rs485-panel-emulator",
+        "testcase": {
+            "id": testcase.identifier,
+            "description": testcase.description,
+            "schema": testcase.schema,
+            "access": testcase.access,
+        },
+        "command": command,
+        "host": collect_host_metadata(),
+        "aqualinkd": {
+            **collect_binary_metadata(binary),
+            "reported_version": None,
+            "configured_panel_type": None,
+        },
+        "source": collect_source_metadata(_find_source_tree(binary)),
+        "config": {
+            "name": "effective-aqualinkd.conf",
+            "runtime_path": str(runtime.config_path),
+            "sha256": sha256_file(runtime.config_path),
+        },
+        "api": {
+            "base_url": runtime.api_base_url,
+            "scope": "isolated_loopback",
+        },
+        "serial": {
+            "endpoint": {
                 "capture_point": "pty_master",
                 "slave_path": str(runtime.pty.slave_path),
             },
-            "fixture": asdict(fixture),
+            "capture": CapturedSerialTransport.manifest(),
         },
-    )
+        "fixture": asdict(fixture),
+    }
+    artifacts.write_json("manifest.yaml", manifest)
+    print(f"AqualinkD: {binary}", flush=True)
+    print(f"Generated config: {runtime.config_path}", flush=True)
+    print(f"Serial PTY: {runtime.pty.slave_path}", flush=True)
+    print(f"HTTP API: {runtime.api_base_url}", flush=True)
     scenario = PanelFreeScenario(
         testcase=testcase,
         transport=runtime.pty.panel,
@@ -258,7 +303,37 @@ async def run_panel_free_testcase(
         )
         return result
     finally:
+        manifest["aqualinkd"].update(_read_aqualinkd_identity(artifact_dir))
+        artifacts.write_json("manifest.yaml", manifest)
         try:
             await scenario.close()
         finally:
             await runtime.close()
+
+
+def _find_source_tree(binary: Path) -> Path | None:
+    for candidate in binary.parents:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def _read_aqualinkd_identity(artifact_dir: Path) -> dict[str, str]:
+    identity: dict[str, str] = {}
+    for name in ("stdout.log", "stderr.log"):
+        try:
+            lines = (artifact_dir / name).read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if "reported_version" not in identity:
+                version_match = _AQUALINKD_VERSION.search(line)
+                if version_match is not None:
+                    identity["reported_version"] = version_match.group(1).strip()
+            if "configured_panel_type" not in identity:
+                panel_match = _CONFIGURED_PANEL.search(line)
+                if panel_match is not None:
+                    identity["configured_panel_type"] = panel_match.group(1).strip()
+    return identity

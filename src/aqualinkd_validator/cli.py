@@ -333,7 +333,6 @@ def _run_panel_free(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     print(f"Artifacts: {artifact_dir}", flush=True)
-    print(f"AqualinkD: {args.aqualinkd}", flush=True)
     print(f"Testcase: {document.identifier}", flush=True)
     result = asyncio.run(
         run_panel_free_testcase(
