@@ -574,13 +574,11 @@ class CliTests(unittest.TestCase):
             root = Path(directory)
             mock = root / "mock-aqualinkd"
             mock.write_text(
-                "#!/usr/bin/env python3\n"
-                "import sys\n"
-                "import time\n"
-                "print('mock started', flush=True)\n"
-                "print('arguments: ' + ' '.join(sys.argv[1:]), flush=True)\n"
-                "print('mock warning', file=sys.stderr, flush=True)\n"
-                "time.sleep(60)\n",
+                "#!/bin/sh\n"
+                "printf 'mock started\\n'\n"
+                "printf 'arguments: %s\\n' \"$*\"\n"
+                "printf 'mock warning\\n' >&2\n"
+                "exec sleep 60\n",
                 encoding="utf-8",
             )
             mock.chmod(0o755)
@@ -600,7 +598,7 @@ class CliTests(unittest.TestCase):
                         "--config",
                         str(config),
                         "--duration",
-                        "0.12",
+                        "0.5",
                         "--sample-interval",
                         "0.02",
                         "--terminate-grace",
