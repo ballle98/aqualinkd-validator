@@ -14,6 +14,15 @@ typedef struct {
 } WindowSearch;
 
 typedef struct {
+  unsigned int count;
+} ControlEnumeration;
+
+typedef struct {
+  int identifier;
+  HWND control;
+} ControlSearch;
+
+typedef struct {
   UINT identifier;
   wchar_t text[TEXT_CAPACITY];
   bool found;
@@ -68,6 +77,98 @@ static HWND require_power_center_window(void) {
              L"error: could not find a visible Pwrcntr.exe Power Center window\n");
   }
   return search.window;
+}
+
+static BOOL CALLBACK print_child_control(HWND control, LPARAM parameter) {
+  ControlEnumeration *enumeration = (ControlEnumeration *)parameter;
+  wchar_t text[TEXT_CAPACITY] = {0};
+  wchar_t class_name[TEXT_CAPACITY] = {0};
+  GetWindowTextW(control, text, TEXT_CAPACITY);
+  GetClassNameW(control, class_name, TEXT_CAPACITY);
+  LONG_PTR identifier = GetWindowLongPtrW(control, GWLP_ID);
+  LONG_PTR style = GetWindowLongPtrW(control, GWL_STYLE);
+  LRESULT check = SendMessageW(control, BM_GETCHECK, 0, 0);
+  RECT rectangle = {0};
+  GetWindowRect(control, &rectangle);
+  POINT origin = {.x = rectangle.left, .y = rectangle.top};
+  ScreenToClient(GetParent(control), &origin);
+  wprintf(L"control: hwnd=0x%p id=0x%04lx class=%ls style=0x%08lx "
+          L"check=%ld x=%ld y=%ld w=%ld h=%ld text=%ls\n",
+          (void *)control, (unsigned long)identifier, class_name,
+          (unsigned long)style, (long)check, origin.x, origin.y,
+          rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
+          text[0] == L'\0' ? L"<empty>" : text);
+  enumeration->count++;
+  return TRUE;
+}
+
+static BOOL CALLBACK find_control_by_id(HWND control, LPARAM parameter) {
+  ControlSearch *search = (ControlSearch *)parameter;
+  if (GetDlgCtrlID(control) == search->identifier) {
+    search->control = control;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static HWND require_control(HWND window, int identifier) {
+  ControlSearch search = {.identifier = identifier, .control = NULL};
+  EnumChildWindows(window, find_control_by_id, (LPARAM)&search);
+  return search.control;
+}
+
+enum {
+  CONTROL_MODE_KEY = 0x03e8,
+  CONTROL_MODE_AUTO = 0x03e9,
+  CONTROL_MODE_TIMEOUT = 0x03ea,
+  CONTROL_MODE_SERVICE = 0x03eb,
+};
+
+static int select_mode(HWND window, int wanted_identifier,
+                       const wchar_t *wanted_name) {
+  for (unsigned int attempt = 0; attempt < 6; attempt++) {
+    // Pwrcntr rebuilds this child dialog after a mode change, invalidating
+    // every previously discovered HWND. Resolve both controls on each pass.
+    HWND mode_key = require_control(window, CONTROL_MODE_KEY);
+    HWND wanted_indicator = require_control(window, wanted_identifier);
+    if (mode_key == NULL || wanted_indicator == NULL) {
+      fwprintf(stderr, L"error: Power Center mode controls were not found\n");
+      return 11;
+    }
+    if (SendMessageW(wanted_indicator, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+      wprintf(L"selected mode: %ls\n", wanted_name);
+      return 0;
+    }
+    DWORD_PTR response = 0;
+    if (!SendMessageTimeoutW(mode_key, BM_CLICK, 0, 0,
+                             SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                             COMMAND_TIMEOUT_MS, &response)) {
+      fwprintf(stderr, L"error: Power Center mode key could not be clicked "
+                       L"(%lu)\n",
+               GetLastError());
+      return 12;
+    }
+    // The mode indicator is recreated asynchronously after the click. Poll
+    // the replacement control before sending another click; otherwise a slow
+    // redraw can make several queued clicks skip over the requested mode.
+    for (unsigned int poll = 0; poll < 20; poll++) {
+      Sleep(50);
+      wanted_indicator = require_control(window, wanted_identifier);
+      if (wanted_indicator != NULL &&
+          SendMessageW(wanted_indicator, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        wprintf(L"selected mode: %ls\n", wanted_name);
+        return 0;
+      }
+    }
+  }
+  HWND wanted_indicator = require_control(window, wanted_identifier);
+  if (wanted_indicator != NULL &&
+      SendMessageW(wanted_indicator, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+    wprintf(L"selected mode: %ls\n", wanted_name);
+    return 0;
+  }
+  fwprintf(stderr, L"error: Power Center did not enter %ls mode\n", wanted_name);
+  return 13;
 }
 
 static HMODULE load_power_center_resources(HWND window) {
@@ -237,8 +338,10 @@ static void usage(void) {
            L"usage:\n"
            L"  pwrcntr-control.exe status\n"
            L"  pwrcntr-control.exe list\n"
+           L"  pwrcntr-control.exe controls\n"
            L"  pwrcntr-control.exe model \"E260808 (PD 8 Combo)\"\n"
            L"  pwrcntr-control.exe port COM3\n"
+           L"  pwrcntr-control.exe mode auto|service|timeout\n"
            L"  pwrcntr-control.exe power toggle\n");
 }
 
@@ -274,11 +377,28 @@ int wmain(int argument_count, wchar_t **arguments) {
     FreeLibrary(module);
     return 0;
   }
+  if (_wcsicmp(arguments[1], L"controls") == 0) {
+    ControlEnumeration enumeration = {0};
+    EnumChildWindows(window, print_child_control, (LPARAM)&enumeration);
+    wprintf(L"controls: %u\n", enumeration.count);
+    return 0;
+  }
   if (_wcsicmp(arguments[1], L"model") == 0 && argument_count == 3) {
     return send_menu_command(window, arguments[2]);
   }
   if (_wcsicmp(arguments[1], L"port") == 0 && argument_count == 3) {
     return send_menu_command(window, arguments[2]);
+  }
+  if (_wcsicmp(arguments[1], L"mode") == 0 && argument_count == 3) {
+    if (_wcsicmp(arguments[2], L"auto") == 0) {
+      return select_mode(window, CONTROL_MODE_AUTO, L"Auto");
+    }
+    if (_wcsicmp(arguments[2], L"service") == 0) {
+      return select_mode(window, CONTROL_MODE_SERVICE, L"Service");
+    }
+    if (_wcsicmp(arguments[2], L"timeout") == 0) {
+      return select_mode(window, CONTROL_MODE_TIMEOUT, L"Time-Out");
+    }
   }
   if (_wcsicmp(arguments[1], L"power") == 0 && argument_count == 3 &&
       _wcsicmp(arguments[2], L"toggle") == 0) {

@@ -118,6 +118,36 @@ class PowerCenterControllerTests(unittest.TestCase):
             ):
                 controller.prepare(Path("/dev/ttyVIRTUAL"))
 
+    def test_select_mode_uses_helper_and_records_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "pwrcntr-control.exe"
+            helper.write_bytes(b"helper")
+            commands: list[list[str]] = []
+
+            def execute(
+                command: list[str], _environment: dict[str, str], _timeout: float
+            ) -> subprocess.CompletedProcess[str]:
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "selected", "")
+
+            controller = WinePowerCenterController(
+                PowerCenterSiteConfig(
+                    helper=helper,
+                    wine_prefix=root,
+                    model="B29231 (16 Combo)",
+                    port="COM3",
+                ),
+                execute=execute,
+            )
+
+            controller.select_mode("service")
+
+            self.assertEqual(commands[0][-2:], ["mode", "service"])
+            self.assertEqual(controller.commands[0].arguments, ("mode", "service"))
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                controller.select_mode("invalid")
+
 
 if __name__ == "__main__":
     unittest.main()

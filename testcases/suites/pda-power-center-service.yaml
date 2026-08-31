@@ -1,0 +1,17 @@
+schema: 1
+kind: suite
+id: pda-power-center-service
+description: PDA Service, Time-Out, and Auto mode detection against Power Center
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: no
+  execution_role: awake
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/service-mode.yaml

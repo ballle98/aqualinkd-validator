@@ -46,6 +46,9 @@ wine contrib/power-center-helper/build/pwrcntr-control.exe list
 wine contrib/power-center-helper/build/pwrcntr-control.exe \
   model "E260808 (PD 8 Combo)"
 wine contrib/power-center-helper/build/pwrcntr-control.exe port COM3
+wine contrib/power-center-helper/build/pwrcntr-control.exe mode service
+wine contrib/power-center-helper/build/pwrcntr-control.exe mode timeout
+wine contrib/power-center-helper/build/pwrcntr-control.exe mode auto
 wine contrib/power-center-helper/build/pwrcntr-control.exe power toggle
 ```
 
@@ -54,6 +57,11 @@ Windows mnemonic `&`. `list` prints the available text and command identifiers
 from the running executable's menu resource. The resource state is useful for
 discovery but does not necessarily reflect the application's current checked
 item under Wine.
+
+`mode` drives Power Center's Mode key and verifies the resulting Auto,
+Service, or Time-Out indicator. The helper waits for the emulator to rebuild
+its controls after each transition, so it does not skip a mode during a slow
+Wine redraw.
 
 Power Center exposes `Switch Power` as a toggle and does not publish a reliable
 menu-level on/off state. The helper therefore calls the operation `power

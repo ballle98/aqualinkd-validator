@@ -20,6 +20,7 @@ from aqualinkd_validator.testcases import (
     ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
+    SetPowerCenterModeStep,
     VerifyEquipmentStatusStep,
     WaitForStep,
     WaitHttpJsonStep,
@@ -146,6 +147,21 @@ class TestcaseYamlTests(unittest.TestCase):
             ["pda.initialization", "pda.spa-heating"],
         )
         self.assertEqual(spa.config.override_map(), {"pda_sleep_mode": "no"})
+
+        service = load_testcase_suite(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "suites"
+            / "pda-power-center-service.yaml"
+        )
+        self.assertEqual(
+            [member.testcase.identifier for member in service.members],
+            ["pda.initialization", "pda.service-mode"],
+        )
+        service_case = service.members[1].testcase
+        self.assertIsInstance(service_case.steps[1], SetPowerCenterModeStep)
+        self.assertEqual(service_case.steps[1].mode, "service")
+        self.assertEqual(service_case.finally_steps[0].mode, "auto")
 
     def test_loads_specialized_sleep_cases(self) -> None:
         root = Path(__file__).parents[1] / "testcases" / "pda"

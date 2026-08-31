@@ -29,6 +29,7 @@ from .model import (
     ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
+    SetPowerCenterModeStep,
     SetSetpointStep,
     TestcaseAccess,
     TestcaseDefinition,
@@ -286,7 +287,6 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
                 SerialSendStep,
                 ExpectSerialStep,
                 HttpRequestStep,
-                WaitHttpJsonStep,
                 ExpectPanelCommandStep,
             ),
         )
@@ -338,13 +338,23 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     invalid_cleanup = [
         step.keyword
         for step in finally_steps
-        if not isinstance(step, RestoreOriginalStateStep)
+        if not isinstance(step, (RestoreOriginalStateStep, SetPowerCenterModeStep))
     ]
     if invalid_cleanup:
         raise TestcaseValidationError(
-            f"{source}.finally: only restore_original_state is allowed"
+            f"{source}.finally: only restore_original_state and "
+            "set_power_center_mode are allowed"
         )
-    mutates = any(
+    invalid_mode_cleanup = [
+        step.mode
+        for step in finally_steps
+        if isinstance(step, SetPowerCenterModeStep) and step.mode != "auto"
+    ]
+    if invalid_mode_cleanup:
+        raise TestcaseValidationError(
+            f"{source}.finally: set_power_center_mode cleanup must select auto"
+        )
+    equipment_mutates = any(
         isinstance(
             step,
             (
@@ -359,11 +369,14 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         )
         for step in steps
     )
+    mutates = equipment_mutates or any(
+        isinstance(step, SetPowerCenterModeStep) for step in steps
+    )
     if mutates and access_value != "read-write":
         raise TestcaseValidationError(
             f"{source}.access: mutating steps require read-write access"
         )
-    if mutates and not any(
+    if equipment_mutates and not any(
         isinstance(step, RestoreOriginalStateStep) for step in finally_steps
     ):
         raise TestcaseValidationError(
@@ -503,6 +516,17 @@ def _wait_for(value: Mapping[str, object], path: str) -> TestcaseStep:
 def _return_pda_home(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"timeout"})
     return ReturnPdaHomeStep(_duration(value["timeout"], f"{path}.timeout"))
+
+
+def _set_power_center_mode(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"mode", "timeout"})
+    return SetPowerCenterModeStep(
+        mode=cast(
+            Literal["auto", "service", "timeout"],
+            _choice(value["mode"], f"{path}.mode", {"auto", "service", "timeout"}),
+        ),
+        timeout_seconds=_duration(value["timeout"], f"{path}.timeout"),
+    )
 
 
 def _serial_send(value: Mapping[str, object], path: str) -> TestcaseStep:
@@ -755,6 +779,7 @@ def _exercise_probe_transition(value: Mapping[str, object], path: str) -> Testca
 _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "return_pda_home": _return_pda_home,
+    "set_power_center_mode": _set_power_center_mode,
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
     "http_request": _http_request,

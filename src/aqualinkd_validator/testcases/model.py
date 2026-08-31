@@ -18,6 +18,7 @@ DeviceTargetState: TypeAlias = Literal[
     "requested",
 ]
 SetpointTarget: TypeAlias = int | Literal["original"]
+PowerCenterMode: TypeAlias = Literal["auto", "service", "timeout"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,13 @@ class WaitForStep:
 class ReturnPdaHomeStep:
     timeout_seconds: float
     keyword: str = "return_pda_home"
+
+
+@dataclass(frozen=True)
+class SetPowerCenterModeStep:
+    mode: PowerCenterMode
+    timeout_seconds: float
+    keyword: str = "set_power_center_mode"
 
 
 @dataclass(frozen=True)
@@ -194,6 +202,7 @@ class ExerciseProbeTransitionStep:
 TestcaseStep: TypeAlias = (
     WaitForStep
     | ReturnPdaHomeStep
+    | SetPowerCenterModeStep
     | SerialSendStep
     | ExpectSerialStep
     | HttpRequestStep

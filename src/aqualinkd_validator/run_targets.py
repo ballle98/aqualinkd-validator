@@ -255,7 +255,12 @@ RUN_TARGETS = RunTargetRegistry(
             _ROOT / "testcases" / "suites" / "pda-power-center-sleep.yaml",
             mode="jandy-power-center",
             artifact_suffix="sleep",
-        )
+        ),
+        "pda-power-center-service": DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / "pda-power-center-service.yaml",
+            mode="jandy-power-center",
+            artifact_suffix="service",
+        ),
     },
     {
         "pda-live-long": PythonTargetDefinition(
@@ -273,6 +278,7 @@ RUN_TARGETS = RunTargetRegistry(
             members=(
                 "pda-power-center-awake",
                 "pda-power-center-sleep",
+                "pda-power-center-service",
                 "aquapda-power-center-menu-walk",
             ),
         ),

@@ -18,8 +18,10 @@ from aqualinkd_validator.testcases import (
     AssertNoLogStep,
     ExerciseHeaterStep,
     ReturnPdaHomeStep,
+    SetPowerCenterModeStep,
     SetSetpointStep,
     WaitForStep,
+    WaitHttpJsonStep,
     load_testcase,
 )
 from aqualinkd_validator.testcases import (
@@ -119,6 +121,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
 
     def test_home_navigation_stays_behind_typed_keyword(self) -> None:
         asyncio.run(self._home_navigation())
+
+    def test_power_center_mode_and_status_polling_use_runtime_callbacks(self) -> None:
+        asyncio.run(self._power_center_mode_and_status_polling())
 
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
@@ -236,9 +241,24 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         await fixture.keywords.return_pda_home(ReturnPdaHomeStep(30))
         self.assertEqual(fixture.home_timeouts, [30])
 
+    async def _power_center_mode_and_status_polling(self) -> None:
+        fixture = KeywordFixture(initialized=True, statuses=["Ready", "Service Mode"])
+        await fixture.keywords.set_power_center_mode(
+            SetPowerCenterModeStep("service", 2)
+        )
+        await fixture.keywords.wait_http_json(
+            WaitHttpJsonStep("/api/status", "/status", "Service Mode", 1, 0.001, 1)
+        )
+        self.assertEqual(fixture.power_center_modes, ["service"])
+
 
 class KeywordFixture:
-    def __init__(self, *, initialized: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        initialized: bool = False,
+        statuses: list[str] | None = None,
+    ) -> None:
         self.monitor = OutputMonitor()
         self.actions = FakeActions()
         self.restoration = RestorationSession()
@@ -252,6 +272,8 @@ class KeywordFixture:
         self.probe_transition_exercises = 0
         self.spa_heating_exercises = 0
         self.home_timeouts: list[float] = []
+        self.power_center_modes: list[str] = []
+        self.statuses = list(statuses or ["Ready"])
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
             self.restoration.capture_initial(snapshot())
@@ -271,6 +293,8 @@ class KeywordFixture:
             ),
             initialize=self.initialize,
             return_home=self.return_home,
+            select_power_center_mode=self.select_power_center_mode,
+            read_status=self.read_status,
             wait_for_stable=self.wait_for_stable,
             restore=self.restore,
             verify_status=self.verify_status,
@@ -297,6 +321,13 @@ class KeywordFixture:
 
     async def return_home(self, timeout_seconds: float) -> None:
         self.home_timeouts.append(timeout_seconds)
+
+    async def select_power_center_mode(self, mode: str) -> None:
+        self.power_center_modes.append(mode)
+
+    async def read_status(self) -> dict[str, object]:
+        status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+        return {"status": status}
 
     async def restore(self, timeout_seconds: float) -> None:
         self.restore_timeouts.append(timeout_seconds)

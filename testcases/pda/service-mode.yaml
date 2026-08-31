@@ -1,0 +1,39 @@
+schema: 1
+id: pda.service-mode
+description: Detect Power Center Service and Time-Out modes through the PDA API
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - set_power_center_mode:
+      mode: service
+      timeout: 10s
+  - wait_http_json:
+      path: /api/status
+      pointer: /status
+      equals: Service Mode
+      timeout: 10s
+  - set_power_center_mode:
+      mode: timeout
+      timeout: 10s
+  - wait_http_json:
+      path: /api/status
+      pointer: /status
+      equals: Timeout Mode
+      timeout: 10s
+  - set_power_center_mode:
+      mode: auto
+      timeout: 10s
+  - wait_http_json:
+      path: /api/status
+      pointer: /status
+      equals: Ready
+      timeout: 10s
+finally:
+  - set_power_center_mode:
+      mode: auto
+      timeout: 10s

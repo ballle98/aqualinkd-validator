@@ -556,6 +556,18 @@ def _run_process(args: argparse.Namespace) -> int:
                 f"effective configuration (found: {', '.join(active_log_filters)})"
             )
     site_config = load_site_config(source_config, args.site_config)
+    power_center_controller = (
+        WinePowerCenterController(site_config.power_center)
+        if args.mode == "jandy-power-center" and site_config.power_center is not None
+        else None
+    )
+
+    async def select_power_center_mode(mode: str) -> None:
+        if power_center_controller is None:
+            raise PowerCenterAutomationError(
+                "Power Center mode control requires power_center site configuration"
+            )
+        await asyncio.to_thread(power_center_controller.select_mode, mode)
     disabled_button_numbers = read_disabled_button_numbers(source_config)
     configured_button_labels = read_button_labels(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
@@ -608,6 +620,11 @@ def _run_process(args: argparse.Namespace) -> int:
                 force_status_home_with_aquapda=(target.mode == "jandy-power-center"),
             ),
             api_base_url_override=api_base_url,
+            select_power_center_mode=(
+                select_power_center_mode
+                if power_center_controller is not None
+                else None
+            ),
             testcase=target.testcase,
             testcases=target.testcases,
         )
@@ -628,6 +645,7 @@ def _run_process(args: argparse.Namespace) -> int:
             source_config=source_config,
             config_overrides=config_overrides,
             site_config=site_config,
+            power_center_controller=power_center_controller,
             execution_phase=(target.execution_role if target is not None else "single"),
             disabled_button_numbers=disabled_button_numbers,
             serial_device=serial_device,
@@ -649,6 +667,7 @@ def _run_in_artifact(
     source_config: Path,
     config_overrides: dict[str, str],
     site_config: SiteConfig,
+    power_center_controller: WinePowerCenterController | None,
     execution_phase: Literal["single", "awake", "sleep"],
     disabled_button_numbers: tuple[int, ...],
     serial_device: Path,
@@ -660,12 +679,10 @@ def _run_in_artifact(
     suite_test_devices: list[str],
 ) -> int:
     power_center_metadata: dict[str, Any] | None = None
-    if args.mode == "jandy-power-center" and site_config.power_center is not None:
+    if power_center_controller is not None and site_config.power_center is not None:
         print("[ SETUP ] Configuring Jandy Power Center emulator", flush=True)
         try:
-            preparation = WinePowerCenterController(site_config.power_center).prepare(
-                serial_device
-            )
+            preparation = power_center_controller.prepare(serial_device)
         except PowerCenterAutomationError as error:
             failure = {
                 "schema_version": 1,
@@ -974,6 +991,11 @@ def _run_in_artifact(
         if correlation["status"] == "failed" and result_data["status"] == "passed":
             result_data["status"] = "failed"
             result_data["reason"] = "serial_correlation_failed"
+    if power_center_metadata is not None and power_center_controller is not None:
+        power_center_metadata["commands"] = [
+            asdict(command) for command in power_center_controller.commands
+        ]
+        _write_json(artifact_dir / "power-center.json", power_center_metadata)
     _write_json(artifact_dir / "manifest.yaml", manifest)
     _write_json(artifact_dir / "performance.json", performance)
     _write_json(artifact_dir / "result.json", result_data)

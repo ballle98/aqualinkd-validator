@@ -84,7 +84,8 @@ class DeclarativeScenarioRunner:
         case_started = time.monotonic()
         try:
             execution = await TestcaseExecutor(
-                self._keywords(testcase.identifier)
+                self._keywords(testcase.identifier),
+                progress=lambda message: print(message, flush=True),
             ).execute(testcase)
             execution_report = {
                 "id": execution.identifier,

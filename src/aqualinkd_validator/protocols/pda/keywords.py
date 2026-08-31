@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from ...domain import EquipmentSnapshot
 from ...engine.equipment_actions import ProgrammerMarkers
@@ -23,16 +23,20 @@ from ...testcases.model import (
     RestoreOriginalStateStep,
     ReturnPdaHomeStep,
     SetDeviceStep,
+    SetPowerCenterModeStep,
     SetSetpointStep,
     VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
     WaitForStep,
+    WaitHttpJsonStep,
 )
 
 InitializePda = Callable[[], Awaitable[None]]
 StableEquipmentWaiter = Callable[[tuple[str, ...], float], Awaitable[EquipmentSnapshot]]
 RestoreEquipment = Callable[[float], Awaitable[None]]
 ComplexPdaOperation = Callable[[], Awaitable[None]]
+PowerCenterModeSelector = Callable[[str], Awaitable[None]]
+StatusReader = Callable[[], Awaitable[dict[str, Any]]]
 SkipRecorder = Callable[[str, str], None]
 
 
@@ -96,6 +100,8 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         markers: PdaKeywordMarkers,
         initialize: InitializePda,
         return_home: Callable[[float], Awaitable[None]] | None = None,
+        select_power_center_mode: PowerCenterModeSelector | None = None,
+        read_status: StatusReader | None = None,
         wait_for_stable: StableEquipmentWaiter,
         restore: RestoreEquipment,
         verify_status: ComplexPdaOperation | None = None,
@@ -113,6 +119,8 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         self._markers = markers
         self._initialize = initialize
         self._return_home = return_home
+        self._select_power_center_mode = select_power_center_mode
+        self._read_status = read_status
         self._wait_for_stable = wait_for_stable
         self._restore = restore
         self._verify_status = verify_status
@@ -156,6 +164,52 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
             raise PdaKeywordFailure(
                 f"AquaPDA did not return home within {step.timeout_seconds:g}s"
             ) from error
+
+    async def set_power_center_mode(self, step: SetPowerCenterModeStep) -> None:
+        if self._select_power_center_mode is None:
+            raise PdaKeywordFailure(
+                "Power Center mode control is unavailable in this runtime"
+            )
+        try:
+            async with asyncio.timeout(step.timeout_seconds):
+                await self._select_power_center_mode(step.mode)
+        except TimeoutError as error:
+            raise PdaKeywordFailure(
+                f"Power Center did not enter {step.mode} mode within "
+                f"{step.timeout_seconds:g}s"
+            ) from error
+
+    async def wait_http_json(self, step: WaitHttpJsonStep) -> None:
+        if self._read_status is None:
+            raise PdaKeywordFailure("HTTP status polling is unavailable")
+        if step.path != "/api/status" or step.pointer != "/status":
+            raise PdaKeywordFailure(
+                "PDA wait_http_json currently supports only "
+                "/api/status pointer /status"
+            )
+        deadline = asyncio.get_running_loop().time() + step.timeout_seconds
+        last_status: object = None
+        while True:
+            try:
+                payload = await asyncio.wait_for(
+                    self._read_status(),
+                    timeout=step.request_timeout_seconds,
+                )
+                last_status = payload.get("status")
+                if type(last_status) is type(step.expected) and (
+                    last_status == step.expected
+                ):
+                    return
+            except Exception as error:
+                last_status = f"{type(error).__name__}: {error}"
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise PdaKeywordFailure(
+                    f"GET /api/status /status did not equal {step.expected!r} "
+                    f"within {step.timeout_seconds:g}s; last value was "
+                    f"{last_status!r}"
+                )
+            await asyncio.sleep(min(step.poll_seconds, remaining))
 
     async def set_device(self, step: SetDeviceStep) -> None:
         self._require_initialized()

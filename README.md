@@ -160,7 +160,8 @@ are executed serially and never compete for the serial bus.
 | `pda-power-center-fast` | Read-write | Fast PDA coverage against the Jandy Power Center emulator |
 | `pda-power-center-awake` | Read-write | Awake equipment and status coverage against Power Center |
 | `pda-power-center-sleep` | Read-write | Command-driven sleep transition coverage against Power Center |
-| `pda-power-center-full` | Read-write | Serialized awake, sleep, and AquaPDA menu-walk coverage against Power Center |
+| `pda-power-center-service` | Read-write | Service, Time-Out, and Auto mode detection against Power Center |
+| `pda-power-center-full` | Read-write | Serialized awake, sleep, service-mode, and AquaPDA menu-walk coverage against Power Center |
 | `pda-power-center-spa` | Read-write | Explicit Power Center Spa/heating coverage |
 | `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA menu traversal with Power Center as the southbound panel |
 

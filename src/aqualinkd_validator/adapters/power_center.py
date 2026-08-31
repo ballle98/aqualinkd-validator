@@ -124,6 +124,19 @@ class WinePowerCenterController:
             commands=tuple(self._commands),
         )
 
+    def select_mode(self, mode: str) -> None:
+        """Select and verify one Power Center operating mode."""
+
+        if mode not in {"auto", "service", "timeout"}:
+            raise ValueError(f"unsupported Power Center mode: {mode}")
+        self._helper("mode", mode)
+
+    @property
+    def commands(self) -> tuple[PowerCenterCommand, ...]:
+        """Return all helper commands issued during this run."""
+
+        return tuple(self._commands)
+
     def _helper(self, *arguments: str) -> None:
         command = [
             *self._wine_prefix,

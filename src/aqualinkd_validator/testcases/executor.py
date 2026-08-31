@@ -23,6 +23,7 @@ from .model import (
     ReturnPdaHomeStep,
     SerialSendStep,
     SetDeviceStep,
+    SetPowerCenterModeStep,
     SetSetpointStep,
     TestcaseDefinition,
     TestcaseStep,
@@ -39,6 +40,8 @@ class TestcaseKeywords(Protocol):
     async def wait_for(self, step: WaitForStep) -> None: ...
 
     async def return_pda_home(self, step: ReturnPdaHomeStep) -> None: ...
+
+    async def set_power_center_mode(self, step: SetPowerCenterModeStep) -> None: ...
 
     async def serial_send(self, step: SerialSendStep) -> None: ...
 
@@ -98,6 +101,9 @@ class UnsupportedTestcaseKeywords:
         self._unsupported(step.keyword)
 
     async def return_pda_home(self, step: ReturnPdaHomeStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def set_power_center_mode(self, step: SetPowerCenterModeStep) -> None:
         self._unsupported(step.keyword)
 
     async def serial_send(self, step: SerialSendStep) -> None:
@@ -341,6 +347,8 @@ class TestcaseExecutor:
             await self._keywords.wait_for(step)
         elif isinstance(step, ReturnPdaHomeStep):
             await self._keywords.return_pda_home(step)
+        elif isinstance(step, SetPowerCenterModeStep):
+            await self._keywords.set_power_center_mode(step)
         elif isinstance(step, SerialSendStep):
             await self._keywords.serial_send(step)
         elif isinstance(step, ExpectSerialStep):

@@ -72,10 +72,12 @@ class PdaScenarioRuntime:
         aquapda_client_factory: Callable[[str], AquaPdaClient] = (
             AquaPdaWebSocketClient
         ),
+        select_power_center_mode: Callable[[str], Awaitable[None]] | None = None,
         testcase: TestcaseDefinition | None = None,
         testcases: tuple[TestcaseDefinition, ...] = (),
     ) -> None:
         self._aquapda_client_factory = aquapda_client_factory
+        self._select_power_center_mode = select_power_center_mode
         self._config = config
         if testcase is not None and testcases:
             raise ValueError("specify testcase or testcases, not both")
@@ -236,6 +238,8 @@ class PdaScenarioRuntime:
             return_home=lambda timeout: self._return_aquapda_home(
                 timeout_seconds=timeout,
             ),
+            select_power_center_mode=self._select_power_center_mode,
+            read_status=lambda: self._session.api_client.status(),
             wait_for_stable=wait_for_stable,
             restore=restore,
             verify_status=lambda: self._exercises.verify_equipment_status(context),
