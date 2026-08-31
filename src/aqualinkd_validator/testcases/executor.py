@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 
 from .model import (
     AssertDeviceStep,
+    AssertDeviceValueStep,
     AssertLogStep,
     AssertNoLogStep,
     ExerciseDiscoveredDevicesStep,
@@ -24,6 +25,7 @@ from .model import (
     SerialSendStep,
     SetDeviceStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     SetSetpointStep,
     TestcaseDefinition,
     TestcaseStep,
@@ -42,6 +44,10 @@ class TestcaseKeywords(Protocol):
     async def return_pda_home(self, step: ReturnPdaHomeStep) -> None: ...
 
     async def set_power_center_mode(self, step: SetPowerCenterModeStep) -> None: ...
+
+    async def set_power_center_temperature(
+        self, step: SetPowerCenterTemperatureStep
+    ) -> None: ...
 
     async def serial_send(self, step: SerialSendStep) -> None: ...
 
@@ -62,6 +68,8 @@ class TestcaseKeywords(Protocol):
     async def exercise_spa_heating(self, step: ExerciseSpaHeatingStep) -> None: ...
 
     async def assert_device(self, step: AssertDeviceStep) -> None: ...
+
+    async def assert_device_value(self, step: AssertDeviceValueStep) -> None: ...
 
     async def assert_log(self, step: AssertLogStep) -> None: ...
 
@@ -106,6 +114,11 @@ class UnsupportedTestcaseKeywords:
     async def set_power_center_mode(self, step: SetPowerCenterModeStep) -> None:
         self._unsupported(step.keyword)
 
+    async def set_power_center_temperature(
+        self, step: SetPowerCenterTemperatureStep
+    ) -> None:
+        self._unsupported(step.keyword)
+
     async def serial_send(self, step: SerialSendStep) -> None:
         self._unsupported(step.keyword)
 
@@ -134,6 +147,9 @@ class UnsupportedTestcaseKeywords:
         self._unsupported(step.keyword)
 
     async def assert_device(self, step: AssertDeviceStep) -> None:
+        self._unsupported(step.keyword)
+
+    async def assert_device_value(self, step: AssertDeviceValueStep) -> None:
         self._unsupported(step.keyword)
 
     async def assert_log(self, step: AssertLogStep) -> None:
@@ -349,6 +365,8 @@ class TestcaseExecutor:
             await self._keywords.return_pda_home(step)
         elif isinstance(step, SetPowerCenterModeStep):
             await self._keywords.set_power_center_mode(step)
+        elif isinstance(step, SetPowerCenterTemperatureStep):
+            await self._keywords.set_power_center_temperature(step)
         elif isinstance(step, SerialSendStep):
             await self._keywords.serial_send(step)
         elif isinstance(step, ExpectSerialStep):
@@ -369,6 +387,8 @@ class TestcaseExecutor:
             await self._keywords.exercise_spa_heating(step)
         elif isinstance(step, AssertDeviceStep):
             await self._keywords.assert_device(step)
+        elif isinstance(step, AssertDeviceValueStep):
+            await self._keywords.assert_device_value(step)
         elif isinstance(step, AssertLogStep):
             await self._keywords.assert_log(step)
         elif isinstance(step, AssertNoLogStep):

@@ -568,6 +568,18 @@ def _run_process(args: argparse.Namespace) -> int:
                 "Power Center mode control requires power_center site configuration"
             )
         await asyncio.to_thread(power_center_controller.select_mode, mode)
+
+    async def set_power_center_temperature(sensor: str, value: int) -> None:
+        if power_center_controller is None:
+            raise PowerCenterAutomationError(
+                "Power Center temperature control requires power_center site "
+                "configuration"
+            )
+        await asyncio.to_thread(
+            power_center_controller.set_temperature,
+            sensor,
+            value,
+        )
     disabled_button_numbers = read_disabled_button_numbers(source_config)
     configured_button_labels = read_button_labels(source_config)
     serial_device = validate_live_serial_device(config, args.serial_device)
@@ -622,6 +634,11 @@ def _run_process(args: argparse.Namespace) -> int:
             api_base_url_override=api_base_url,
             select_power_center_mode=(
                 select_power_center_mode
+                if power_center_controller is not None
+                else None
+            ),
+            set_power_center_temperature=(
+                set_power_center_temperature
                 if power_center_controller is not None
                 else None
             ),

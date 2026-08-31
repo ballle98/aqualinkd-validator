@@ -131,6 +131,15 @@ class WinePowerCenterController:
             raise ValueError(f"unsupported Power Center mode: {mode}")
         self._helper("mode", mode)
 
+    def set_temperature(self, sensor: str, value: int) -> None:
+        """Set and verify one Power Center I/O simulated temperature."""
+
+        if sensor not in {"air", "water", "solar"}:
+            raise ValueError(f"unsupported Power Center temperature: {sensor}")
+        if value < -40 or value > 140:
+            raise ValueError("Power Center temperature must be from -40 through 140")
+        self._helper("temperature", sensor, str(value))
+
     @property
     def commands(self) -> tuple[PowerCenterCommand, ...]:
         """Return all helper commands issued during this run."""

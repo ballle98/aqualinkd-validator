@@ -8,6 +8,7 @@ from pathlib import Path
 
 from aqualinkd_validator.cli import main
 from aqualinkd_validator.testcases import (
+    AssertDeviceValueStep,
     ExerciseDiscoveredDevicesStep,
     ExerciseHeaterStep,
     ExerciseProbeTransitionStep,
@@ -21,6 +22,7 @@ from aqualinkd_validator.testcases import (
     SerialSendStep,
     SetDeviceStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     VerifyEquipmentStatusStep,
     WaitForStep,
     WaitHttpJsonStep,
@@ -162,6 +164,26 @@ class TestcaseYamlTests(unittest.TestCase):
         self.assertIsInstance(service_case.steps[1], SetPowerCenterModeStep)
         self.assertEqual(service_case.steps[1].mode, "service")
         self.assertEqual(service_case.finally_steps[0].mode, "auto")
+
+        freeze = load_testcase_suite(
+            Path(__file__).parents[1]
+            / "testcases"
+            / "suites"
+            / "pda-power-center-freeze.yaml"
+        )
+        self.assertEqual(
+            [member.testcase.identifier for member in freeze.members],
+            ["pda.initialization", "pda.freeze-protect-activation"],
+        )
+        freeze_case = freeze.members[1].testcase
+        self.assertIsInstance(
+            freeze_case.steps[1], SetPowerCenterTemperatureStep
+        )
+        self.assertIsInstance(freeze_case.steps[2], AssertDeviceValueStep)
+        cleanup = freeze_case.finally_steps[0]
+        self.assertIsInstance(cleanup, SetPowerCenterTemperatureStep)
+        assert isinstance(cleanup, SetPowerCenterTemperatureStep)
+        self.assertEqual((cleanup.sensor, cleanup.value), ("air", 80))
 
     def test_loads_specialized_sleep_cases(self) -> None:
         root = Path(__file__).parents[1] / "testcases" / "pda"

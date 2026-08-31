@@ -142,11 +142,18 @@ class PowerCenterControllerTests(unittest.TestCase):
             )
 
             controller.select_mode("service")
+            controller.set_temperature("air", 34)
 
             self.assertEqual(commands[0][-2:], ["mode", "service"])
             self.assertEqual(controller.commands[0].arguments, ("mode", "service"))
+            self.assertEqual(
+                controller.commands[1].arguments,
+                ("temperature", "air", "34"),
+            )
             with self.assertRaisesRegex(ValueError, "unsupported"):
                 controller.select_mode("invalid")
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                controller.set_temperature("invalid", 34)
 
 
 if __name__ == "__main__":

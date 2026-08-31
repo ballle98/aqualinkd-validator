@@ -10,6 +10,7 @@ import yaml  # type: ignore[import-untyped]
 from ..engine.serial_actions import parse_hex_bytes
 from .model import (
     AssertDeviceStep,
+    AssertDeviceValueStep,
     AssertLogStep,
     AssertNoLogStep,
     DeviceTargetState,
@@ -30,6 +31,7 @@ from .model import (
     SerialSendStep,
     SetDeviceStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     SetSetpointStep,
     TestcaseAccess,
     TestcaseDefinition,
@@ -338,12 +340,19 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     invalid_cleanup = [
         step.keyword
         for step in finally_steps
-        if not isinstance(step, (RestoreOriginalStateStep, SetPowerCenterModeStep))
+        if not isinstance(
+            step,
+            (
+                RestoreOriginalStateStep,
+                SetPowerCenterModeStep,
+                SetPowerCenterTemperatureStep,
+            ),
+        )
     ]
     if invalid_cleanup:
         raise TestcaseValidationError(
             f"{source}.finally: only restore_original_state and "
-            "set_power_center_mode are allowed"
+            "set_power_center_mode and set_power_center_temperature are allowed"
         )
     invalid_mode_cleanup = [
         step.mode
@@ -353,6 +362,17 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
     if invalid_mode_cleanup:
         raise TestcaseValidationError(
             f"{source}.finally: set_power_center_mode cleanup must select auto"
+        )
+    invalid_temperature_cleanup = [
+        (step.sensor, step.value)
+        for step in finally_steps
+        if isinstance(step, SetPowerCenterTemperatureStep)
+        and (step.sensor != "air" or step.value != 80)
+    ]
+    if invalid_temperature_cleanup:
+        raise TestcaseValidationError(
+            f"{source}.finally: set_power_center_temperature cleanup must "
+            "restore air to 80"
         )
     equipment_mutates = any(
         isinstance(
@@ -370,7 +390,8 @@ def parse_testcase(raw: object, *, source: str = "<testcase>") -> TestcaseDefini
         for step in steps
     )
     mutates = equipment_mutates or any(
-        isinstance(step, SetPowerCenterModeStep) for step in steps
+        isinstance(step, (SetPowerCenterModeStep, SetPowerCenterTemperatureStep))
+        for step in steps
     )
     if mutates and access_value != "read-write":
         raise TestcaseValidationError(
@@ -525,6 +546,25 @@ def _set_power_center_mode(value: Mapping[str, object], path: str) -> TestcaseSt
             Literal["auto", "service", "timeout"],
             _choice(value["mode"], f"{path}.mode", {"auto", "service", "timeout"}),
         ),
+        timeout_seconds=_duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
+def _set_power_center_temperature(
+    value: Mapping[str, object], path: str
+) -> TestcaseStep:
+    _keys(value, path, required={"sensor", "value", "timeout"})
+    temperature = _integer(value["value"], f"{path}.value")
+    if temperature < -40 or temperature > 140:
+        raise TestcaseValidationError(
+            f"{path}.value: expected an integer from -40 through 140"
+        )
+    return SetPowerCenterTemperatureStep(
+        sensor=cast(
+            Literal["air", "water", "solar"],
+            _choice(value["sensor"], f"{path}.sensor", {"air", "water", "solar"}),
+        ),
+        value=temperature,
         timeout_seconds=_duration(value["timeout"], f"{path}.timeout"),
     )
 
@@ -704,6 +744,15 @@ def _assert_device(value: Mapping[str, object], path: str) -> TestcaseStep:
     )
 
 
+def _assert_device_value(value: Mapping[str, object], path: str) -> TestcaseStep:
+    _keys(value, path, required={"id", "value", "timeout"})
+    return AssertDeviceValueStep(
+        _string(value["id"], f"{path}.id"),
+        _integer(value["value"], f"{path}.value"),
+        _duration(value["timeout"], f"{path}.timeout"),
+    )
+
+
 def _assert_log(value: Mapping[str, object], path: str) -> TestcaseStep:
     _keys(value, path, required={"contains", "timeout"})
     return AssertLogStep(
@@ -780,6 +829,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "wait_for": _wait_for,
     "return_pda_home": _return_pda_home,
     "set_power_center_mode": _set_power_center_mode,
+    "set_power_center_temperature": _set_power_center_temperature,
     "serial_send": _serial_send,
     "expect_serial": _expect_serial,
     "http_request": _http_request,
@@ -790,6 +840,7 @@ _STEP_PARSERS: dict[str, StepParser] = {
     "exercise_heater": _exercise_heater,
     "exercise_spa_heating": _exercise_spa_heating,
     "assert_device": _assert_device,
+    "assert_device_value": _assert_device_value,
     "assert_log": _assert_log,
     "assert_no_log": _assert_no_log,
     "wait_for_stable_equipment": _wait_for_stable,

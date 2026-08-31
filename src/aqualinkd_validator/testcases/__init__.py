@@ -12,6 +12,7 @@ from .executor import (
 from .lifecycle import DeclarativeScenarioRunner
 from .model import (
     AssertDeviceStep,
+    AssertDeviceValueStep,
     AssertLogStep,
     AssertNoLogStep,
     ExerciseDiscoveredDevicesStep,
@@ -29,6 +30,7 @@ from .model import (
     SerialSendStep,
     SetDeviceStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     SetSetpointStep,
     TestcaseDefinition,
     TestcaseRequirements,
@@ -50,6 +52,7 @@ from .yaml_loader import (
 
 __all__ = [
     "AssertDeviceStep",
+    "AssertDeviceValueStep",
     "AssertLogStep",
     "AssertNoLogStep",
     "DeclarativeScenarioRunner",
@@ -68,6 +71,7 @@ __all__ = [
     "SerialSendStep",
     "SetDeviceStep",
     "SetPowerCenterModeStep",
+    "SetPowerCenterTemperatureStep",
     "SetSetpointStep",
     "StepExecution",
     "StepProgress",

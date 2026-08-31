@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wchar.h>
 
 #define COMMAND_TIMEOUT_MS 5000
@@ -11,6 +12,7 @@
 
 typedef struct {
   HWND window;
+  const wchar_t *title;
 } WindowSearch;
 
 typedef struct {
@@ -61,7 +63,7 @@ static BOOL CALLBACK find_power_center_window(HWND window, LPARAM parameter) {
       GetClassNameW(window, class_name, TEXT_CAPACITY) == 0) {
     return TRUE;
   }
-  if (wcsstr(title, L"Power Center") != NULL &&
+  if (_wcsicmp(title, search->title) == 0 &&
       wcsncmp(class_name, L"Afx:", 4) == 0) {
     search->window = window;
     return FALSE;
@@ -70,11 +72,23 @@ static BOOL CALLBACK find_power_center_window(HWND window, LPARAM parameter) {
 }
 
 static HWND require_power_center_window(void) {
-  WindowSearch search = {0};
+  WindowSearch search = {.window = NULL, .title = L"Untitled - Power Center"};
   EnumWindows(find_power_center_window, (LPARAM)&search);
   if (search.window == NULL) {
     fwprintf(stderr,
              L"error: could not find a visible Pwrcntr.exe Power Center window\n");
+  }
+  return search.window;
+}
+
+static HWND require_power_center_io_window(void) {
+  WindowSearch search = {
+      .window = NULL, .title = L"Untitled - Power Center I/O"};
+  EnumWindows(find_power_center_window, (LPARAM)&search);
+  if (search.window == NULL) {
+    fwprintf(stderr,
+             L"error: could not find a visible Simio.exe Power Center I/O "
+             L"window\n");
   }
   return search.window;
 }
@@ -98,6 +112,14 @@ static BOOL CALLBACK print_child_control(HWND control, LPARAM parameter) {
           (unsigned long)style, (long)check, origin.x, origin.y,
           rectangle.right - rectangle.left, rectangle.bottom - rectangle.top,
           text[0] == L'\0' ? L"<empty>" : text);
+  if (_wcsicmp(class_name, L"ScrollBar") == 0) {
+    SCROLLINFO information = {.cbSize = sizeof(information), .fMask = SIF_ALL};
+    if (GetScrollInfo(control, SB_CTL, &information)) {
+      wprintf(L" scroll: min=%d max=%d page=%u pos=%d track=%d\n",
+              information.nMin, information.nMax, information.nPage,
+              information.nPos, information.nTrackPos);
+    }
+  }
   enumeration->count++;
   return TRUE;
 }
@@ -123,6 +145,44 @@ enum {
   CONTROL_MODE_TIMEOUT = 0x03ea,
   CONTROL_MODE_SERVICE = 0x03eb,
 };
+
+enum {
+  CONTROL_IO_WATER_TEMPERATURE = 0x0403,
+  CONTROL_IO_SOLAR_TEMPERATURE = 0x0404,
+  CONTROL_IO_AIR_TEMPERATURE = 0x0405,
+};
+
+static int set_io_temperature(int identifier, const wchar_t *sensor,
+                              int value) {
+  HWND window = require_power_center_io_window();
+  if (window == NULL) {
+    return 14;
+  }
+  HWND scrollbar = require_control(window, identifier);
+  if (scrollbar == NULL) {
+    fwprintf(stderr, L"error: Power Center I/O %ls temperature control was "
+                     L"not found\n",
+             sensor);
+    return 15;
+  }
+  HWND parent = GetParent(scrollbar);
+  SendMessageW(parent, WM_HSCROLL, MAKEWPARAM(SB_THUMBTRACK, value),
+               (LPARAM)scrollbar);
+  SendMessageW(parent, WM_HSCROLL, MAKEWPARAM(SB_THUMBPOSITION, value),
+               (LPARAM)scrollbar);
+  SendMessageW(parent, WM_HSCROLL, MAKEWPARAM(SB_ENDSCROLL, 0),
+               (LPARAM)scrollbar);
+  int actual = GetScrollPos(scrollbar, SB_CTL);
+  if (actual != value) {
+    fwprintf(stderr,
+             L"error: Power Center I/O %ls temperature did not retain %d "
+             L"(read %d)\n",
+             sensor, value, actual);
+    return 17;
+  }
+  wprintf(L"selected temperature: %ls=%d\n", sensor, value);
+  return 0;
+}
 
 static int select_mode(HWND window, int wanted_identifier,
                        const wchar_t *wanted_name) {
@@ -339,9 +399,11 @@ static void usage(void) {
            L"  pwrcntr-control.exe status\n"
            L"  pwrcntr-control.exe list\n"
            L"  pwrcntr-control.exe controls\n"
+           L"  pwrcntr-control.exe io-controls\n"
            L"  pwrcntr-control.exe model \"E260808 (PD 8 Combo)\"\n"
            L"  pwrcntr-control.exe port COM3\n"
            L"  pwrcntr-control.exe mode auto|service|timeout\n"
+           L"  pwrcntr-control.exe temperature air|water|solar VALUE\n"
            L"  pwrcntr-control.exe power toggle\n");
 }
 
@@ -349,6 +411,36 @@ int wmain(int argument_count, wchar_t **arguments) {
   if (argument_count < 2) {
     usage();
     return 2;
+  }
+  if (_wcsicmp(arguments[1], L"io-controls") == 0) {
+    HWND io_window = require_power_center_io_window();
+    if (io_window == NULL) {
+      return 3;
+    }
+    ControlEnumeration enumeration = {0};
+    EnumChildWindows(io_window, print_child_control, (LPARAM)&enumeration);
+    wprintf(L"controls: %u\n", enumeration.count);
+    return 0;
+  }
+  if (_wcsicmp(arguments[1], L"temperature") == 0 && argument_count == 4) {
+    wchar_t *end = NULL;
+    long value = wcstol(arguments[3], &end, 10);
+    if (end == arguments[3] || *end != L'\0' || value < -40 || value > 140) {
+      fwprintf(stderr, L"error: temperature must be an integer from -40 to "
+                       L"140\n");
+      return 2;
+    }
+    if (_wcsicmp(arguments[2], L"air") == 0) {
+      return set_io_temperature(CONTROL_IO_AIR_TEMPERATURE, L"air", (int)value);
+    }
+    if (_wcsicmp(arguments[2], L"water") == 0) {
+      return set_io_temperature(CONTROL_IO_WATER_TEMPERATURE, L"water",
+                                (int)value);
+    }
+    if (_wcsicmp(arguments[2], L"solar") == 0) {
+      return set_io_temperature(CONTROL_IO_SOLAR_TEMPERATURE, L"solar",
+                                (int)value);
+    }
   }
   HWND window = require_power_center_window();
   if (window == NULL) {

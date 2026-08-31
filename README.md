@@ -161,7 +161,8 @@ are executed serially and never compete for the serial bus.
 | `pda-power-center-awake` | Read-write | Awake equipment and status coverage against Power Center |
 | `pda-power-center-sleep` | Read-write | Command-driven sleep transition coverage against Power Center |
 | `pda-power-center-service` | Read-write | Service, Time-Out, and Auto mode detection against Power Center |
-| `pda-power-center-full` | Read-write | Serialized awake, sleep, service-mode, and AquaPDA menu-walk coverage against Power Center |
+| `pda-power-center-freeze` | Read-write | Freeze Protect activation and clearing using simulated 34°F and 80°F air temperatures |
+| `pda-power-center-full` | Read-write | Serialized awake, sleep, service, Freeze Protect, and AquaPDA menu-walk coverage against Power Center |
 | `pda-power-center-spa` | Read-write | Explicit Power Center Spa/heating coverage |
 | `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA menu traversal with Power Center as the southbound panel |
 
@@ -345,7 +346,8 @@ Follow the [Power Center emulator setup
 guide](https://github.com/ballle98/aqualinkd-validator/wiki/Jandy-Windows-Panel-Simulator)
 to:
 
-1. Download and install the official Jandy package directly under Wine.
+1. Download and install the official Jandy package directly under Wine; start
+   both `Pwrcntr.exe` and `Simio.exe` for the complete suite.
 2. Connect its Windows COM port to AqualinkD using physical RS485 adapters or a
    virtual PTY link.
 3. Build or download the open-source `pwrcntr-control.exe` helper.
@@ -363,8 +365,10 @@ Then run, for example:
 
 The validator can select the configured model and port and establish a
 serial-verified off-to-on Power Center cycle before each composite member. Its
-commands, helper checksum, Wine version, diagnostics, and observed power state
-are written to `power-center.json`.
+Freeze Protect member drives Air from 80°F to 34°F and back through `Simio.exe`,
+verifying activation and delayed clearing through AqualinkD. Commands, helper
+checksum, Wine version, diagnostics, and observed power state are written to
+`power-center.json`.
 
 ## Panel-free RS485 tests
 

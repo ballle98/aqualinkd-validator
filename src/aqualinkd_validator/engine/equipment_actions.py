@@ -306,6 +306,29 @@ class EquipmentActions:
             timeout_seconds=timeout_seconds,
         )
 
+    async def wait_for_device_value(
+        self,
+        identifier: str,
+        value: int,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        last_value: object = None
+        while asyncio.get_running_loop().time() < deadline:
+            device = self._require_device(await self._api.devices(), identifier)
+            last_value = device.raw.get("value")
+            try:
+                if last_value is not None and round(float(last_value)) == value:
+                    return self._timeline.offset_ns()
+            except (TypeError, ValueError):
+                pass
+            await asyncio.sleep(self._poll_seconds)
+        raise EquipmentActionFailure(
+            f"{identifier} value did not become {value} within "
+            f"{timeout_seconds:g}s; last value was {last_value!r}"
+        )
+
     async def _wait_for_device_state(
         self,
         identifier: str,

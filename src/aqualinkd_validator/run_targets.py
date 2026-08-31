@@ -261,6 +261,11 @@ RUN_TARGETS = RunTargetRegistry(
             mode="jandy-power-center",
             artifact_suffix="service",
         ),
+        "pda-power-center-freeze": DeclarativeTargetDefinition(
+            _ROOT / "testcases" / "suites" / "pda-power-center-freeze.yaml",
+            mode="jandy-power-center",
+            artifact_suffix="freeze",
+        ),
     },
     {
         "pda-live-long": PythonTargetDefinition(
@@ -279,6 +284,7 @@ RUN_TARGETS = RunTargetRegistry(
                 "pda-power-center-awake",
                 "pda-power-center-sleep",
                 "pda-power-center-service",
+                "pda-power-center-freeze",
                 "aquapda-power-center-menu-walk",
             ),
         ),

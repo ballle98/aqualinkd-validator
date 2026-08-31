@@ -14,11 +14,13 @@ from aqualinkd_validator.protocols.pda.keywords import (
 )
 from aqualinkd_validator.testcases import (
     AssertDeviceStep,
+    AssertDeviceValueStep,
     AssertLogStep,
     AssertNoLogStep,
     ExerciseHeaterStep,
     ReturnPdaHomeStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     SetSetpointStep,
     WaitForStep,
     WaitHttpJsonStep,
@@ -34,6 +36,7 @@ class FakeActions:
         self.device_calls: list[tuple[str, bool, float, float, float]] = []
         self.setpoint_calls: list[tuple[str, int, float, float, float]] = []
         self.state_waits: list[tuple[str, bool, float]] = []
+        self.value_waits: list[tuple[str, int, float]] = []
 
     async def set_device(
         self,
@@ -96,6 +99,16 @@ class FakeActions:
         self.state_waits.append((identifier, enabled, timeout_seconds))
         return 1
 
+    async def wait_for_device_value(
+        self,
+        identifier: str,
+        value: int,
+        *,
+        timeout_seconds: float,
+    ) -> int:
+        self.value_waits.append((identifier, value, timeout_seconds))
+        return 1
+
 
 class PdaTestcaseKeywordsTests(unittest.TestCase):
     def test_example_executes_through_typed_pda_adapter(self) -> None:
@@ -124,6 +137,9 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
 
     def test_power_center_mode_and_status_polling_use_runtime_callbacks(self) -> None:
         asyncio.run(self._power_center_mode_and_status_polling())
+
+    def test_power_center_temperature_and_device_value_callbacks(self) -> None:
+        asyncio.run(self._power_center_temperature_and_device_value())
 
     async def _execute_example(self) -> None:
         fixture = KeywordFixture()
@@ -251,6 +267,20 @@ class PdaTestcaseKeywordsTests(unittest.TestCase):
         )
         self.assertEqual(fixture.power_center_modes, ["service"])
 
+    async def _power_center_temperature_and_device_value(self) -> None:
+        fixture = KeywordFixture(initialized=True)
+        await fixture.keywords.set_power_center_temperature(
+            SetPowerCenterTemperatureStep("air", 34, 2)
+        )
+        await fixture.keywords.assert_device_value(
+            AssertDeviceValueStep("Temperature/Air", 34, 10)
+        )
+        self.assertEqual(fixture.power_center_temperatures, [("air", 34)])
+        self.assertEqual(
+            fixture.actions.value_waits,
+            [("Temperature/Air", 34, 10)],
+        )
+
 
 class KeywordFixture:
     def __init__(
@@ -273,6 +303,7 @@ class KeywordFixture:
         self.spa_heating_exercises = 0
         self.home_timeouts: list[float] = []
         self.power_center_modes: list[str] = []
+        self.power_center_temperatures: list[tuple[str, int]] = []
         self.statuses = list(statuses or ["Ready"])
         self.assert_filter_on = AssertDeviceStep("Filter_Pump", "on", 10)
         if initialized:
@@ -294,6 +325,7 @@ class KeywordFixture:
             initialize=self.initialize,
             return_home=self.return_home,
             select_power_center_mode=self.select_power_center_mode,
+            set_power_center_temperature=self.set_power_center_temperature,
             read_status=self.read_status,
             wait_for_stable=self.wait_for_stable,
             restore=self.restore,
@@ -324,6 +356,9 @@ class KeywordFixture:
 
     async def select_power_center_mode(self, mode: str) -> None:
         self.power_center_modes.append(mode)
+
+    async def set_power_center_temperature(self, sensor: str, value: int) -> None:
+        self.power_center_temperatures.append((sensor, value))
 
     async def read_status(self) -> dict[str, object]:
         status = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]

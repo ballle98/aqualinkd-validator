@@ -38,6 +38,11 @@ class FakeApi:
                 "status": "enabled",
                 "spvalue": "80",
             },
+            "Temperature/Air": {
+                "id": "Temperature/Air",
+                "type": "value",
+                "value": "34.0",
+            },
         }
         self.device_calls: list[tuple[str, bool]] = []
         self.setpoint_calls: list[tuple[str, int]] = []
@@ -88,6 +93,9 @@ class EquipmentActionsTests(unittest.TestCase):
 
     def test_setpoint_action_tracks_restoration_and_measurement(self) -> None:
         asyncio.run(self._setpoint_action())
+
+    def test_wait_for_device_value_accepts_numeric_api_value(self) -> None:
+        asyncio.run(self._wait_for_device_value())
 
     async def _device_action(self) -> None:
         async with ActionFixtureContext() as fixture:
@@ -152,6 +160,16 @@ class EquipmentActionsTests(unittest.TestCase):
             self.assertTrue(fixture.restoration.has_pending_mutations)
             self.assertEqual(fixture.measurements[0]["category"], "heater_setpoint")
             self.assertEqual(fixture.measurements[0]["requested_value"], 82)
+
+    async def _wait_for_device_value(self) -> None:
+        async with ActionFixtureContext() as fixture:
+            observed = await fixture.actions.wait_for_device_value(
+                "Temperature/Air",
+                34,
+                timeout_seconds=0.1,
+            )
+
+            self.assertIsInstance(observed, int)
 
 
 class ActionFixture:

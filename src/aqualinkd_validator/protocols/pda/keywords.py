@@ -12,6 +12,7 @@ from ...interfaces import OrderedLogEvents
 from ...testcases.executor import UnsupportedTestcaseKeywords
 from ...testcases.model import (
     AssertDeviceStep,
+    AssertDeviceValueStep,
     AssertLogStep,
     AssertNoLogStep,
     ExerciseDiscoveredDevicesStep,
@@ -24,6 +25,7 @@ from ...testcases.model import (
     ReturnPdaHomeStep,
     SetDeviceStep,
     SetPowerCenterModeStep,
+    SetPowerCenterTemperatureStep,
     SetSetpointStep,
     VerifyEquipmentStatusStep,
     WaitForStableEquipmentStep,
@@ -36,6 +38,7 @@ StableEquipmentWaiter = Callable[[tuple[str, ...], float], Awaitable[EquipmentSn
 RestoreEquipment = Callable[[float], Awaitable[None]]
 ComplexPdaOperation = Callable[[], Awaitable[None]]
 PowerCenterModeSelector = Callable[[str], Awaitable[None]]
+PowerCenterTemperatureSetter = Callable[[str, int], Awaitable[None]]
 StatusReader = Callable[[], Awaitable[dict[str, Any]]]
 SkipRecorder = Callable[[str, str], None]
 
@@ -74,6 +77,14 @@ class PdaEquipmentActions(Protocol):
         timeout_seconds: float,
     ) -> int: ...
 
+    async def wait_for_device_value(
+        self,
+        identifier: str,
+        value: int,
+        *,
+        timeout_seconds: float,
+    ) -> int: ...
+
 
 EquipmentActionsFactory = Callable[[], PdaEquipmentActions]
 
@@ -101,6 +112,7 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         initialize: InitializePda,
         return_home: Callable[[float], Awaitable[None]] | None = None,
         select_power_center_mode: PowerCenterModeSelector | None = None,
+        set_power_center_temperature: PowerCenterTemperatureSetter | None = None,
         read_status: StatusReader | None = None,
         wait_for_stable: StableEquipmentWaiter,
         restore: RestoreEquipment,
@@ -120,6 +132,7 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         self._initialize = initialize
         self._return_home = return_home
         self._select_power_center_mode = select_power_center_mode
+        self._set_power_center_temperature = set_power_center_temperature
         self._read_status = read_status
         self._wait_for_stable = wait_for_stable
         self._restore = restore
@@ -177,6 +190,22 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
             raise PdaKeywordFailure(
                 f"Power Center did not enter {step.mode} mode within "
                 f"{step.timeout_seconds:g}s"
+            ) from error
+
+    async def set_power_center_temperature(
+        self, step: SetPowerCenterTemperatureStep
+    ) -> None:
+        if self._set_power_center_temperature is None:
+            raise PdaKeywordFailure(
+                "Power Center temperature control is unavailable in this runtime"
+            )
+        try:
+            async with asyncio.timeout(step.timeout_seconds):
+                await self._set_power_center_temperature(step.sensor, step.value)
+        except TimeoutError as error:
+            raise PdaKeywordFailure(
+                f"Power Center did not set {step.sensor} temperature to "
+                f"{step.value} within {step.timeout_seconds:g}s"
             ) from error
 
     async def wait_http_json(self, step: WaitHttpJsonStep) -> None:
@@ -380,6 +409,14 @@ class PdaTestcaseKeywords(UnsupportedTestcaseKeywords):
         await self._actions().wait_for_device_state(
             step.identifier,
             enabled,
+            timeout_seconds=step.timeout_seconds,
+        )
+
+    async def assert_device_value(self, step: AssertDeviceValueStep) -> None:
+        self._require_initialized()
+        await self._actions().wait_for_device_value(
+            step.identifier,
+            step.value,
             timeout_seconds=step.timeout_seconds,
         )
 

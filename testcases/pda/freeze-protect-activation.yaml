@@ -1,0 +1,52 @@
+schema: 1
+id: pda.freeze-protect-activation
+description: Activate and clear PDA Freeze Protect with simulated air temperature
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+steps:
+  - wait_for:
+      condition: pda.initialized
+      timeout: 180s
+  - set_power_center_temperature:
+      sensor: air
+      value: 80
+      timeout: 45s
+  - assert_device_value:
+      id: Temperature/Air
+      value: 80
+      timeout: 30s
+  - assert_device:
+      id: Freeze_Protect
+      state: off
+      timeout: 120s
+  - set_power_center_temperature:
+      sensor: air
+      value: 34
+      timeout: 45s
+  - assert_device_value:
+      id: Temperature/Air
+      value: 34
+      timeout: 30s
+  - assert_device:
+      id: Freeze_Protect
+      state: on
+      timeout: 120s
+  - set_power_center_temperature:
+      sensor: air
+      value: 80
+      timeout: 45s
+  - assert_device_value:
+      id: Temperature/Air
+      value: 80
+      timeout: 30s
+  - assert_device:
+      id: Freeze_Protect
+      state: off
+      timeout: 120s
+finally:
+  - set_power_center_temperature:
+      sensor: air
+      value: 80
+      timeout: 45s

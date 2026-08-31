@@ -168,10 +168,13 @@ The physical-panel PDA keyword set should remain deliberately small:
 
 - `wait_for`
 - `return_pda_home`
+- `set_power_center_mode`
+- `set_power_center_temperature`
 - `set_device`
 - `set_setpoint`
 - `exercise_heater`
 - `assert_device`
+- `assert_device_value`
 - `assert_log`
 - `assert_no_log`
 - `wait_for_stable_equipment`
@@ -181,6 +184,12 @@ The physical-panel PDA keyword set should remain deliberately small:
 southbound PDA session at a known Home-menu starting point. This makes menu
 transition regressions reproducible without encoding a particular panel size
 or menu layout in YAML.
+
+The Power Center keywords call the validator's Win32 helper through a typed
+adapter. `set_power_center_temperature` controls Jandy `Simio.exe`; cleanup is
+restricted to restoring Air to 80°F. `assert_device_value` polls a device's
+numeric API value, which lets a testcase confirm that the environmental input
+was received before asserting derived state such as Freeze Protect.
 
 RS485 panel-emulator cases use the transport-oriented `serial_send`,
 `expect_serial`, `http_request`, `wait_http_json`, and

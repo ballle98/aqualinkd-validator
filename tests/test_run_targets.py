@@ -66,6 +66,7 @@ class RunTargetRegistryTests(unittest.TestCase):
                 "pda-power-center-awake",
                 "pda-power-center-sleep",
                 "pda-power-center-service",
+                "pda-power-center-freeze",
                 "aquapda-power-center-menu-walk",
             ),
         )

@@ -19,6 +19,7 @@ DeviceTargetState: TypeAlias = Literal[
 ]
 SetpointTarget: TypeAlias = int | Literal["original"]
 PowerCenterMode: TypeAlias = Literal["auto", "service", "timeout"]
+PowerCenterTemperatureSensor: TypeAlias = Literal["air", "water", "solar"]
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,14 @@ class SetPowerCenterModeStep:
     mode: PowerCenterMode
     timeout_seconds: float
     keyword: str = "set_power_center_mode"
+
+
+@dataclass(frozen=True)
+class SetPowerCenterTemperatureStep:
+    sensor: PowerCenterTemperatureSensor
+    value: int
+    timeout_seconds: float
+    keyword: str = "set_power_center_temperature"
 
 
 @dataclass(frozen=True)
@@ -142,6 +151,14 @@ class AssertDeviceStep:
 
 
 @dataclass(frozen=True)
+class AssertDeviceValueStep:
+    identifier: str
+    value: int
+    timeout_seconds: float
+    keyword: str = "assert_device_value"
+
+
+@dataclass(frozen=True)
 class AssertLogStep:
     contains: str
     timeout_seconds: float
@@ -203,6 +220,7 @@ TestcaseStep: TypeAlias = (
     WaitForStep
     | ReturnPdaHomeStep
     | SetPowerCenterModeStep
+    | SetPowerCenterTemperatureStep
     | SerialSendStep
     | ExpectSerialStep
     | HttpRequestStep
@@ -213,6 +231,7 @@ TestcaseStep: TypeAlias = (
     | ExerciseHeaterStep
     | ExerciseSpaHeatingStep
     | AssertDeviceStep
+    | AssertDeviceValueStep
     | AssertLogStep
     | AssertNoLogStep
     | WaitForStableEquipmentStep

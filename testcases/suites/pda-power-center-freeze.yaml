@@ -1,0 +1,17 @@
+schema: 1
+kind: suite
+id: pda-power-center-freeze
+description: PDA Freeze Protect activation through Jandy Power Center I/O
+mode: physical-panel
+access: read-write
+requires:
+  protocol: pda
+config:
+  aqualinkd_args:
+    - -vv
+  overrides:
+    pda_sleep_mode: no
+  execution_role: awake
+testcases:
+  - ../pda/initialization.yaml
+  - ../pda/freeze-protect-activation.yaml

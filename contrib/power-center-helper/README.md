@@ -36,8 +36,9 @@ SHA-256 checksum file.
 
 ## Use under Wine
 
-Start `Pwrcntr.exe` in its configured Wine prefix, then invoke the helper in
-that same prefix:
+Start `Pwrcntr.exe` in its configured Wine prefix. Start `Simio.exe` as well
+when controlling simulated temperatures or running Freeze Protect tests. Then
+invoke the helper in that same prefix:
 
 ```sh
 export WINEPREFIX="$HOME/.wine-aqualink"
@@ -49,6 +50,7 @@ wine contrib/power-center-helper/build/pwrcntr-control.exe port COM3
 wine contrib/power-center-helper/build/pwrcntr-control.exe mode service
 wine contrib/power-center-helper/build/pwrcntr-control.exe mode timeout
 wine contrib/power-center-helper/build/pwrcntr-control.exe mode auto
+wine contrib/power-center-helper/build/pwrcntr-control.exe temperature air 34
 wine contrib/power-center-helper/build/pwrcntr-control.exe power toggle
 ```
 
@@ -62,6 +64,10 @@ item under Wine.
 Service, or Time-Out indicator. The helper waits for the emulator to rebuild
 its controls after each transition, so it does not skip a mode during a slow
 Wine redraw.
+
+`temperature` drives the Water, Solar, or Air slider in Jandy's separate
+`Simio.exe` Power Center I/O window and verifies the selected value. The helper
+uses Win32 control identifiers and scrollbar messages, not screen coordinates.
 
 Power Center exposes `Switch Power` as a toggle and does not publish a reliable
 menu-level on/off state. The helper therefore calls the operation `power
@@ -79,6 +85,8 @@ prefix.
 ## Scope and limitations
 
 - The helper attaches to an already running visible Power Center window.
+- Temperature control additionally requires a running visible `Simio.exe`
+  Power Center I/O window.
 - It does not call `NetIO.dll`, `iodll.dll`, or any other proprietary API.
 - It does not use image recognition or window coordinates.
 - Menu text can change in a different vendor release; failed lookup returns a
