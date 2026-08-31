@@ -22,6 +22,15 @@ _NAVIGATION_FAILURE_MARKERS = (
 class AquaPdaValidationFailure(RuntimeError):
     """Raised when AquaPDA transport or read-only navigation is invalid."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        report: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.report = report
+
 
 @dataclass(frozen=True)
 class AquaPdaTransportConfig:
@@ -43,6 +52,7 @@ class AquaPdaMenuWalkConfig:
     maximum_options: int = 32
     home_attempts: int = 8
     settle_seconds: float = 0.5
+    reported_interface: str | None = None
 
 
 @dataclass(frozen=True)
@@ -228,9 +238,156 @@ class AquaPdaMenuWalker:
             raise AquaPdaValidationFailure(
                 "AquaPDA menu walk did not reach the main menu"
             )
-        return AquaPdaMenuWalkResult(
-            {"screens_visited": len(visited), "screens": visited}
+        report = self._coverage_report(visited)
+        failures = [
+            check["name"]
+            for check in report["checks"]
+            if check["status"] == "failed"
+        ]
+        if failures:
+            raise AquaPdaValidationFailure(
+                "AquaPDA structural menu coverage failed: "
+                + ", ".join(failures),
+                report=report,
+            )
+        return AquaPdaMenuWalkResult(report)
+
+    def _coverage_report(self, visited: list[dict[str, Any]]) -> dict[str, Any]:
+        reported_interface = self._config.reported_interface
+        interface_variant = self._interface_variant(reported_interface)
+        options = {
+            self._normalize_option(option)
+            for screen in visited
+            for option in screen["options"]
+        }
+        system_setup_present = "SYSTEM SETUP" in options
+        freeze_screen = next(
+            (
+                screen
+                for screen in visited
+                if screen["path"]
+                and self._normalize_option(screen["path"][-1])
+                == "FREEZE PROTECT"
+            ),
+            None,
         )
+        freeze_setting = (
+            self._freeze_protect_setting(freeze_screen["lines"])
+            if freeze_screen is not None
+            else None
+        )
+        checks = [
+            self._menu_check(
+                "menu.system_setup",
+                system_setup_present,
+                interface_variant,
+            ),
+            self._menu_check(
+                "menu.freeze_protect",
+                freeze_screen is not None,
+                interface_variant,
+            ),
+            self._menu_check(
+                "menu.freeze_protect_setpoint",
+                freeze_setting is not None,
+                interface_variant,
+            ),
+        ]
+        limitations = list(
+            dict.fromkeys(
+                check["reason"]
+                for check in checks
+                if check["status"] == "not-applicable"
+            )
+        )
+        self._progress(
+            "[INFO  ] AquaPDA firmware-screen interface: "
+            f"{reported_interface or 'unknown'} ({interface_variant})"
+        )
+        if freeze_setting is not None:
+            suffix = (
+                f" {freeze_setting['units']}"
+                if freeze_setting["units"] is not None
+                else ""
+            )
+            self._progress(
+                "[STATE ] Freeze Protect menu reports setpoint "
+                f"{freeze_setting['value']}{suffix}"
+            )
+        for limitation in limitations:
+            self._progress(f"[LIMIT ] {limitation}")
+        return {
+            "scope": "structural-read-only",
+            "reported_interface": reported_interface,
+            "interface_variant": interface_variant,
+            "screens_visited": len(visited),
+            "system_setup_present": system_setup_present,
+            "freeze_protect": {
+                "menu_present": freeze_screen is not None,
+                "setpoint": freeze_setting,
+            },
+            "checks": checks,
+            "limitations": limitations,
+            "screens": visited,
+        }
+
+    @staticmethod
+    def _interface_variant(reported: str | None) -> str:
+        normalized = (reported or "").upper()
+        if "AQUAPALM" in normalized:
+            return "aquapalm"
+        if "PDA" in normalized:
+            return "pda"
+        return "unknown"
+
+    @staticmethod
+    def _normalize_option(value: str) -> str:
+        return value.rstrip(" >").strip().upper()
+
+    @staticmethod
+    def _freeze_protect_setting(lines: list[str]) -> dict[str, Any] | None:
+        for line in lines:
+            match = re.match(
+                r"^\s*TEMP\s+(-?\d+)\s*[`°]?\s*([FC])?\s*$",
+                line,
+                re.IGNORECASE,
+            )
+            if match is not None:
+                return {
+                    "value": int(match.group(1)),
+                    "units": match.group(2).upper() if match.group(2) else None,
+                    "line": line.rstrip(),
+                }
+        return None
+
+    @staticmethod
+    def _menu_check(
+        name: str,
+        observed: bool,
+        interface_variant: str,
+    ) -> dict[str, Any]:
+        if observed:
+            return {"name": name, "status": "passed", "reason": None}
+        if interface_variant == "pda":
+            return {
+                "name": name,
+                "status": "failed",
+                "reason": "Reported PDA interface omitted required PDA-only menu data",
+            }
+        if interface_variant == "aquapalm":
+            return {
+                "name": name,
+                "status": "not-applicable",
+                "reason": (
+                    "AquaPalm interface does not expose PDA-only SYSTEM SETUP / "
+                    "FREEZE PROTECT data"
+                ),
+            }
+        return {
+            "name": name,
+            "status": "warning",
+            "reason": "Interface variant is unknown; PDA-only menu data is absent",
+        }
 
     async def _return_home(self) -> None:
         await return_aquapda_home(

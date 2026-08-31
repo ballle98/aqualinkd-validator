@@ -156,15 +156,15 @@ are executed serially and never compete for the serial bus.
 | `pda-live-long` | Read-write | Composite awake and sleep suites in separate AqualinkD processes |
 | `pda-live-spa` | Read-write | Opt-in Pool fill, Spa mode, active Spa Heater, cooldown, and restoration test |
 | `aquapda-websocket-transport` | Read-only | AquaPDA packet, checksum, ACK timing, and navigation-failure regression |
-| `aquapda-live-panel-menu-walk` | Read-only | Recursive AquaPDA read-only menu traversal against a physical panel |
+| `aquapda-live-panel-menu-walk` | Read-only | Recursive AquaPDA structural-menu traversal against a physical panel, including PDA-only menu checks |
 | `pda-power-center-fast` | Read-write | Fast PDA coverage against the Jandy Power Center emulator |
 | `pda-power-center-awake` | Read-write | Awake equipment and status coverage against Power Center |
 | `pda-power-center-sleep` | Read-write | Command-driven sleep transition coverage against Power Center |
 | `pda-power-center-service` | Read-write | Service, Time-Out, and Auto mode detection against Power Center |
 | `pda-power-center-freeze` | Read-write | Freeze Protect activation and clearing using simulated 34°F and 80°F air temperatures |
-| `pda-power-center-full` | Read-write | Serialized awake, sleep, service, Freeze Protect, and AquaPDA menu-walk coverage against Power Center |
+| `pda-power-center-full` | Read-write | Serialized awake, sleep, service, Freeze Protect, and AquaPDA structural-menu coverage against Power Center |
 | `pda-power-center-spa` | Read-write | Explicit Power Center Spa/heating coverage |
-| `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA menu traversal with Power Center as the southbound panel |
+| `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA structural-menu traversal with Power Center as the southbound panel |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -369,6 +369,15 @@ Freeze Protect member drives Air from 80°F to 34°F and back through `Simio.exe
 verifying activation and delayed clearing through AqualinkD. Commands, helper
 checksum, Wine version, diagnostics, and observed power state are written to
 `power-center.json`.
+
+The AquaPDA menu target is a bounded, read-only structural traversal, not an
+exhaustive test of every configurable value. It records every visited screen
+and reports the firmware-screen interface as PDA, AquaPalm, or unknown. A PDA
+run must expose `SYSTEM SETUP`, enter `FREEZE PROTECT`, and report its displayed
+setpoint. AquaPalm does not expose those newer PDA-only menus, so their absence
+is recorded as an explicit coverage limitation. The tested `Pwrcntr.exe`
+currently identifies its interface as AquaPalm even when a PDA-16 Power Center
+model is selected; physical-panel PDA runs retain coverage of the newer menus.
 
 ## Panel-free RS485 tests
 

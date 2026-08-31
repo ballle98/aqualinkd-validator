@@ -217,6 +217,25 @@ class FakeAquaPdaMenuClient:
         self.screen_update_count += 1
 
 
+class FakeFullPdaMenuClient(FakeAquaPdaMenuClient):
+    MENUS = {
+        **FakeAquaPdaMenuClient.MENUS,
+        "MAIN MENU": ["SYSTEM SETUP >"],
+        "SYSTEM SETUP": ["FREEZE PROTECT >"],
+        "FREEZE PROTECT": [],
+    }
+    TARGETS = {
+        **FakeAquaPdaMenuClient.TARGETS,
+        ("MAIN MENU", "SYSTEM SETUP >"): "SYSTEM SETUP",
+        ("SYSTEM SETUP", "FREEZE PROTECT >"): "FREEZE PROTECT",
+    }
+
+    def _render(self) -> None:
+        super()._render()
+        if self._menu == "FREEZE PROTECT":
+            self.screen.lines[3] = "TEMP      38`F"
+
+
 class PdaScreenTests(unittest.TestCase):
     def test_reconstructs_clear_lines_highlight_and_shift(self) -> None:
         screen = PdaScreen()
@@ -306,3 +325,61 @@ class AquaPdaTransportTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertTrue(client.closed)
+
+    async def test_pda_menu_walk_requires_and_reports_freeze_setpoint(self) -> None:
+        result = await AquaPdaMenuWalker(
+            client=FakeFullPdaMenuClient(),
+            config=AquaPdaMenuWalkConfig(
+                timeout_seconds=0.1,
+                reported_interface="PDA-PS16 Combo",
+            ),
+            progress=lambda message: None,
+        ).walk()
+
+        self.assertEqual(result.report["scope"], "structural-read-only")
+        self.assertEqual(result.report["interface_variant"], "pda")
+        self.assertTrue(result.report["system_setup_present"])
+        self.assertEqual(
+            result.report["freeze_protect"]["setpoint"],
+            {"value": 38, "units": "F", "line": "TEMP      38`F"},
+        )
+        self.assertTrue(
+            all(check["status"] == "passed" for check in result.report["checks"])
+        )
+
+    async def test_pda_menu_walk_fails_when_pda_only_menus_are_missing(self) -> None:
+        with self.assertRaises(AquaPdaValidationFailure) as caught:
+            await AquaPdaMenuWalker(
+                client=FakeAquaPdaMenuClient(),
+                config=AquaPdaMenuWalkConfig(
+                    timeout_seconds=0.1,
+                    reported_interface="PDA-PS6 Combo",
+                ),
+                progress=lambda message: None,
+            ).walk()
+
+        assert caught.exception.report is not None
+        self.assertEqual(caught.exception.report["interface_variant"], "pda")
+        self.assertEqual(
+            [check["status"] for check in caught.exception.report["checks"]],
+            ["failed", "failed", "failed"],
+        )
+
+    async def test_aquapalm_records_pda_only_menu_limitation(self) -> None:
+        result = await AquaPdaMenuWalker(
+            client=FakeAquaPdaMenuClient(),
+            config=AquaPdaMenuWalkConfig(
+                timeout_seconds=0.1,
+                reported_interface="AquaPalm",
+            ),
+            progress=lambda message: None,
+        ).walk()
+
+        self.assertEqual(result.report["interface_variant"], "aquapalm")
+        self.assertEqual(len(result.report["limitations"]), 1)
+        self.assertTrue(
+            all(
+                check["status"] == "not-applicable"
+                for check in result.report["checks"]
+            )
+        )

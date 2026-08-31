@@ -377,16 +377,26 @@ class PdaScenarioRuntime:
             await client.close()
 
     async def _test_menu_walk(self, context: ScenarioContext) -> None:
+        panel = self._session.report.get("panel") or {}
+        init_screen = panel.get("init_screen") or {}
+        reported_interface = init_screen.get("panel_type")
         try:
             result = await AquaPdaMenuWalker(
                 client=self._aquapda_client_factory(
                     self._session.api_client.base_url
                 ),
                 config=AquaPdaMenuWalkConfig(
-                    timeout_seconds=self._config.aquapda_timeout_seconds
+                    timeout_seconds=self._config.aquapda_timeout_seconds,
+                    reported_interface=(
+                        reported_interface
+                        if isinstance(reported_interface, str)
+                        else None
+                    ),
                 ),
                 progress=lambda message: print(message, flush=True),
             ).walk()
         except AquaPdaValidationFailure as error:
+            if error.report is not None:
+                self._session.report["menu_walk"] = error.report
             raise ScenarioFailure(str(error)) from error
         self._session.report["menu_walk"] = result.report
