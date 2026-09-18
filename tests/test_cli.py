@@ -26,6 +26,25 @@ from aqualinkd_validator.run_targets import RUN_TARGETS
 
 
 class CliTests(unittest.TestCase):
+    def test_power_center_display_defaults_headless_and_accepts_desktop(self) -> None:
+        headless = build_parser().parse_args(
+            ["run", "--mode", "jandy-power-center", "--panel", "pda-power-center-fast"]
+        )
+        desktop = build_parser().parse_args(
+            [
+                "run",
+                "--mode",
+                "jandy-power-center",
+                "--power-center-display",
+                "desktop",
+                "--panel",
+                "pda-power-center-fast",
+            ]
+        )
+
+        self.assertEqual(headless.power_center_display, "headless")
+        self.assertEqual(desktop.power_center_display, "desktop")
+
     def test_read_only_aquapda_suites_do_not_require_panel_write(self) -> None:
         invocations = (
             ["run", "--panel", "aquapda-websocket-transport"],

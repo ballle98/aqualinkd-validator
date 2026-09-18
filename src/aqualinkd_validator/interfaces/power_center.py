@@ -27,7 +27,7 @@ class PowerCenterPreparation:
 
 
 class PowerCenterController(Protocol):
-    """Prepare and verify an externally managed Jandy Power Center emulator."""
+    """Prepare and verify a managed or externally supplied Power Center."""
 
     def prepare(self, serial_device: Path) -> PowerCenterPreparation: ...
 

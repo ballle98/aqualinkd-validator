@@ -9,7 +9,7 @@ import time
 import tty
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import sha256_file
 from ..interfaces.power_center import (
@@ -17,6 +17,9 @@ from ..interfaces.power_center import (
     PowerCenterPreparation,
 )
 from ..site_config import PowerCenterSiteConfig
+
+if TYPE_CHECKING:
+    from .power_center_session import ManagedWinePowerCenterSession
 
 
 class PowerCenterAutomationError(RuntimeError):
@@ -90,15 +93,21 @@ class WinePowerCenterController:
         *,
         execute: CommandExecutor = _execute_command,
         observe_traffic: TrafficObserver = observe_serial_traffic,
+        session: ManagedWinePowerCenterSession | None = None,
     ) -> None:
         self._config = config
         self._execute = execute
         self._observe_traffic = observe_traffic
+        self._session = session
         self._commands: list[PowerCenterCommand] = []
         self._environment = {**os.environ, "WINEPREFIX": str(config.wine_prefix)}
         self._wine_prefix = self._resolve_wine_command_prefix()
 
     def prepare(self, serial_device: Path) -> PowerCenterPreparation:
+        if self._session is not None:
+            self._session.start()
+            self._environment = self._session.environment
+            self._wine_prefix = self._resolve_wine_command_prefix()
         wine_version = self._wine_version()
         self._helper("status")
         self._helper("model", self._config.model)
@@ -145,6 +154,16 @@ class WinePowerCenterController:
         """Return all helper commands issued during this run."""
 
         return tuple(self._commands)
+
+    @property
+    def session_metadata(self) -> dict[str, object]:
+        if self._session is None:
+            return {"managed": False, "display_mode": "external"}
+        return self._session.metadata
+
+    def close(self) -> None:
+        if self._session is not None:
+            self._session.close()
 
     def _helper(self, *arguments: str) -> None:
         command = [
@@ -226,11 +245,17 @@ class WinePowerCenterController:
                 f"Wine prefix owner UID {owner} has no local account",
                 tuple(self._commands),
             ) from error
+        environment = [
+            f"WINEPREFIX={self._config.wine_prefix}",
+        ]
+        for name in ("DISPLAY", "XAUTHORITY"):
+            if name in self._environment:
+                environment.append(f"{name}={self._environment[name]}")
         return [
             "runuser",
             "--user",
             user,
             "--",
             "env",
-            f"WINEPREFIX={self._config.wine_prefix}",
+            *environment,
         ]

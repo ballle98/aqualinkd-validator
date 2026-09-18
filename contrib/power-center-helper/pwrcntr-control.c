@@ -397,6 +397,7 @@ static void usage(void) {
   fwprintf(stderr,
            L"usage:\n"
            L"  pwrcntr-control.exe status\n"
+           L"  pwrcntr-control.exe io-status\n"
            L"  pwrcntr-control.exe list\n"
            L"  pwrcntr-control.exe controls\n"
            L"  pwrcntr-control.exe io-controls\n"
@@ -420,6 +421,19 @@ int wmain(int argument_count, wchar_t **arguments) {
     ControlEnumeration enumeration = {0};
     EnumChildWindows(io_window, print_child_control, (LPARAM)&enumeration);
     wprintf(L"controls: %u\n", enumeration.count);
+    return 0;
+  }
+  if (_wcsicmp(arguments[1], L"io-status") == 0) {
+    HWND io_window = require_power_center_io_window();
+    if (io_window == NULL) {
+      return 3;
+    }
+    wchar_t title[TEXT_CAPACITY] = {0};
+    DWORD process_id = 0;
+    GetWindowTextW(io_window, title, TEXT_CAPACITY);
+    GetWindowThreadProcessId(io_window, &process_id);
+    wprintf(L"running: pid=%lu hwnd=0x%p title=%ls\n", process_id,
+            (void *)io_window, title);
     return 0;
   }
   if (_wcsicmp(arguments[1], L"temperature") == 0 && argument_count == 4) {

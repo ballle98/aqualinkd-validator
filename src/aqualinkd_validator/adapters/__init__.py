@@ -6,6 +6,10 @@ from .clock import SystemMonotonicClock
 from .http import ApiError, AqualinkHttpApi
 from .log_capture import LogicalSerialLogCapture
 from .power_center import PowerCenterAutomationError, WinePowerCenterController
+from .power_center_session import (
+    ManagedWinePowerCenterSession,
+    PowerCenterDisplayMode,
+)
 from .process import LocalProcessRunner, OutputMonitor, Timeline
 from .runtime import IsolatedAqualinkdRuntime, PanelFixture
 from .serial import PosixPtyPair, PosixSerialTransport
@@ -26,6 +30,8 @@ __all__ = [
     "IsolatedAqualinkdRuntime",
     "OutputMonitor",
     "PowerCenterAutomationError",
+    "ManagedWinePowerCenterSession",
+    "PowerCenterDisplayMode",
     "PdaScreen",
     "PanelFixture",
     "PosixPtyPair",

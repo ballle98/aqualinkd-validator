@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -25,6 +26,7 @@ from .adapters import (
     FileArtifactStore,
     LocalProcessRunner,
     LogicalSerialLogCapture,
+    ManagedWinePowerCenterSession,
     PowerCenterAutomationError,
     SupplementalSerialLogTracker,
     WinePowerCenterController,
@@ -147,6 +149,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=("live-panel", "jandy-power-center"),
         default="live-panel",
+    )
+    run.add_argument(
+        "--power-center-display",
+        choices=("headless", "desktop"),
+        default="headless",
+        help=(
+            "Run managed Power Center windows on an isolated Xvfb display, "
+            "or show them on the current desktop for debugging"
+        ),
+    )
+    run.add_argument(
+        "--external-power-center",
+        action="store_true",
+        help="Attach to already running Power Center and Simio windows",
     )
     run.add_argument(
         "--serial-device",
@@ -304,6 +320,8 @@ def _doctor(as_json: bool) -> int:
             "linux_procfs": Path("/proc/self/stat").exists(),
             "pty": hasattr(os, "openpty"),
             "running_as_root": os.geteuid() == 0,
+            "xvfb": shutil.which("Xvfb") is not None,
+            "xauth": shutil.which("xauth") is not None,
         },
     }
     if as_json:
@@ -556,8 +574,21 @@ def _run_process(args: argparse.Namespace) -> int:
                 f"effective configuration (found: {', '.join(active_log_filters)})"
             )
     site_config = load_site_config(source_config, args.site_config)
+    power_center_session = (
+        ManagedWinePowerCenterSession(
+            site_config.power_center,
+            display_mode=args.power_center_display,
+        )
+        if args.mode == "jandy-power-center"
+        and site_config.power_center is not None
+        and not args.external_power_center
+        else None
+    )
     power_center_controller = (
-        WinePowerCenterController(site_config.power_center)
+        WinePowerCenterController(
+            site_config.power_center,
+            session=power_center_session,
+        )
         if args.mode == "jandy-power-center" and site_config.power_center is not None
         else None
     )
@@ -654,25 +685,31 @@ def _run_process(args: argparse.Namespace) -> int:
         ) as summary_handle,
         contextlib.redirect_stdout(_TeeTextIO(sys.stdout, summary_handle)),
     ):
-        return _run_in_artifact(
-            args,
-            artifact_dir=artifact_dir,
-            binary=binary,
-            config=config,
-            source_config=source_config,
-            config_overrides=config_overrides,
-            site_config=site_config,
-            power_center_controller=power_center_controller,
-            execution_phase=(target.execution_role if target is not None else "single"),
-            disabled_button_numbers=disabled_button_numbers,
-            serial_device=serial_device,
-            source_tree=source_tree,
-            workdir=workdir,
-            target=target,
-            scenario=scenario,
-            api_base_url=api_base_url,
-            suite_test_devices=suite_test_devices,
-        )
+        try:
+            return _run_in_artifact(
+                args,
+                artifact_dir=artifact_dir,
+                binary=binary,
+                config=config,
+                source_config=source_config,
+                config_overrides=config_overrides,
+                site_config=site_config,
+                power_center_controller=power_center_controller,
+                execution_phase=(
+                    target.execution_role if target is not None else "single"
+                ),
+                disabled_button_numbers=disabled_button_numbers,
+                serial_device=serial_device,
+                source_tree=source_tree,
+                workdir=workdir,
+                target=target,
+                scenario=scenario,
+                api_base_url=api_base_url,
+                suite_test_devices=suite_test_devices,
+            )
+        finally:
+            if power_center_controller is not None:
+                power_center_controller.close()
 
 
 def _run_in_artifact(
@@ -715,6 +752,7 @@ def _run_in_artifact(
             return 1
         power_center_metadata = {
             "automation": "native-helper",
+            "session": power_center_controller.session_metadata,
             "model": preparation.model,
             "port": preparation.port,
             "wine_version": preparation.wine_version,

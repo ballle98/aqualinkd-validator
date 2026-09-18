@@ -70,6 +70,7 @@ class ConfigTests(unittest.TestCase):
                 "  wine_prefix: wine-prefix\n"
                 '  model: "E260808 (PD 8 Combo)"\n'
                 "  port: COM3\n"
+                "  startup_timeout: 45s\n"
                 "  observation_time: 500ms\n",
                 encoding="utf-8",
             )
@@ -82,6 +83,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(site.power_center.model, "E260808 (PD 8 Combo)")
             self.assertEqual(site.power_center.port, "COM3")
             self.assertEqual(site.power_center.observation_seconds, 0.5)
+            self.assertEqual(site.power_center.startup_timeout_seconds, 45.0)
 
     def test_explicit_site_config_must_be_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

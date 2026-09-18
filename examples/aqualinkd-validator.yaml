@@ -6,11 +6,14 @@ schema: 1
 spa:
   fill_time: 8m
 
-# Optional automation for the externally managed Jandy Power Center emulator.
-# Start Pwrcntr.exe in this Wine prefix and connect COM3 to the serial_port in
-# aqualinkd.conf before selecting a pda-power-center-* suite.
+# Optional automation for the Jandy Power Center emulator. The validator starts
+# Pwrcntr.exe and Simio.exe on a private Xvfb display by default. Connect COM3
+# to the serial_port in aqualinkd.conf before selecting a Power Center suite.
 # power_center:
 #   helper: ../contrib/power-center-helper/build/pwrcntr-control.exe
 #   wine_prefix: ~/.wine-aqualink
 #   model: "E260808 (PD 8 Combo)"
 #   port: COM3
+#   startup_timeout: 30s
+# The executables default to the Alwin32 directory under wine_prefix. Override
+# power_center_executable and simio_executable only for a nonstandard install.

@@ -36,13 +36,14 @@ SHA-256 checksum file.
 
 ## Use under Wine
 
-Start `Pwrcntr.exe` in its configured Wine prefix. Start `Simio.exe` as well
-when controlling simulated temperatures or running Freeze Protect tests. Then
-invoke the helper in that same prefix:
+The validator normally starts `Pwrcntr.exe` and `Simio.exe` on a private Xvfb
+display. For standalone helper use, start both programs in the configured Wine
+prefix and invoke the helper with the same `DISPLAY` and `WINEPREFIX`:
 
 ```sh
 export WINEPREFIX="$HOME/.wine-aqualink"
 wine contrib/power-center-helper/build/pwrcntr-control.exe status
+wine contrib/power-center-helper/build/pwrcntr-control.exe io-status
 wine contrib/power-center-helper/build/pwrcntr-control.exe list
 wine contrib/power-center-helper/build/pwrcntr-control.exe \
   model "E260808 (PD 8 Combo)"
@@ -76,15 +77,16 @@ off`. AqualinkD probe traffic and successful PDA initialization are the
 authoritative verification that emulated power is on.
 
 When a `power_center` section is present in `aqualinkd-validator.yaml`, the
-validator invokes these commands itself. It observes the configured serial
-device before and after toggling, establishes a verified off-to-on power cycle,
-and records every helper result in `power-center.json`. If the validator runs
-as root, Wine is automatically executed as the owner of the configured Wine
-prefix.
+validator starts both emulator programs and invokes these commands itself. Its
+default headless Xvfb display prevents the emulator from receiving ordinary
+desktop input. It observes the configured serial device before and after
+toggling, establishes a verified off-to-on power cycle, and records every
+helper result in `power-center.json`. If the validator runs as root, Wine is
+automatically executed as the owner of the configured Wine prefix.
 
 ## Scope and limitations
 
-- The helper attaches to an already running visible Power Center window.
+- The helper attaches to a visible Power Center window on its X display.
 - Temperature control additionally requires a running visible `Simio.exe`
   Power Center I/O window.
 - It does not call `NetIO.dll`, `iodll.dll`, or any other proprietary API.

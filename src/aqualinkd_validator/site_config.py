@@ -30,6 +30,9 @@ class PowerCenterSiteConfig:
     command_timeout_seconds: float = 10.0
     power_timeout_seconds: float = 8.0
     observation_seconds: float = 0.75
+    startup_timeout_seconds: float = 30.0
+    power_center_executable: Path | None = None
+    simio_executable: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,9 @@ def _power_center_config(value: object, source: Path) -> PowerCenterSiteConfig |
             "command_timeout",
             "power_timeout",
             "observation_time",
+            "startup_timeout",
+            "power_center_executable",
+            "simio_executable",
         },
         location,
     )
@@ -116,6 +122,26 @@ def _power_center_config(value: object, source: Path) -> PowerCenterSiteConfig |
     model = _nonempty_string(value["model"], f"{location}.model")
     port = _nonempty_string(value["port"], f"{location}.port")
     wine = _nonempty_string(value.get("wine", "wine"), f"{location}.wine")
+    power_center_executable = (
+        _config_path(
+            value["power_center_executable"],
+            source,
+            f"{location}.power_center_executable",
+            file=True,
+        )
+        if "power_center_executable" in value
+        else None
+    )
+    simio_executable = (
+        _config_path(
+            value["simio_executable"],
+            source,
+            f"{location}.simio_executable",
+            file=True,
+        )
+        if "simio_executable" in value
+        else None
+    )
     return PowerCenterSiteConfig(
         helper=helper,
         wine_prefix=wine_prefix,
@@ -129,6 +155,11 @@ def _power_center_config(value: object, source: Path) -> PowerCenterSiteConfig |
         observation_seconds=_optional_duration(
             value, "observation_time", 0.75, location
         ),
+        startup_timeout_seconds=_optional_duration(
+            value, "startup_timeout", 30.0, location
+        ),
+        power_center_executable=power_center_executable,
+        simio_executable=simio_executable,
     )
 
 

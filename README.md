@@ -346,8 +346,7 @@ Follow the [Power Center emulator setup
 guide](https://github.com/ballle98/aqualinkd-validator/wiki/Jandy-Windows-Panel-Simulator)
 to:
 
-1. Download and install the official Jandy package directly under Wine; start
-   both `Pwrcntr.exe` and `Simio.exe` for the complete suite.
+1. Download and install the official Jandy package directly under Wine.
 2. Connect its Windows COM port to AqualinkD using physical RS485 adapters or a
    virtual PTY link.
 3. Build or download the open-source `pwrcntr-control.exe` helper.
@@ -363,12 +362,38 @@ Then run, for example:
   pda-power-center-full
 ```
 
+The validator normally launches both `Pwrcntr.exe` and `Simio.exe` on a fresh,
+headless Xvfb display. The windows remain visible to the native helper but
+cannot take focus or receive keyboard and mouse input from the regular desktop.
+On WSLg installations whose X11 socket directory is read-only, the validator
+automatically uses a per-run MIT-cookie-protected loopback X display instead.
+For interactive troubleshooting, show the managed windows on the current X
+desktop instead:
+
+```sh
+.venv/bin/aqualinkd-validator run \
+  --mode jandy-power-center \
+  --power-center-display desktop \
+  --panel-read-write \
+  --site-config /tmp/aqualinkd-validator.yaml \
+  pda-power-center-full
+```
+
+Use `--external-power-center` only to retain the older workflow that attaches
+to emulator windows started outside the validator.
+
+Each managed run locks its Wine prefix and Xvfb allocates an unused display.
+PDA and RS validation can therefore run concurrently when each invocation uses
+a separate Wine prefix, COM/PTY link, AqualinkD configuration and HTTP port.
+Reusing one Wine prefix fails immediately rather than allowing a helper to
+control the wrong emulator instance.
+
 The validator can select the configured model and port and establish a
 serial-verified off-to-on Power Center cycle before each composite member. Its
 Freeze Protect member drives Air from 80°F to 34°F and back through `Simio.exe`,
 verifying activation and delayed clearing through AqualinkD. Commands, helper
-checksum, Wine version, diagnostics, and observed power state are written to
-`power-center.json`.
+checksum, Wine version, display/session details, diagnostics, and observed
+power state are written to `power-center.json`.
 
 The AquaPDA menu target is a bounded, read-only structural traversal, not an
 exhaustive test of every configurable value. It records every visited screen
