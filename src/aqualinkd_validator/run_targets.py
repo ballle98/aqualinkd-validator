@@ -13,6 +13,7 @@ from .testcases import (
 
 RunMode = Literal["live-panel", "jandy-power-center"]
 TargetKind = Literal["testcase", "suite", "composite", "python-suite"]
+ScenarioProtocol = Literal["pda", "rs"]
 
 
 class RuntimeCaseId(StrEnum):
@@ -50,10 +51,15 @@ class PythonTargetDefinition:
     description: str
     mode: RunMode = "live-panel"
     cases: tuple[RuntimeCaseId, ...] = ()
+    rs_cases: tuple[str, ...] = ()
     config_overrides: tuple[tuple[str, str], ...] = ()
     members: tuple[str, ...] = ()
     execution_role: Literal["single", "awake", "sleep"] = "single"
     artifact_suffix: str | None = None
+    mutates_panel: bool = False
+    protocol: ScenarioProtocol = "pda"
+    supported_modes: tuple[RunMode, ...] | None = None
+    power_center_config_overrides: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,9 @@ class ResolvedRunTarget:
     testcase: TestcaseDefinition | None = None
     testcases: tuple[TestcaseDefinition, ...] = ()
     case_ids: tuple[RuntimeCaseId, ...] = ()
+    rs_case_ids: tuple[str, ...] = ()
     members: tuple[str, ...] = ()
+    protocol: ScenarioProtocol = "pda"
 
     @property
     def is_composite(self) -> bool:
@@ -117,7 +125,7 @@ class RunTargetRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple((*self._declarative_suites, *self._python_targets))
 
-    def resolve(self, value: str) -> ResolvedRunTarget:
+    def resolve(self, value: str, *, mode: RunMode | None = None) -> ResolvedRunTarget:
         if Path(value).suffix.casefold() in {".yaml", ".yml"}:
             source = Path(value).expanduser().resolve()
             return self._from_document(source)
@@ -135,10 +143,17 @@ class RunTargetRegistry:
         except KeyError as error:
             raise ValueError(f"unknown run target {value!r}") from error
 
+        supported_modes = target.supported_modes or (target.mode,)
+        effective_mode = mode if mode in supported_modes else target.mode
+        effective_overrides = target.config_overrides
+        if effective_mode == "jandy-power-center":
+            effective_overrides += target.power_center_config_overrides
         if target.members:
-            members = tuple(self.resolve(member) for member in target.members)
+            members = tuple(
+                self.resolve(member, mode=effective_mode) for member in target.members
+            )
             incompatible = [
-                member.identifier for member in members if member.mode != target.mode
+                member.identifier for member in members if member.mode != effective_mode
             ]
             if incompatible:
                 raise ValueError(
@@ -149,7 +164,7 @@ class RunTargetRegistry:
                 identifier=target.identifier,
                 description=target.description,
                 kind="composite",
-                mode=target.mode,
+                mode=effective_mode,
                 mutates_panel=any(member.mutates_panel for member in members),
                 uses_selected_devices=any(
                     member.uses_selected_devices for member in members
@@ -158,20 +173,23 @@ class RunTargetRegistry:
                 config_overrides=(),
                 execution_role="single",
                 members=target.members,
+                protocol=target.protocol,
             )
 
         return ResolvedRunTarget(
             identifier=target.identifier,
             description=target.description,
             kind="python-suite",
-            mode=target.mode,
-            mutates_panel=False,
+            mode=effective_mode,
+            mutates_panel=target.mutates_panel,
             uses_selected_devices=False,
             aqualinkd_args=("-vv",),
-            config_overrides=target.config_overrides,
+            config_overrides=effective_overrides,
             execution_role=target.execution_role,
             artifact_suffix=target.artifact_suffix,
             case_ids=target.cases,
+            rs_case_ids=target.rs_cases,
+            protocol=target.protocol,
         )
 
     def _from_document(
@@ -287,6 +305,44 @@ RUN_TARGETS = RunTargetRegistry(
                 "pda-power-center-freeze",
                 "aquapda-power-center-menu-walk",
             ),
+        ),
+        "rs-fast": PythonTargetDefinition(
+            identifier="rs-fast",
+            description=(
+                "Fast RS startup, Filter Pump, and Aux 1 validation"
+            ),
+            rs_cases=(
+                "rs-initialization",
+                "rs-filter-pump",
+                "rs-aux-1",
+            ),
+            supported_modes=("live-panel", "jandy-power-center"),
+            power_center_config_overrides=(
+                ("panel_type", "RS-16 Combo"),
+                ("device_id", "0x0b"),
+            ),
+            artifact_suffix="fast",
+            mutates_panel=True,
+            protocol="rs",
+        ),
+        "rs-full": PythonTargetDefinition(
+            identifier="rs-full",
+            description=(
+                "Full RS startup, Filter Pump, and discovered auxiliary validation"
+            ),
+            rs_cases=(
+                "rs-initialization",
+                "rs-filter-pump",
+                "rs-auxiliaries",
+            ),
+            supported_modes=("live-panel", "jandy-power-center"),
+            power_center_config_overrides=(
+                ("panel_type", "RS-16 Combo"),
+                ("device_id", "0x0b"),
+            ),
+            artifact_suffix="full",
+            mutates_panel=True,
+            protocol="rs",
         ),
         "aquapda-websocket-transport": PythonTargetDefinition(
             identifier="aquapda-websocket-transport",

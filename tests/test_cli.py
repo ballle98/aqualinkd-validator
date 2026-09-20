@@ -425,6 +425,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(target.identifier, "pda-power-center-full")
         self.assertEqual(target.mode, "jandy-power-center")
 
+    def test_rs_suite_uses_cli_mode_as_execution_target(self) -> None:
+        for mode, expected_overrides in (
+            ("live-panel", {}),
+            (
+                "jandy-power-center",
+                {"panel_type": "RS-16 Combo", "device_id": "0x0b"},
+            ),
+        ):
+            with self.subTest(mode=mode):
+                args = build_parser().parse_args(
+                    [
+                        "run",
+                        "--mode",
+                        mode,
+                        "--panel-read-write",
+                        "rs-fast",
+                    ]
+                )
+                with patch(
+                    "aqualinkd_validator.cli._run_one", return_value=0
+                ) as run_one:
+                    self.assertEqual(_run(args), 0)
+
+                target = run_one.call_args.args[0].run_target
+                self.assertEqual(target.identifier, "rs-fast")
+                self.assertEqual(target.mode, mode)
+                self.assertEqual(target.override_map(), expected_overrides)
+
     def test_run_requires_matching_explicit_character_device(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "aqualinkd.conf"

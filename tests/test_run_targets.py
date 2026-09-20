@@ -79,6 +79,30 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertEqual(target.aqualinkd_args, ("-vv",))
         self.assertEqual(len(target.case_ids), 3)
 
+    def test_rs_suites_use_mode_as_execution_target(self) -> None:
+        for suite in ("rs-fast", "rs-full"):
+            with self.subTest(suite=suite):
+                live = RUN_TARGETS.resolve(suite)
+                power_center = RUN_TARGETS.resolve(
+                    suite, mode="jandy-power-center"
+                )
+
+                self.assertEqual(live.mode, "live-panel")
+                self.assertEqual(live.override_map(), {})
+                self.assertEqual(power_center.mode, "jandy-power-center")
+                self.assertEqual(power_center.protocol, "rs")
+                self.assertTrue(power_center.mutates_panel)
+                self.assertEqual(
+                    power_center.override_map(),
+                    {
+                        "panel_type": "RS-16 Combo",
+                        "device_id": "0x0b",
+                    },
+                )
+
+        self.assertEqual(len(RUN_TARGETS.resolve("rs-fast").rs_case_ids), 3)
+        self.assertEqual(len(RUN_TARGETS.resolve("rs-full").rs_case_ids), 3)
+
     def test_yaml_path_uses_same_resolution_path_as_builtin_name(self) -> None:
         builtin = RUN_TARGETS.resolve("pda-live-fast")
         assert builtin.source is not None

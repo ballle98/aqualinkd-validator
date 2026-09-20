@@ -44,7 +44,7 @@ from .config import (
     write_config_with_overrides,
 )
 from .correlation import correlate_http_actions_with_serial
-from .interfaces import ArtifactStore, EventTimeline, ProcessOutputObserver
+from .interfaces import ArtifactStore, EventTimeline, ProcessOutputObserver, Scenario
 from .metadata import (
     collect_binary_metadata,
     collect_host_metadata,
@@ -54,6 +54,7 @@ from .metrics import summarize_metrics
 from .panel_free import run_panel_free_testcase
 from .pda_scenario import PdaScenarioRuntime
 from .protocols.pda.runtime_config import PdaScenarioConfig
+from .rs_scenario import RsScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
 from .testcases import (
@@ -403,7 +404,7 @@ def _run(args: argparse.Namespace) -> int:
     targets: list[ResolvedRunTarget] = []
     document_sources: dict[str, Path] = {}
     for selected_name in target_names:
-        target = RUN_TARGETS.resolve(selected_name)
+        target = RUN_TARGETS.resolve(selected_name, mode=args.mode)
         if target.source is not None:
             if target.identifier in document_sources:
                 raise ConfigurationError(
@@ -485,7 +486,7 @@ def _run_composite_suite(args: argparse.Namespace) -> int:
     original_label = args.label
     for member_name in composite.members:
         member_args = copy.copy(args)
-        member = RUN_TARGETS.resolve(member_name)
+        member = RUN_TARGETS.resolve(member_name, mode=composite.mode)
         member_args.run_target = member
         suffix = member.artifact_suffix or member_name.removeprefix(
             "pda-live-"
@@ -625,7 +626,7 @@ def _run_process(args: argparse.Namespace) -> int:
         else binary.parent
     )
     target: ResolvedRunTarget | None = getattr(args, "run_target", None)
-    scenario: PdaScenarioRuntime | None = None
+    scenario: Scenario | None = None
     api_base_url: str | None = None
     suite_test_devices: list[str] = []
     if target is not None:
@@ -641,41 +642,53 @@ def _run_process(args: argparse.Namespace) -> int:
             if args.api_base_url is not None
             else None
         )
-        scenario = PdaScenarioRuntime(
-            None,
-            PdaScenarioConfig(
+        if target.protocol == "rs":
+            scenario = RsScenarioRuntime(
                 suite_name=target.identifier,
-                execution_phase=target.execution_role,
-                activation_timeout_seconds=args.pda_activation_timeout,
-                action_timeout_seconds=args.pda_action_timeout,
-                status_timeout_seconds=args.pda_status_timeout,
-                state_timeout_seconds=args.pda_state_timeout,
-                restoration_timeout_seconds=args.pda_cleanup_timeout,
+                case_ids=target.rs_case_ids,
+                api_base_url_override=api_base_url,
                 init_timeout_seconds=args.pda_init_timeout,
-                sleep_timeout_seconds=args.pda_sleep_timeout,
-                test_devices=tuple(suite_test_devices),
-                disabled_button_numbers=disabled_button_numbers,
-                configured_button_labels=configured_button_labels,
-                panel_timezone=args.panel_timezone,
-                panel_time_tolerance_seconds=args.panel_time_tolerance,
-                spa_fill_seconds=site_config.spa.fill_seconds,
-                case_ids=target.case_ids,
-                force_status_home_with_aquapda=(target.mode == "jandy-power-center"),
-            ),
-            api_base_url_override=api_base_url,
-            select_power_center_mode=(
-                select_power_center_mode
-                if power_center_controller is not None
-                else None
-            ),
-            set_power_center_temperature=(
-                set_power_center_temperature
-                if power_center_controller is not None
-                else None
-            ),
-            testcase=target.testcase,
-            testcases=target.testcases,
-        )
+                state_timeout_seconds=args.pda_state_timeout,
+                device_id=read_config_value(config, "device_id") or "0x0b",
+            )
+        else:
+            scenario = PdaScenarioRuntime(
+                None,
+                PdaScenarioConfig(
+                    suite_name=target.identifier,
+                    execution_phase=target.execution_role,
+                    activation_timeout_seconds=args.pda_activation_timeout,
+                    action_timeout_seconds=args.pda_action_timeout,
+                    status_timeout_seconds=args.pda_status_timeout,
+                    state_timeout_seconds=args.pda_state_timeout,
+                    restoration_timeout_seconds=args.pda_cleanup_timeout,
+                    init_timeout_seconds=args.pda_init_timeout,
+                    sleep_timeout_seconds=args.pda_sleep_timeout,
+                    test_devices=tuple(suite_test_devices),
+                    disabled_button_numbers=disabled_button_numbers,
+                    configured_button_labels=configured_button_labels,
+                    panel_timezone=args.panel_timezone,
+                    panel_time_tolerance_seconds=args.panel_time_tolerance,
+                    spa_fill_seconds=site_config.spa.fill_seconds,
+                    case_ids=target.case_ids,
+                    force_status_home_with_aquapda=(
+                        target.mode == "jandy-power-center"
+                    ),
+                ),
+                api_base_url_override=api_base_url,
+                select_power_center_mode=(
+                    select_power_center_mode
+                    if power_center_controller is not None
+                    else None
+                ),
+                set_power_center_temperature=(
+                    set_power_center_temperature
+                    if power_center_controller is not None
+                    else None
+                ),
+                testcase=target.testcase,
+                testcases=target.testcases,
+            )
     artifact_dir = _new_artifact_dir(args.artifacts, args.label)
     args.last_artifact_dir = artifact_dir
     with (
@@ -728,7 +741,7 @@ def _run_in_artifact(
     source_tree: Path | None,
     workdir: Path,
     target: ResolvedRunTarget | None,
-    scenario: PdaScenarioRuntime | None,
+    scenario: Scenario | None,
     api_base_url: str | None,
     suite_test_devices: list[str],
 ) -> int:

@@ -165,6 +165,8 @@ are executed serially and never compete for the serial bus.
 | `pda-power-center-full` | Read-write | Serialized awake, sleep, service, Freeze Protect, and AquaPDA structural-menu coverage against Power Center |
 | `pda-power-center-spa` | Read-write | Explicit Power Center Spa/heating coverage |
 | `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA structural-menu traversal with Power Center as the southbound panel |
+| `rs-fast` | Read-write | RS startup plus restored Filter Pump and Aux 1 transitions; supports live-panel and Power Center modes |
+| `rs-full` | Read-write | RS startup plus restored Filter Pump and every discovered auxiliary; supports live-panel and Power Center modes |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -387,6 +389,33 @@ PDA and RS validation can therefore run concurrently when each invocation uses
 a separate Wine prefix, COM/PTY link, AqualinkD configuration and HTTP port.
 Reusing one Wine prefix fails immediately rather than allowing a helper to
 control the wrong emulator instance.
+
+RS suite names describe coverage rather than the panel environment. Run the
+fast suite against a live RS panel with the default mode:
+
+```sh
+.venv/bin/aqualinkd-validator run \
+  --panel-read-write \
+  rs-fast
+```
+
+To use Power Center instead, configure the site profile model as
+`B29231 (16 Combo)` and select the emulator mode:
+
+```sh
+.venv/bin/aqualinkd-validator run \
+  --mode jandy-power-center \
+  --panel-read-write \
+  --site-config /tmp/aqualinkd-validator.yaml \
+  rs-fast
+```
+
+In Power Center mode, both RS suites derive an AqualinkD configuration with
+`panel_type=RS-16 Combo` and `device_id=0x0b`. Live-panel mode preserves the
+panel type and device ID from the supplied configuration. `rs-fast` verifies
+startup and equipment discovery, then toggles Filter Pump and Aux 1.
+`rs-full` toggles Filter Pump and every discovered `Aux_*` circuit. Both check
+each RS state transition and restore the original state after every operation.
 
 The validator can select the configured model and port and establish a
 serial-verified off-to-on Power Center cycle before each composite member. Its
