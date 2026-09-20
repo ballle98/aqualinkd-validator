@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from aqualinkd_validator.adapters.power_center import (
     PowerCenterAutomationError,
@@ -88,6 +89,46 @@ class PowerCenterControllerTests(unittest.TestCase):
                     ("power", "toggle")
                 ),
                 1,
+            )
+
+    def test_retries_ambiguous_silent_initial_power_transition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "pwrcntr-control.exe"
+            helper.write_bytes(b"helper")
+
+            def execute(
+                command: list[str], _environment: dict[str, str], _timeout: float
+            ) -> subprocess.CompletedProcess[str]:
+                stdout = "wine-10.0" if command[-1] == "--version" else "selected"
+                return subprocess.CompletedProcess(command, 0, stdout, "")
+
+            controller = WinePowerCenterController(
+                PowerCenterSiteConfig(
+                    helper=helper,
+                    wine_prefix=root,
+                    model="B29231 (16 Combo)",
+                    port="COM3",
+                ),
+                execute=execute,
+                observe_traffic=lambda _device, _seconds: False,
+            )
+            with patch.object(
+                controller,
+                "_wait_for_power",
+                side_effect=(
+                    PowerCenterAutomationError("injected stale serial handle"),
+                    None,
+                ),
+            ):
+                result = controller.prepare(Path("/dev/ttyVIRTUAL"))
+
+            self.assertEqual(result.final_power, "on")
+            self.assertEqual(
+                [record.arguments for record in result.commands].count(
+                    ("power", "toggle")
+                ),
+                2,
             )
 
     def test_failed_helper_selection_is_reported(self) -> None:

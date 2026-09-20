@@ -1,0 +1,14 @@
+schema: 1
+
+# WSL/Wine site profile rendered by
+# dotfiles/bin/run-aqualinkd-validator-power-center.sh as
+# /tmp/aqualinkd-validator.yaml. Replace these example paths for a manual run.
+spa:
+  fill_time: 8m
+
+power_center:
+  helper: /home/USER/git/aqualinkd-validator/contrib/power-center-helper/build/pwrcntr-control.exe
+  wine_prefix: /home/USER/.wine-aqualink
+  model: "E260808 (PD 8 Combo)"
+  port: COM3
+  startup_timeout: 30s

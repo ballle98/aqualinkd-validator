@@ -36,6 +36,14 @@ class _FakeProcess:
         self.returncode = -9
 
 
+class _FakeConnection:
+    def __enter__(self) -> _FakeConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
 class PowerCenterSessionTests(unittest.TestCase):
     def _config(self, root: Path) -> PowerCenterSiteConfig:
         installation = root / "drive_c/Program Files/Alwin32"
@@ -145,6 +153,83 @@ class PowerCenterSessionTests(unittest.TestCase):
                         second.start()
                 finally:
                     first.close()
+
+    def test_existing_shared_lock_is_opened_without_create_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = self._config(root / "prefix")
+            lock_path = root / "session.lock"
+            lock_path.write_text("previous\n", encoding="utf-8")
+            session = ManagedWinePowerCenterSession(config)
+
+            with patch(
+                "aqualinkd_validator.adapters.power_center_session.os.open",
+                wraps=os.open,
+            ) as open_lock:
+                handle = session._open_shared_lock(lock_path)
+                handle.close()
+
+            flags = open_lock.call_args_list[0].args[1]
+            self.assertFalse(flags & os.O_CREAT)
+            self.assertTrue(flags & os.O_NOFOLLOW)
+
+    def test_successful_wine_wrappers_may_exit_before_windows_are_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = ManagedWinePowerCenterSession(self._config(Path(directory)))
+            applications = [_FakeProcess(), _FakeProcess()]
+            for process in applications:
+                process.returncode = 0
+            session._applications = applications
+            completed = subprocess.CompletedProcess([], 0, "running", "")
+
+            with patch.object(session, "_run_helper", return_value=completed):
+                session._wait_until_ready()
+
+    def test_root_chowns_xauthority_after_xauth_writes_cookie(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = ManagedWinePowerCenterSession(self._config(Path(directory)))
+            xvfb = _FakeProcess()
+            events: list[str] = []
+
+            def authorize(
+                *_args: object, **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                events.append("xauth")
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                patch.object(session, "_allocate_tcp_display", return_value=123),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.shutil.which",
+                    return_value="/usr/bin/xauth",
+                ),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.subprocess.run",
+                    side_effect=authorize,
+                ),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.subprocess.Popen",
+                    return_value=xvfb,
+                ),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.socket.create_connection",
+                    return_value=_FakeConnection(),
+                ),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.os.geteuid",
+                    return_value=0,
+                ),
+                patch(
+                    "aqualinkd_validator.adapters.power_center_session.os.chown",
+                    side_effect=lambda *_args: events.append("chown"),
+                ),
+            ):
+                try:
+                    session._start_tcp_xvfb("/usr/bin/Xvfb")
+                finally:
+                    session.close()
+
+            self.assertEqual(events, ["xauth", "chown"])
 
     def test_parallel_sessions_allocate_different_tcp_displays(self) -> None:
         class FakeSocket:

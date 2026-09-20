@@ -128,7 +128,7 @@ class ManagedWinePowerCenterSession:
             str(self._config.wine_prefix).encode("utf-8")
         ).hexdigest()[:16]
         path = Path("/tmp") / f"aqualinkd-validator-wine-{digest}.lock"
-        handle = path.open("a+", encoding="utf-8")
+        handle = self._open_shared_lock(path)
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
@@ -143,6 +143,28 @@ class ManagedWinePowerCenterSession:
         handle.write(f"pid={os.getpid()}\n")
         handle.flush()
         self._lock_handle = handle
+
+    def _open_shared_lock(self, path: Path) -> IO[str]:
+        flags = os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            try:
+                descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError:
+                descriptor = os.open(path, flags)
+        try:
+            if os.geteuid() == 0:
+                prefix = self._config.wine_prefix.stat()
+                os.fchown(descriptor, prefix.st_uid, prefix.st_gid)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise PowerCenterAutomationError(
+                    f"Power Center lock path is not a regular file: {path}"
+                )
+            return os.fdopen(descriptor, "r+", encoding="utf-8")
+        except Exception:
+            os.close(descriptor)
+            raise
 
     def _start_xvfb(self) -> None:
         executable = shutil.which("Xvfb")
@@ -213,9 +235,6 @@ class ManagedWinePowerCenterSession:
         xauthority = Path(raw_path)
         self._xauthority = xauthority
         os.chmod(xauthority, 0o600)
-        owner = self._config.wine_prefix.stat().st_uid
-        if os.geteuid() == 0 and owner != 0:
-            os.chown(xauthority, owner, self._config.wine_prefix.stat().st_gid)
         cookie = secrets.token_hex(16)
         xauth = shutil.which("xauth")
         if xauth is None:
@@ -241,6 +260,9 @@ class ManagedWinePowerCenterSession:
                 "could not create Xvfb authorization: "
                 f"{authorization.stderr.strip()}"
             )
+        prefix = self._config.wine_prefix.stat()
+        if os.geteuid() == 0 and prefix.st_uid != 0:
+            os.chown(xauthority, prefix.st_uid, prefix.st_gid)
         self._environment["DISPLAY"] = f"127.0.0.1:{display_number}"
         self._environment["XAUTHORITY"] = str(xauthority)
         process = subprocess.Popen(
@@ -286,7 +308,7 @@ class ManagedWinePowerCenterSession:
             lock_path = Path("/tmp") / (
                 f"aqualinkd-validator-xdisplay-{display_number}.lock"
             )
-            handle = lock_path.open("a+", encoding="utf-8")
+            handle = self._open_shared_lock(lock_path)
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -327,14 +349,14 @@ class ManagedWinePowerCenterSession:
         deadline = time.monotonic() + self._config.startup_timeout_seconds
         diagnostics = "windows not found"
         while time.monotonic() < deadline:
-            exited = [
+            failed = [
                 process.returncode
                 for process in self._applications
-                if process.poll() is not None
+                if process.poll() not in (None, 0)
             ]
-            if exited:
+            if failed:
                 raise PowerCenterAutomationError(
-                    f"Power Center emulator exited during startup: {exited}"
+                    f"Power Center emulator exited during startup: {failed}"
                 )
             status = self._run_helper("status")
             io_status = self._run_helper("io-status")
@@ -397,7 +419,8 @@ class ManagedWinePowerCenterSession:
             process.wait(timeout=5)
 
     def _wine_command(self, *arguments: str) -> list[str]:
-        owner = self._config.wine_prefix.stat().st_uid
+        prefix = self._config.wine_prefix.stat()
+        owner = prefix.st_uid
         if os.geteuid() != 0 or owner == 0:
             return list(arguments)
         try:
@@ -412,4 +435,12 @@ class ManagedWinePowerCenterSession:
         ]
         if "XAUTHORITY" in self._environment:
             environment.append(f"XAUTHORITY={self._environment['XAUTHORITY']}")
-        return ["runuser", "--user", user, "--", "env", *environment, *arguments]
+        return [
+            "runuser",
+            "--user",
+            user,
+            "--",
+            "env",
+            *environment,
+            *arguments,
+        ]

@@ -120,7 +120,17 @@ class WinePowerCenterController:
             self._helper("power", "toggle")
             self._wait_for_power(serial_device, powered=False)
         self._helper("power", "toggle")
-        self._wait_for_power(serial_device, powered=True)
+        try:
+            self._wait_for_power(serial_device, powered=True)
+        except PowerCenterAutomationError:
+            # Power Center does not expose its menu-level power state. After
+            # changing model or port, a silent window can actually be on with
+            # a stale serial handle, making the first toggle turn it off.
+            # Retry the ambiguous transition once and still require traffic.
+            if initial_on:
+                raise
+            self._helper("power", "toggle")
+            self._wait_for_power(serial_device, powered=True)
 
         return PowerCenterPreparation(
             model=self._config.model,
