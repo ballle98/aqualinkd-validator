@@ -46,7 +46,7 @@ wine contrib/power-center-helper/build/pwrcntr-control.exe status
 wine contrib/power-center-helper/build/pwrcntr-control.exe io-status
 wine contrib/power-center-helper/build/pwrcntr-control.exe list
 wine contrib/power-center-helper/build/pwrcntr-control.exe \
-  model "E260808 (PD 8 Combo)"
+  model "B29231 (16 Combo)"
 wine contrib/power-center-helper/build/pwrcntr-control.exe port COM3
 wine contrib/power-center-helper/build/pwrcntr-control.exe mode service
 wine contrib/power-center-helper/build/pwrcntr-control.exe mode timeout

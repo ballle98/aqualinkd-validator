@@ -106,6 +106,28 @@ class PdaPanelIdentityValidatorTests(unittest.TestCase):
         )
         self.assertEqual(difference, 90)
 
+    def test_aquapalm_skips_unavailable_clock_synchronization(self) -> None:
+        progress: list[str] = []
+        result = asyncio.run(
+            self._validator(
+                [self._status(time="1:00AM")],
+                progress=progress,
+            ).validate(
+                init_screen={
+                    "panel_type": "AquaPalm",
+                    "firmware": "REV T.0.1",
+                    "source": "pda_firmware_version_screen",
+                },
+                configured_panel="PD-16 Combo",
+            )
+        )
+
+        clock_check = next(
+            check for check in result.checks if check["name"] == "panel.time"
+        )
+        self.assertEqual(clock_check["status"], "not-applicable")
+        self.assertIn("unavailable on AquaPalm", progress[-1])
+
     async def _validate(
         self,
         statuses: list[dict[str, Any]],

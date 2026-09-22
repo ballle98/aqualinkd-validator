@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TextIO
@@ -158,6 +158,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Run managed Power Center windows on an isolated Xvfb display, "
             "or show them on the current desktop for debugging"
+        ),
+    )
+    run.add_argument(
+        "--rs-protocol-profile",
+        choices=("recommended", "allbutton"),
+        default="recommended",
+        help=(
+            "Use all protocols advertised by the RS Power Center model, or "
+            "isolate the required AllButton protocol for diagnostics"
         ),
     )
     run.add_argument(
@@ -405,6 +414,24 @@ def _run(args: argparse.Namespace) -> int:
     document_sources: dict[str, Path] = {}
     for selected_name in target_names:
         target = RUN_TARGETS.resolve(selected_name, mode=args.mode)
+        if (
+            target.protocol == "rs"
+            and target.mode == "jandy-power-center"
+            and args.rs_protocol_profile == "allbutton"
+        ):
+            target = replace(
+                target,
+                config_overrides=tuple(
+                    (key, value)
+                    for key, value in target.config_overrides
+                    if key
+                    not in {
+                        "rssa_device_id",
+                        "extended_device_id",
+                        "enable_iaqualink",
+                    }
+                ),
+            )
         if target.source is not None:
             if target.identifier in document_sources:
                 raise ConfigurationError(
@@ -530,6 +557,13 @@ def _run_configured_target(
 ) -> int:
     source_config = args.config.expanduser().resolve(strict=True)
     overrides = target.override_map()
+    if target.mode == "jandy-power-center" and target.protocol == "pda":
+        site_config = load_site_config(source_config, args.site_config)
+        if site_config.power_center is not None:
+            overrides = _pda_power_center_overrides_for_model(
+                overrides,
+                site_config.power_center.model,
+            )
     with tempfile.TemporaryDirectory(prefix="aqualinkd-validator-config-") as directory:
         runtime_dir = Path(directory)
         derived_config = runtime_dir / f"{target.identifier}.conf"
@@ -554,6 +588,22 @@ def _run_configured_target(
             None,
         )
         return exit_code
+
+
+def _pda_power_center_overrides_for_model(
+    overrides: dict[str, str],
+    model: str,
+) -> dict[str, str]:
+    """Match forced PDA identity to optional PDA-only Power Center models."""
+
+    result = dict(overrides)
+    panel_types = {
+        "E260808 (PD 8 Combo)": "PD-8 Combo",
+        "E260809 (PD 8 Only)": "PD-8 Only",
+    }
+    if model in panel_types:
+        result["panel_type"] = panel_types[model]
+    return result
 
 
 def _run_process(args: argparse.Namespace) -> int:

@@ -9,6 +9,6 @@ spa:
 power_center:
   helper: /home/USER/git/aqualinkd-validator/contrib/power-center-helper/build/pwrcntr-control.exe
   wine_prefix: /home/USER/.wine-aqualink
-  model: "E260808 (PD 8 Combo)"
+  model: "B29231 (16 Combo)"
   port: COM3
   startup_timeout: 30s

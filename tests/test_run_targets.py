@@ -35,7 +35,18 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertEqual(power_center.mode, "jandy-power-center")
         self.assertEqual(power_center.source, live.source)
         self.assertEqual(power_center.testcases, live.testcases)
-        self.assertEqual(power_center.override_map(), {"pda_sleep_mode": "no"})
+        self.assertEqual(
+            power_center.override_map(),
+            {
+                "pda_sleep_mode": "no",
+                "panel_type": "PD-16 Combo",
+                "device_id": "0x60",
+                "rssa_device_id": "0x00",
+                "extended_device_id": "0x00",
+                "enable_iaqualink": "no",
+                "sync_panel_time": "no",
+            },
+        )
         self.assertEqual(power_center.artifact_suffix, "awake")
 
     def test_power_center_sleep_omits_unsupported_natural_wake(self) -> None:
@@ -50,7 +61,18 @@ class RunTargetRegistryTests(unittest.TestCase):
                 "pda.probe-transition-command",
             ],
         )
-        self.assertEqual(target.override_map(), {"pda_sleep_mode": "yes"})
+        self.assertEqual(
+            target.override_map(),
+            {
+                "pda_sleep_mode": "yes",
+                "panel_type": "PD-16 Combo",
+                "device_id": "0x60",
+                "rssa_device_id": "0x00",
+                "extended_device_id": "0x00",
+                "enable_iaqualink": "no",
+                "sync_panel_time": "no",
+            },
+        )
         self.assertEqual(target.execution_role, "sleep")
 
     def test_power_center_full_serializes_awake_sleep_and_menu_walk(self) -> None:
@@ -79,6 +101,20 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertEqual(target.aqualinkd_args, ("-vv",))
         self.assertEqual(len(target.case_ids), 3)
 
+        power_center = RUN_TARGETS.resolve("aquapda-power-center-menu-walk")
+        self.assertEqual(
+            power_center.override_map(),
+            {
+                "pda_sleep_mode": "no",
+                "panel_type": "PD-16 Combo",
+                "device_id": "0x60",
+                "rssa_device_id": "0x00",
+                "extended_device_id": "0x00",
+                "enable_iaqualink": "no",
+                "sync_panel_time": "no",
+            },
+        )
+
     def test_rs_suites_use_mode_as_execution_target(self) -> None:
         for suite in ("rs-fast", "rs-full"):
             with self.subTest(suite=suite):
@@ -97,6 +133,9 @@ class RunTargetRegistryTests(unittest.TestCase):
                     {
                         "panel_type": "RS-16 Combo",
                         "device_id": "0x0b",
+                        "rssa_device_id": "0x48",
+                        "extended_device_id": "0x30",
+                        "enable_iaqualink": "yes",
                     },
                 )
 

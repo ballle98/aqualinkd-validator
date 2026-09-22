@@ -390,6 +390,24 @@ a separate Wine prefix, COM/PTY link, AqualinkD configuration and HTTP port.
 Reusing one Wine prefix fails immediately rather than allowing a helper to
 control the wrong emulator instance.
 
+`B29231 (16 Combo)` is the default Power Center model for both protocol
+families. PDA Power Center targets force AqualinkD into the emulator's
+AquaPalm-compatible PDA path with `panel_type=PD-16 Combo`, `device_id=0x60`,
+the RS-only protocol IDs disabled, and `sync_panel_time=no` because AquaPalm
+does not expose the clock-setting menu. RS targets instead apply the full RS-16
+configuration described below. Select `E260808 (PD 8 Combo)` explicitly only
+when the test specifically needs the emulator's PDA-only power-center model;
+the validator automatically changes the forced identity to `PD-8 Combo`. It
+does not provide additional PDA menu coverage.
+
+The B29231 PDA fast suite, Freeze Protect behavior, and AquaPalm menu walk are
+validated. The broader PDA full suite remains intentionally strict and may
+report AqualinkD/Power Center interoperability failures rather than treating
+them as unsupported: the current B29231 run detected unstable state after a
+17-control Equipment Status setup, a failed command after a sleep/probe
+transition, and Service mode remaining `Ready`. All three runs restored the
+emulated equipment before continuing or exiting.
+
 RS suite names describe coverage rather than the panel environment. Run the
 fast suite against a live RS panel with the default mode:
 
@@ -410,9 +428,14 @@ To use Power Center instead, configure the site profile model as
   rs-fast
 ```
 
-In Power Center mode, both RS suites derive an AqualinkD configuration with
-`panel_type=RS-16 Combo` and `device_id=0x0b`. Live-panel mode preserves the
-panel type and device ID from the supplied configuration. `rs-fast` verifies
+In Power Center mode, both RS suites default to the configuration recommended
+by `rs485mon` for `B29231 (16 Combo)`: `panel_type=RS-16 Combo`, AllButton
+`device_id=0x0b`, RSSA `rssa_device_id=0x48`, AquaLink Touch
+`extended_device_id=0x30`, and `enable_iaqualink=yes`. These complementary
+protocols run concurrently, matching a normal full-featured RS installation.
+Use `--rs-protocol-profile allbutton` to omit RSSA and AquaLink Touch when
+isolating the required AllButton path for diagnostics. Live-panel mode
+preserves all protocol IDs from the supplied configuration. `rs-fast` verifies
 startup and equipment discovery, then toggles Filter Pump and Aux 1.
 `rs-full` toggles Filter Pump and every discovered `Aux_*` circuit. Both check
 each RS state transition and restore the original state after every operation.
@@ -430,8 +453,9 @@ and reports the firmware-screen interface as PDA, AquaPalm, or unknown. A PDA
 run must expose `SYSTEM SETUP`, enter `FREEZE PROTECT`, and report its displayed
 setpoint. AquaPalm does not expose those newer PDA-only menus, so their absence
 is recorded as an explicit coverage limitation. The tested `Pwrcntr.exe`
-currently identifies its interface as AquaPalm even when a PDA-16 Power Center
-model is selected; physical-panel PDA runs retain coverage of the newer menus.
+identifies its PDA interface as AquaPalm when B29231 is selected and AqualinkD
+is forced into PDA mode; physical-panel PDA runs retain coverage of the newer
+menus.
 
 ## Panel-free RS485 tests
 

@@ -68,6 +68,7 @@ class DeclarativeTargetDefinition:
     mode: RunMode = "live-panel"
     description: str | None = None
     artifact_suffix: str | None = None
+    config_overrides: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class RunTargetRegistry:
                 mode=declarative_target.mode,
                 description=declarative_target.description,
                 artifact_suffix=declarative_target.artifact_suffix,
+                config_overrides=declarative_target.config_overrides,
             )
         try:
             target = self._python_targets[value]
@@ -200,6 +202,7 @@ class RunTargetRegistry:
         mode: RunMode = "live-panel",
         description: str | None = None,
         artifact_suffix: str | None = None,
+        config_overrides: tuple[tuple[str, str], ...] = (),
     ) -> ResolvedRunTarget:
         document = load_testcase_document(source)
         if document.mode != "physical-panel":
@@ -233,7 +236,7 @@ class RunTargetRegistry:
             mutates_panel=document.mutates_panel,
             uses_selected_devices=document.uses_selected_devices,
             aqualinkd_args=document.config.aqualinkd_args,
-            config_overrides=document.config.overrides,
+            config_overrides=document.config.overrides + config_overrides,
             execution_role=document.config.execution_role,
             artifact_suffix=artifact_suffix,
             source=source,
@@ -244,6 +247,14 @@ class RunTargetRegistry:
 
 
 _ROOT = Path(__file__).parents[2]
+_PDA_POWER_CENTER_OVERRIDES = (
+    ("panel_type", "PD-16 Combo"),
+    ("device_id", "0x60"),
+    ("rssa_device_id", "0x00"),
+    ("extended_device_id", "0x00"),
+    ("enable_iaqualink", "no"),
+    ("sync_panel_time", "no"),
+)
 RUN_TARGETS = RunTargetRegistry(
     {
         name: DeclarativeTargetDefinition(
@@ -265,6 +276,7 @@ RUN_TARGETS = RunTargetRegistry(
                 f"PDA {phase} validation against the Jandy Power Center emulator"
             ),
             artifact_suffix=phase,
+            config_overrides=_PDA_POWER_CENTER_OVERRIDES,
         )
         for phase in ("fast", "awake", "spa")
     }
@@ -273,16 +285,19 @@ RUN_TARGETS = RunTargetRegistry(
             _ROOT / "testcases" / "suites" / "pda-power-center-sleep.yaml",
             mode="jandy-power-center",
             artifact_suffix="sleep",
+            config_overrides=_PDA_POWER_CENTER_OVERRIDES,
         ),
         "pda-power-center-service": DeclarativeTargetDefinition(
             _ROOT / "testcases" / "suites" / "pda-power-center-service.yaml",
             mode="jandy-power-center",
             artifact_suffix="service",
+            config_overrides=_PDA_POWER_CENTER_OVERRIDES,
         ),
         "pda-power-center-freeze": DeclarativeTargetDefinition(
             _ROOT / "testcases" / "suites" / "pda-power-center-freeze.yaml",
             mode="jandy-power-center",
             artifact_suffix="freeze",
+            config_overrides=_PDA_POWER_CENTER_OVERRIDES,
         ),
     },
     {
@@ -320,6 +335,9 @@ RUN_TARGETS = RunTargetRegistry(
             power_center_config_overrides=(
                 ("panel_type", "RS-16 Combo"),
                 ("device_id", "0x0b"),
+                ("rssa_device_id", "0x48"),
+                ("extended_device_id", "0x30"),
+                ("enable_iaqualink", "yes"),
             ),
             artifact_suffix="fast",
             mutates_panel=True,
@@ -339,6 +357,9 @@ RUN_TARGETS = RunTargetRegistry(
             power_center_config_overrides=(
                 ("panel_type", "RS-16 Combo"),
                 ("device_id", "0x0b"),
+                ("rssa_device_id", "0x48"),
+                ("extended_device_id", "0x30"),
+                ("enable_iaqualink", "yes"),
             ),
             artifact_suffix="full",
             mutates_panel=True,
@@ -382,6 +403,7 @@ RUN_TARGETS = RunTargetRegistry(
                 RuntimeCaseId.AQUAPDA_MENU_WALK,
             ),
             config_overrides=(("pda_sleep_mode", "no"),),
+            power_center_config_overrides=_PDA_POWER_CENTER_OVERRIDES,
             execution_role="awake",
             artifact_suffix="aquapda-power-center-menu-walk",
         ),

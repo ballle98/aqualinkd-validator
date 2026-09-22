@@ -401,7 +401,7 @@ static void usage(void) {
            L"  pwrcntr-control.exe list\n"
            L"  pwrcntr-control.exe controls\n"
            L"  pwrcntr-control.exe io-controls\n"
-           L"  pwrcntr-control.exe model \"E260808 (PD 8 Combo)\"\n"
+           L"  pwrcntr-control.exe model \"B29231 (16 Combo)\"\n"
            L"  pwrcntr-control.exe port COM3\n"
            L"  pwrcntr-control.exe mode auto|service|timeout\n"
            L"  pwrcntr-control.exe temperature air|water|solar VALUE\n"

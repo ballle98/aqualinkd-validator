@@ -82,6 +82,22 @@ class PdaPanelIdentityValidator:
                 f"reported {reported_panel}"
             )
 
+        if reported_panel.casefold() == "aquapalm":
+            checks.append(
+                {
+                    "name": "panel.time",
+                    "status": "not-applicable",
+                    "panel_time": status.get("time"),
+                    "reason": (
+                        "AquaPalm does not expose the PDA clock-setting menu"
+                    ),
+                }
+            )
+            self._progress(
+                "[ SKIP ] Panel clock synchronization is unavailable on AquaPalm"
+            )
+            return self._result(panel_report, checks, reported_signature)
+
         partial = self._result(panel_report, checks, reported_signature)
         try:
             timezone = ZoneInfo(self._config.timezone)

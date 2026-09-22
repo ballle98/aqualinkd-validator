@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from aqualinkd_validator.adapters.supplemental_capture import SupplementalLogSpec
 from aqualinkd_validator.cli import (
+    _pda_power_center_overrides_for_model,
     _run,
     _run_composite_suite,
     build_aqualinkd_command,
@@ -26,6 +27,26 @@ from aqualinkd_validator.run_targets import RUN_TARGETS
 
 
 class CliTests(unittest.TestCase):
+    def test_optional_pda_only_power_center_model_uses_matching_panel_type(
+        self,
+    ) -> None:
+        base = {"panel_type": "PD-16 Combo", "device_id": "0x60"}
+
+        self.assertEqual(
+            _pda_power_center_overrides_for_model(
+                base,
+                "E260808 (PD 8 Combo)",
+            )["panel_type"],
+            "PD-8 Combo",
+        )
+        self.assertEqual(
+            _pda_power_center_overrides_for_model(
+                base,
+                "B29231 (16 Combo)",
+            )["panel_type"],
+            "PD-16 Combo",
+        )
+
     def test_power_center_display_defaults_headless_and_accepts_desktop(self) -> None:
         headless = build_parser().parse_args(
             ["run", "--mode", "jandy-power-center", "--panel", "pda-power-center-fast"]
@@ -430,7 +451,13 @@ class CliTests(unittest.TestCase):
             ("live-panel", {}),
             (
                 "jandy-power-center",
-                {"panel_type": "RS-16 Combo", "device_id": "0x0b"},
+                {
+                    "panel_type": "RS-16 Combo",
+                    "device_id": "0x0b",
+                    "rssa_device_id": "0x48",
+                    "extended_device_id": "0x30",
+                    "enable_iaqualink": "yes",
+                },
             ),
         ):
             with self.subTest(mode=mode):
@@ -452,6 +479,28 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(target.identifier, "rs-fast")
                 self.assertEqual(target.mode, mode)
                 self.assertEqual(target.override_map(), expected_overrides)
+
+    def test_rs_suite_can_isolate_allbutton_in_power_center_mode(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--mode",
+                "jandy-power-center",
+                "--rs-protocol-profile",
+                "allbutton",
+                "--panel-read-write",
+                "rs-fast",
+            ]
+        )
+
+        with patch("aqualinkd_validator.cli._run_one", return_value=0) as run_one:
+            self.assertEqual(_run(args), 0)
+
+        target = run_one.call_args.args[0].run_target
+        self.assertEqual(
+            target.override_map(),
+            {"panel_type": "RS-16 Combo", "device_id": "0x0b"},
+        )
 
     def test_run_requires_matching_explicit_character_device(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
