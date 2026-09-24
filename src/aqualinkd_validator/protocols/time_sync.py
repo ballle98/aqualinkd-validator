@@ -10,15 +10,11 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ...interfaces import AqualinkApi, ScenarioContext
-from .identity import PdaPanelIdentityValidator
-from .programmer import PdaProgrammerObserver
-
-TIME_ACTIVE = "is active (Set PDA time)"
-TIME_FINISHED = "(Set PDA time) finished"
+from ..interfaces import AqualinkApi, ScenarioContext
+from .pda.programmer import PdaProgrammerObserver
 
 
-class PdaTimeSyncFailure(RuntimeError):
+class PanelTimeSyncFailure(RuntimeError):
     """Raised when panel time synchronization cannot be measured or restored."""
 
 
@@ -41,7 +37,7 @@ def find_faketime_library() -> Path:
         if candidate.is_file():
             return candidate.resolve()
     raise FileNotFoundError(
-        "pda-live-time requires libfaketime; install the libfaketime package "
+        "time validation requires libfaketime; install the libfaketime package "
         "or set LIBFAKETIME_PATH"
     )
 
@@ -91,7 +87,12 @@ class ProcessTimeController:
 
 
 @dataclass(frozen=True)
-class PdaTimeSyncConfig:
+class PanelTimeSyncConfig:
+    protocol: str
+    task_name: str
+    active_marker: str
+    finished_marker: str
+    artifact_name: str
     timezone: str
     observation_seconds: float
     poll_seconds: float
@@ -100,8 +101,8 @@ class PdaTimeSyncConfig:
     action_timeout_seconds: float
 
 
-class PdaTimeSyncValidator:
-    """Measure PDA minute edges and exercise the force-time HTTP endpoint."""
+class PanelTimeSyncValidator:
+    """Measure panel minute edges and exercise the force-time HTTP endpoint."""
 
     def __init__(
         self,
@@ -109,7 +110,7 @@ class PdaTimeSyncValidator:
         api: AqualinkApi,
         controller: ProcessTimeController,
         programmer: PdaProgrammerObserver,
-        config: PdaTimeSyncConfig,
+        config: PanelTimeSyncConfig,
     ) -> None:
         self._api = api
         self._controller = controller
@@ -126,9 +127,13 @@ class PdaTimeSyncValidator:
             "transitions": [],
             "http_force_sync": None,
         }
-        context.artifacts.write_json("pda-time.json", report)
+        context.artifacts.write_json(self._config.artifact_name, report)
+        await self._wait_for_time(
+            offset_seconds=self._controller.offset_seconds,
+        )
         print(
-            "[ WAIT ] Observing PDA minute transitions for "
+            f"[ WAIT ] Observing {self._config.protocol.upper()} minute "
+            "transitions for "
             f"{self._config.observation_seconds:g}s",
             flush=True,
         )
@@ -165,18 +170,18 @@ class PdaTimeSyncValidator:
                 round(interval - 60.0, 6) for interval in intervals
             ],
         }
-        context.artifacts.write_json("pda-time.json", report)
+        context.artifacts.write_json(self._config.artifact_name, report)
 
         self._controller.set_offset(0)
         report["http_force_sync"] = await self._force_sync(context)
         self._controller.mark_panel_restored()
-        context.artifacts.write_json("pda-time.json", report)
+        context.artifacts.write_json(self._config.artifact_name, report)
         return report
 
     async def restore(self, context: ScenarioContext) -> None:
         self._controller.set_offset(0)
         if self._controller.panel_requires_restore:
-            print("[CLEAN ] Restoring PDA panel clock to real time", flush=True)
+            print("[CLEAN ] Restoring panel clock to real time", flush=True)
             await self._force_sync(context)
             self._controller.mark_panel_restored()
 
@@ -213,7 +218,7 @@ class PdaTimeSyncValidator:
                 <= self._config.convergence_tolerance_seconds,
             }
             transitions.append(transition)
-            context.artifacts.write_json("pda-time.json", report)
+            context.artifacts.write_json(self._config.artifact_name, report)
             print(
                 f"[ TIME ] {previous} -> {panel_time}; boundary error "
                 f"{transition['boundary_error_seconds']:.3f}s",
@@ -223,7 +228,7 @@ class PdaTimeSyncValidator:
 
         minimum = max(1, int(self._config.observation_seconds // 60) - 1)
         if len(transitions) < minimum:
-            raise PdaTimeSyncFailure(
+            raise PanelTimeSyncFailure(
                 f"observed {len(transitions)} minute transitions; expected at "
                 f"least {minimum} during {self._config.observation_seconds:g}s"
             )
@@ -233,8 +238,8 @@ class PdaTimeSyncValidator:
             if not transition["correlated_with_expected_boundary"]
         ]
         if mismatches:
-            raise PdaTimeSyncFailure(
-                f"{len(mismatches)} observed PDA transitions were outside the "
+            raise PanelTimeSyncFailure(
+                f"{len(mismatches)} observed panel transitions were outside the "
                 "expected clock tolerance"
             )
 
@@ -249,8 +254,8 @@ class PdaTimeSyncValidator:
         active = await self._programmer.wait_for_active(
             context.monitor,
             context.timeline,
-            task_name="Set PDA time",
-            marker=TIME_ACTIVE,
+            task_name=self._config.task_name,
+            marker=self._config.active_marker,
             after=cursor,
             requested_offset_ns=requested,
             timeout_seconds=self._config.activation_timeout_seconds,
@@ -258,12 +263,12 @@ class PdaTimeSyncValidator:
         completed = await self._programmer.wait_for_completion(
             context.monitor,
             context.timeline,
-            task_name="Set PDA time",
-            marker=TIME_FINISHED,
+            task_name=self._config.task_name,
+            marker=self._config.finished_marker,
             active=active,
             timeout_seconds=self._config.action_timeout_seconds,
         )
-        difference = await self._wait_for_real_time()
+        difference = await self._wait_for_time(offset_seconds=0)
         return {
             "endpoint": "/api/set_date_time",
             "method": "PUT",
@@ -273,22 +278,22 @@ class PdaTimeSyncValidator:
             "panel_difference_seconds": difference,
         }
 
-    async def _wait_for_real_time(self) -> int:
+    async def _wait_for_time(self, *, offset_seconds: int) -> int:
         timezone = ZoneInfo(self._config.timezone)
         deadline = (
             asyncio.get_running_loop().time() + self._config.action_timeout_seconds
         )
         while True:
-            _, _, difference = PdaPanelIdentityValidator.panel_time_difference(
-                await self._api.status(),
-                timezone,
+            difference = self._panel_time_difference(
+                self._panel_time(await self._api.status()),
+                datetime.now(timezone) + timedelta(seconds=offset_seconds),
             )
             if difference <= self._config.convergence_tolerance_seconds:
                 return difference
             if asyncio.get_running_loop().time() >= deadline:
-                raise PdaTimeSyncFailure(
-                    "PDA panel clock did not converge to real time after the "
-                    f"HTTP request; difference {difference}s"
+                raise PanelTimeSyncFailure(
+                    "Panel clock did not converge to the expected process time; "
+                    f"difference {difference}s"
                 )
             await asyncio.sleep(self._config.poll_seconds)
 
@@ -296,7 +301,7 @@ class PdaTimeSyncValidator:
     def _panel_time(status: dict[str, Any]) -> str:
         value = status.get("time")
         if not isinstance(value, str):
-            raise PdaTimeSyncFailure("/api/status did not contain panel time")
+            raise PanelTimeSyncFailure("/api/status did not contain panel time")
         return value.strip()
 
     @staticmethod
@@ -308,8 +313,8 @@ class PdaTimeSyncValidator:
         try:
             panel = datetime.strptime(cls._normalize_time(panel_time), "%I:%M%p")
         except ValueError as error:
-            raise PdaTimeSyncFailure(
-                f"could not parse PDA panel time {panel_time!r}"
+            raise PanelTimeSyncFailure(
+                f"could not parse panel time {panel_time!r}"
             ) from error
         expected_minutes = expected.hour * 60 + expected.minute
         panel_minutes = panel.hour * 60 + panel.minute
@@ -319,3 +324,9 @@ class PdaTimeSyncValidator:
             + expected.microsecond / 1_000_000
             - minute_delta * 60
         )
+
+    @classmethod
+    def _panel_time_difference(cls, panel_time: str, expected: datetime) -> int:
+        boundary_error = cls._boundary_error_seconds(panel_time, expected)
+        difference = round(abs(boundary_error))
+        return min(difference, 24 * 3600 - difference)

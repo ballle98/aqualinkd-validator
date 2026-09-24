@@ -79,6 +79,7 @@ class HttpApiTests(unittest.TestCase):
             value="1",
             timeout_seconds=2,
         )
+        await api.request("PUT", "/api/set_date_time")
 
         self.assertEqual(snapshot.temp_units, "f")
         self.assertEqual(status["temp_units"], "f")
@@ -89,6 +90,9 @@ class HttpApiTests(unittest.TestCase):
         self.assertTrue(requests[3].data.endswith(b"value=79"))
         self.assertIn(b"PUT /api/Spa_Mode/set HTTP/1.1", requests[4].data)
         self.assertTrue(requests[4].data.endswith(b"value=1"))
+        self.assertIn(b"PUT /api/set_date_time HTTP/1.1", requests[5].data)
+        self.assertIn(b"Content-Length: 0\r\n", requests[5].data)
+        self.assertTrue(requests[5].data.endswith(b"\r\n\r\n"))
 
 
 if __name__ == "__main__":

@@ -115,7 +115,7 @@ class AqualinkHttpApi:
             "Accept: application/json",
             "Connection: close",
         ]
-        if body:
+        if method == "PUT":
             headers.extend(
                 [
                     "Content-Type: application/x-www-form-urlencoded",

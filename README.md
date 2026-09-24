@@ -168,6 +168,7 @@ are executed serially and never compete for the serial bus.
 | `aquapda-power-center-menu-walk` | Read-only | Recursive AquaPDA structural-menu traversal with Power Center as the southbound panel |
 | `rs-fast` | Read-write | RS startup plus restored Filter Pump and Aux 1 transitions; supports live-panel and Power Center modes |
 | `rs-full` | Read-write | RS startup plus restored Filter Pump and every discovered auxiliary; supports live-panel and Power Center modes |
+| `rs-time` | Read-write | Isolates the AllButton path, starts AqualinkD two hours ahead, measures RS minute accuracy/jitter, then restores real time through the HTTP force-sync endpoint; supports live-panel and Power Center modes |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -176,13 +177,15 @@ externally emulated panel test. Use `--panelw` (also
 `--panel-read-write`) to authorize equipment changes. A read-write testcase is
 rejected unless read-write access was explicitly granted.
 
-The `pda-live-time` suite requires `libfaketime` (included in the validator
-container). It does not grant the container `SYS_TIME` and never changes the
-host clock. Use `--pda-time-observation SECONDS` to measure for several minutes
-or hours and `--pda-time-poll SECONDS` to tune the `/api/status` sampling rate.
-The suite writes raw transitions and summary jitter to `pda-time.json`. If the
-test fails or is interrupted after applying the offset, cleanup returns the
-AqualinkD process to real time and requests one final panel synchronization.
+The `pda-live-time` and `rs-time` suites require `libfaketime` (included in the
+validator container). They do not grant the container `SYS_TIME` or change the
+host clock. Use `--time-observation SECONDS` to measure for several minutes or
+hours and `--time-poll SECONDS` to tune the `/api/status` sampling rate. The
+older `--pda-time-*` spellings remain accepted.
+The suites write raw transitions and summary jitter to `pda-time.json` or
+`rs-time.json`. If a test fails or is interrupted after applying the offset,
+cleanup returns the AqualinkD process to real time and requests one final panel
+synchronization.
 
 For example:
 

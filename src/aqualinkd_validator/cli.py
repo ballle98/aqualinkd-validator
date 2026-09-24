@@ -54,7 +54,7 @@ from .metrics import summarize_metrics
 from .panel_free import run_panel_free_testcase
 from .pda_scenario import PdaScenarioRuntime
 from .protocols.pda.runtime_config import PdaScenarioConfig
-from .protocols.pda.time_sync import ProcessTimeController, find_faketime_library
+from .protocols.time_sync import ProcessTimeController, find_faketime_library
 from .rs_scenario import RsScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
@@ -288,16 +288,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum panel clock difference in seconds",
     )
     run.add_argument(
+        "--time-observation",
         "--pda-time-observation",
+        dest="pda_time_observation",
         type=_positive_float,
         default=300.0,
-        help="Seconds to observe minute-transition accuracy in pda-live-time",
+        help="Seconds to observe minute-transition accuracy in time suites",
     )
     run.add_argument(
+        "--time-poll",
         "--pda-time-poll",
+        dest="pda_time_poll",
         type=_positive_float,
         default=0.1,
-        help="HTTP status polling interval for pda-live-time",
+        help="HTTP status polling interval for time suites",
     )
     run.add_argument(
         "suites",
@@ -721,6 +725,13 @@ def _run_process(args: argparse.Namespace) -> int:
                 init_timeout_seconds=args.pda_init_timeout,
                 state_timeout_seconds=args.pda_state_timeout,
                 device_id=read_config_value(config, "device_id") or "0x0b",
+                time_controller=time_controller,
+                panel_timezone=args.panel_timezone,
+                panel_time_tolerance_seconds=args.panel_time_tolerance,
+                time_observation_seconds=args.pda_time_observation,
+                time_poll_seconds=args.pda_time_poll,
+                activation_timeout_seconds=args.pda_activation_timeout,
+                action_timeout_seconds=args.pda_action_timeout,
             )
         else:
             scenario = PdaScenarioRuntime(

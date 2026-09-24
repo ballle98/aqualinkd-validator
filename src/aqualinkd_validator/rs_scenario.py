@@ -10,6 +10,12 @@ from .config import normalize_api_base_url
 from .domain import EquipmentSnapshot, EquipmentStateError, device_state_details
 from .engine import ScenarioRecorder
 from .interfaces import AqualinkApi, ScenarioContext, ScenarioOutcome
+from .protocols.pda.programmer import PdaProgrammerObserver
+from .protocols.time_sync import (
+    PanelTimeSyncConfig,
+    PanelTimeSyncValidator,
+    ProcessTimeController,
+)
 
 RS_FAST_CASES = ("rs-initialization", "rs-filter-pump", "rs-aux-1")
 RS_FULL_CASES = ("rs-initialization", "rs-filter-pump", "rs-auxiliaries")
@@ -45,6 +51,13 @@ class RsScenarioRuntime:
         init_timeout_seconds: float = 180.0,
         state_timeout_seconds: float = 10.0,
         device_id: str = "0x0b",
+        time_controller: ProcessTimeController | None = None,
+        panel_timezone: str = "UTC",
+        panel_time_tolerance_seconds: float = 120.0,
+        time_observation_seconds: float = 300.0,
+        time_poll_seconds: float = 0.1,
+        activation_timeout_seconds: float = 130.0,
+        action_timeout_seconds: float = 90.0,
     ) -> None:
         self._case_ids = case_ids
         self._api_base_url_override = api_base_url_override
@@ -52,6 +65,20 @@ class RsScenarioRuntime:
         self._init_timeout_seconds = init_timeout_seconds
         self._state_timeout_seconds = state_timeout_seconds
         self._device_id = device_id.casefold()
+        self._time_controller = time_controller
+        self._time_config = PanelTimeSyncConfig(
+            protocol="rs",
+            task_name="Set time",
+            active_marker="is active (Set time)",
+            finished_marker="(Set time) finished",
+            artifact_name="rs-time.json",
+            timezone=panel_timezone,
+            observation_seconds=time_observation_seconds,
+            poll_seconds=time_poll_seconds,
+            convergence_tolerance_seconds=panel_time_tolerance_seconds,
+            activation_timeout_seconds=activation_timeout_seconds,
+            action_timeout_seconds=action_timeout_seconds,
+        )
         self._api: AqualinkApi | None = None
         self._initial_snapshot: EquipmentSnapshot | None = None
         self._touched: set[str] = set()
@@ -71,6 +98,7 @@ class RsScenarioRuntime:
             "aqualinkd": None,
             "cases": [],
             "measurements": [],
+            "time_sync": None,
             "skipped": [],
             "restoration": {
                 "attempted": False,
@@ -96,6 +124,13 @@ class RsScenarioRuntime:
             if restoration_errors:
                 status = "failed"
                 reason = "restoration_failed"
+            if self._time_controller is not None:
+                try:
+                    await self._restore_real_time(context)
+                except Exception as error:
+                    status = "failed"
+                    reason = "time_restoration_failed"
+                    self._report["restoration"]["errors"].append(str(error))
 
         self._report["status"] = status
         self._report["reason"] = reason
@@ -114,6 +149,8 @@ class RsScenarioRuntime:
         try:
             if case_id == "rs-initialization":
                 await self._initialize(context)
+            elif case_id == "rs-time-sync":
+                await self._test_time_sync(context)
             elif case_id == "rs-filter-pump":
                 await self._exercise_device("Filter_Pump", context)
             elif case_id == "rs-aux-1":
@@ -134,6 +171,25 @@ class RsScenarioRuntime:
             raise
         case["status"] = "passed"
         self._recorder.progress_finished(case_id, started, passed=True)
+
+    def _time_validator(self) -> PanelTimeSyncValidator:
+        if self._time_controller is None:
+            raise RsScenarioFailure("RS time suite has no process clock controller")
+        return PanelTimeSyncValidator(
+            api=self._require_api(),
+            controller=self._time_controller,
+            programmer=PdaProgrammerObserver(),
+            config=self._time_config,
+        )
+
+    async def _test_time_sync(self, context: ScenarioContext) -> None:
+        self._report["time_sync"] = await self._time_validator().validate(context)
+
+    async def _restore_real_time(self, context: ScenarioContext) -> None:
+        assert self._time_controller is not None
+        if not self._time_controller.panel_requires_restore:
+            return
+        await self._time_validator().restore(context)
 
     async def _initialize(self, context: ScenarioContext) -> None:
         identity_task = asyncio.create_task(self._capture_identity(context))

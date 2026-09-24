@@ -47,9 +47,9 @@ from .protocols.pda.runtime_config import (
     SPA_HEATER_SETPOINT_FINISHED_MARKERS,
     PdaScenarioConfig,
 )
-from .protocols.pda.time_sync import (
-    PdaTimeSyncConfig,
-    PdaTimeSyncValidator,
+from .protocols.time_sync import (
+    PanelTimeSyncConfig,
+    PanelTimeSyncValidator,
     ProcessTimeController,
 )
 from .run_targets import RuntimeCaseId
@@ -310,14 +310,19 @@ class PdaScenarioRuntime:
         }
         return operations[case_id]
 
-    def _time_validator(self) -> PdaTimeSyncValidator:
+    def _time_validator(self) -> PanelTimeSyncValidator:
         if self._time_controller is None:
             raise ScenarioFailure("PDA time suite has no process clock controller")
-        return PdaTimeSyncValidator(
+        return PanelTimeSyncValidator(
             api=self._session.api_client,
             controller=self._time_controller,
             programmer=self._session.programmer,
-            config=PdaTimeSyncConfig(
+            config=PanelTimeSyncConfig(
+                protocol="pda",
+                task_name="Set PDA time",
+                active_marker="is active (Set PDA time)",
+                finished_marker="(Set PDA time) finished",
+                artifact_name="pda-time.json",
                 timezone=self._config.panel_timezone,
                 observation_seconds=self._config.time_observation_seconds,
                 poll_seconds=self._config.time_poll_seconds,

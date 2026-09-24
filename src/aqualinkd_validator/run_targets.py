@@ -371,6 +371,30 @@ RUN_TARGETS = RunTargetRegistry(
             mutates_panel=True,
             protocol="rs",
         ),
+        "rs-time": PythonTargetDefinition(
+            identifier="rs-time",
+            description=(
+                "RS automatic and HTTP-triggered clock synchronization with "
+                "minute-transition accuracy and jitter measurement"
+            ),
+            rs_cases=("rs-initialization", "rs-time-sync"),
+            config_overrides=(
+                ("sync_panel_time", "yes"),
+                ("sync_time_accurately", "yes"),
+                ("rssa_device_id", "0x00"),
+                ("extended_device_id", "0x00"),
+                ("enable_iaqualink", "no"),
+            ),
+            supported_modes=("live-panel", "jandy-power-center"),
+            power_center_config_overrides=(
+                ("panel_type", "RS-16 Combo"),
+                ("device_id", "0x0b"),
+            ),
+            artifact_suffix="time",
+            mutates_panel=True,
+            protocol="rs",
+            fake_time_offset_seconds=7200,
+        ),
         "rs-full": PythonTargetDefinition(
             identifier="rs-full",
             description=(

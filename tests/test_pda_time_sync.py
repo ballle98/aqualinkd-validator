@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from aqualinkd_validator.protocols.pda.time_sync import (
-    PdaTimeSyncValidator,
+from aqualinkd_validator.protocols.time_sync import (
+    PanelTimeSyncValidator,
     ProcessTimeController,
     find_faketime_library,
 )
@@ -19,12 +19,20 @@ class ProcessTimeControllerTests(unittest.TestCase):
         early = datetime(2026, 1, 1, 10, 4, 59, 750_000, tzinfo=UTC)
 
         self.assertEqual(
-            PdaTimeSyncValidator._boundary_error_seconds("10:05 AM", late),
+            PanelTimeSyncValidator._boundary_error_seconds("10:05 AM", late),
             0.25,
         )
         self.assertEqual(
-            PdaTimeSyncValidator._boundary_error_seconds("10:05 AM", early),
+            PanelTimeSyncValidator._boundary_error_seconds("10:05 AM", early),
             -0.25,
+        )
+
+    def test_panel_time_difference_wraps_across_midnight(self) -> None:
+        expected = datetime(2026, 1, 2, 0, 0, 15, tzinfo=UTC)
+
+        self.assertEqual(
+            PanelTimeSyncValidator._panel_time_difference("11:59 PM", expected),
+            75,
         )
 
     def test_updates_process_local_offset_and_tracks_panel_restoration(self) -> None:

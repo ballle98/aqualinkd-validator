@@ -160,6 +160,24 @@ class RunTargetRegistryTests(unittest.TestCase):
         self.assertEqual(len(RUN_TARGETS.resolve("rs-fast").rs_case_ids), 3)
         self.assertEqual(len(RUN_TARGETS.resolve("rs-full").rs_case_ids), 3)
 
+    def test_rs_time_suite_reuses_isolated_clock_in_power_center_mode(self) -> None:
+        target = RUN_TARGETS.resolve("rs-time", mode="jandy-power-center")
+
+        self.assertEqual(target.rs_case_ids, ("rs-initialization", "rs-time-sync"))
+        self.assertEqual(target.fake_time_offset_seconds, 7200)
+        self.assertEqual(
+            target.override_map(),
+            {
+                "sync_panel_time": "yes",
+                "sync_time_accurately": "yes",
+                "rssa_device_id": "0x00",
+                "extended_device_id": "0x00",
+                "enable_iaqualink": "no",
+                "panel_type": "RS-16 Combo",
+                "device_id": "0x0b",
+            },
+        )
+
     def test_yaml_path_uses_same_resolution_path_as_builtin_name(self) -> None:
         builtin = RUN_TARGETS.resolve("pda-live-fast")
         assert builtin.source is not None
