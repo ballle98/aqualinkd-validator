@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from ...domain import EquipmentSnapshot
 from ...interfaces import AqualinkApi, EventTimeline, OrderedLogEvents
@@ -29,6 +30,7 @@ class PdaStartupConfig:
     api_timeout_seconds: float
     panel_timezone: str
     panel_time_tolerance_seconds: float
+    panel_time_offset_seconds: int = 0
     api_poll_seconds: float = 0.25
 
 
@@ -112,6 +114,8 @@ class PdaStartupCoordinator:
                 timeout_seconds=self._config.init_timeout_seconds,
             ),
             progress=self._progress,
+            now=lambda timezone: datetime.now(timezone)
+            + timedelta(seconds=self._config.panel_time_offset_seconds),
         ).validate(
             init_screen=session.init_screen,
             configured_panel=identity["configured_panel_type"],

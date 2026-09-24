@@ -10,6 +10,9 @@ LABEL org.opencontainers.image.revision="${VCS_REF}"
 WORKDIR /opt/aqualinkd-validator
 
 COPY requirements.txt ./
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libfaketime \
+    && rm -rf /var/lib/apt/lists/*
 RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
 COPY src ./src

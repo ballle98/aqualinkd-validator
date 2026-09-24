@@ -66,6 +66,7 @@ class PdaRunReport:
             "sleep_cycle": None,
             "aquapda_transport": None,
             "menu_walk": None,
+            "time_sync": None,
             "cases": [],
             "measurements": [],
             "skipped": [],

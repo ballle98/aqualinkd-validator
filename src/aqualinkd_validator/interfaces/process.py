@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -54,4 +55,5 @@ class ProcessRunner(Protocol):
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
         output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
+        environment: Mapping[str, str] | None = None,
     ) -> RunResult: ...

@@ -153,6 +153,7 @@ are executed serially and never compete for the serial bus.
 | `pda-live-auto-config` | Read-write | Forces `device_id=0xFF`, verifies configured labels survive panel detection, and exercises the configured Aux 1 entry |
 | `pda-live-awake` | Read-write | Fast coverage, safe Equipment Status reconciliation, and consecutive-device operations with PDA sleep disabled |
 | `pda-live-sleep` | Read-write | Natural sleep/wake timing plus commands during STATUS retries and after probing resumes |
+| `pda-live-time` | Read-write | Starts AqualinkD two hours ahead with a process-local clock, measures PDA minute accuracy/jitter for five minutes with sleep disabled, then restores real time through the HTTP force-sync endpoint |
 | `pda-live-long` | Read-write | Composite awake and sleep suites in separate AqualinkD processes |
 | `pda-live-spa` | Read-write | Opt-in Pool fill, Spa mode, active Spa Heater, cooldown, and restoration test |
 | `aquapda-websocket-transport` | Read-only | AquaPDA packet, checksum, ACK timing, and navigation-failure regression |
@@ -174,6 +175,14 @@ Use `--panel` (also `--panel-read-only`) to authorize a read-only physical or
 externally emulated panel test. Use `--panelw` (also
 `--panel-read-write`) to authorize equipment changes. A read-write testcase is
 rejected unless read-write access was explicitly granted.
+
+The `pda-live-time` suite requires `libfaketime` (included in the validator
+container). It does not grant the container `SYS_TIME` and never changes the
+host clock. Use `--pda-time-observation SECONDS` to measure for several minutes
+or hours and `--pda-time-poll SECONDS` to tune the `/api/status` sampling rate.
+The suite writes raw transitions and summary jitter to `pda-time.json`. If the
+test fails or is interrupted after applying the offset, cleanup returns the
+AqualinkD process to real time and requests one final panel synchronization.
 
 For example:
 

@@ -66,6 +66,9 @@ class PdaScenarioConfig:
     configured_button_labels: tuple[tuple[int, str], ...] = ()
     panel_timezone: str = "UTC"
     panel_time_tolerance_seconds: float = 120.0
+    panel_time_offset_seconds: int = 0
+    time_observation_seconds: float = 300.0
+    time_poll_seconds: float = 0.1
     spa_fill_seconds: float | None = None
     case_ids: tuple[RuntimeCaseId, ...] = ()
     aquapda_packet_count: int = 20

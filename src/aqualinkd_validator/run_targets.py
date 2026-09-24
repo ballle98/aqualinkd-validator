@@ -18,6 +18,7 @@ ScenarioProtocol = Literal["pda", "rs"]
 
 class RuntimeCaseId(StrEnum):
     INITIALIZATION = "initialization"
+    PDA_TIME_SYNC = "pda-time-sync"
     AQUAPDA_TRANSPORT = "aquapda-transport"
     AQUAPDA_MENU_WALK = "aquapda-menu-walk"
 
@@ -33,6 +34,10 @@ RUNTIME_CASES = {
     RuntimeCaseId.INITIALIZATION: RuntimeCaseDefinition(
         RuntimeCaseId.INITIALIZATION,
         "PDA initialization, identity, and clock",
+    ),
+    RuntimeCaseId.PDA_TIME_SYNC: RuntimeCaseDefinition(
+        RuntimeCaseId.PDA_TIME_SYNC,
+        "PDA clock synchronization accuracy and jitter",
     ),
     RuntimeCaseId.AQUAPDA_TRANSPORT: RuntimeCaseDefinition(
         RuntimeCaseId.AQUAPDA_TRANSPORT,
@@ -60,6 +65,7 @@ class PythonTargetDefinition:
     protocol: ScenarioProtocol = "pda"
     supported_modes: tuple[RunMode, ...] | None = None
     power_center_config_overrides: tuple[tuple[str, str], ...] = ()
+    fake_time_offset_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +100,7 @@ class ResolvedRunTarget:
     rs_case_ids: tuple[str, ...] = ()
     members: tuple[str, ...] = ()
     protocol: ScenarioProtocol = "pda"
+    fake_time_offset_seconds: int | None = None
 
     @property
     def is_composite(self) -> bool:
@@ -192,6 +199,7 @@ class RunTargetRegistry:
             case_ids=target.cases,
             rs_case_ids=target.rs_cases,
             protocol=target.protocol,
+            fake_time_offset_seconds=target.fake_time_offset_seconds,
         )
 
     def _from_document(
@@ -305,6 +313,26 @@ RUN_TARGETS = RunTargetRegistry(
             identifier="pda-live-long",
             description="Composite awake and sleep PDA live-panel validation",
             members=("pda-live-awake", "pda-live-sleep"),
+        ),
+        "pda-live-time": PythonTargetDefinition(
+            identifier="pda-live-time",
+            description=(
+                "PDA automatic and HTTP-triggered clock synchronization with "
+                "minute-transition accuracy and jitter measurement"
+            ),
+            cases=(
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.PDA_TIME_SYNC,
+            ),
+            config_overrides=(
+                ("pda_sleep_mode", "no"),
+                ("sync_panel_time", "yes"),
+                ("sync_time_accurately", "yes"),
+            ),
+            execution_role="awake",
+            artifact_suffix="time",
+            mutates_panel=True,
+            fake_time_offset_seconds=7200,
         ),
         "pda-power-center-full": PythonTargetDefinition(
             identifier="pda-power-center-full",

@@ -57,7 +57,14 @@ class RuntimeCaseRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(outcome.status, "failed")
         self.assertEqual(outcome.reason, "case_failures")
-        self.assertEqual(observed, list(RuntimeCaseId))
+        self.assertEqual(
+            observed,
+            [
+                RuntimeCaseId.INITIALIZATION,
+                RuntimeCaseId.AQUAPDA_TRANSPORT,
+                RuntimeCaseId.AQUAPDA_MENU_WALK,
+            ],
+        )
         self.assertTrue(report["safe_to_continue"])
         self.assertEqual(
             [case["status"] for case in report["cases"]],  # type: ignore[index]

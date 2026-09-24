@@ -8,7 +8,7 @@ import re
 import signal
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -174,6 +174,7 @@ async def supervise(
     scenario: Scenario | None = None,
     scenario_cleanup_seconds: float = 120.0,
     output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
+    environment: Mapping[str, str] | None = None,
 ) -> RunResult:
     start_ns = time.monotonic_ns()
     timeline = Timeline(artifact_dir / "timeline.jsonl", start_ns)
@@ -201,6 +202,7 @@ async def supervise(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env=({**os.environ, **environment} if environment else None),
         )
         await timeline.write("process_started", pid=process.pid)
         assert process.stdout is not None
@@ -379,6 +381,7 @@ class LocalProcessRunner:
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
         output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
+        environment: Mapping[str, str] | None = None,
     ) -> RunResult:
         return await supervise(
             command,
@@ -390,6 +393,7 @@ class LocalProcessRunner:
             scenario=scenario,
             scenario_cleanup_seconds=scenario_cleanup_seconds,
             output_observer_factories=output_observer_factories,
+            environment=environment,
         )
 
 

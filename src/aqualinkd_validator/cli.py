@@ -54,6 +54,7 @@ from .metrics import summarize_metrics
 from .panel_free import run_panel_free_testcase
 from .pda_scenario import PdaScenarioRuntime
 from .protocols.pda.runtime_config import PdaScenarioConfig
+from .protocols.pda.time_sync import ProcessTimeController, find_faketime_library
 from .rs_scenario import RsScenarioRuntime
 from .run_targets import RUN_TARGETS, ResolvedRunTarget
 from .site_config import SiteConfig, load_site_config
@@ -285,6 +286,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_float,
         default=120.0,
         help="Maximum panel clock difference in seconds",
+    )
+    run.add_argument(
+        "--pda-time-observation",
+        type=_positive_float,
+        default=300.0,
+        help="Seconds to observe minute-transition accuracy in pda-live-time",
+    )
+    run.add_argument(
+        "--pda-time-poll",
+        type=_positive_float,
+        default=0.1,
+        help="HTTP status polling interval for pda-live-time",
     )
     run.add_argument(
         "suites",
@@ -676,6 +689,14 @@ def _run_process(args: argparse.Namespace) -> int:
         else binary.parent
     )
     target: ResolvedRunTarget | None = getattr(args, "run_target", None)
+    time_controller = (
+        ProcessTimeController(
+            target.fake_time_offset_seconds,
+            find_faketime_library(),
+        )
+        if target is not None and target.fake_time_offset_seconds is not None
+        else None
+    )
     scenario: Scenario | None = None
     api_base_url: str | None = None
     suite_test_devices: list[str] = []
@@ -719,6 +740,13 @@ def _run_process(args: argparse.Namespace) -> int:
                     configured_button_labels=configured_button_labels,
                     panel_timezone=args.panel_timezone,
                     panel_time_tolerance_seconds=args.panel_time_tolerance,
+                    panel_time_offset_seconds=(
+                        time_controller.offset_seconds
+                        if time_controller is not None
+                        else 0
+                    ),
+                    time_observation_seconds=args.pda_time_observation,
+                    time_poll_seconds=args.pda_time_poll,
                     spa_fill_seconds=site_config.spa.fill_seconds,
                     case_ids=target.case_ids,
                     force_status_home_with_aquapda=(
@@ -738,6 +766,7 @@ def _run_process(args: argparse.Namespace) -> int:
                 ),
                 testcase=target.testcase,
                 testcases=target.testcases,
+                time_controller=time_controller,
             )
     artifact_dir = _new_artifact_dir(args.artifacts, args.label)
     args.last_artifact_dir = artifact_dir
@@ -769,10 +798,17 @@ def _run_process(args: argparse.Namespace) -> int:
                 scenario=scenario,
                 api_base_url=api_base_url,
                 suite_test_devices=suite_test_devices,
+                process_environment=(
+                    time_controller.environment
+                    if time_controller is not None
+                    else None
+                ),
             )
         finally:
             if power_center_controller is not None:
                 power_center_controller.close()
+            if time_controller is not None:
+                time_controller.close()
 
 
 def _run_in_artifact(
@@ -794,6 +830,7 @@ def _run_in_artifact(
     scenario: Scenario | None,
     api_base_url: str | None,
     suite_test_devices: list[str],
+    process_environment: dict[str, str] | None,
 ) -> int:
     power_center_metadata: dict[str, Any] | None = None
     if power_center_controller is not None and site_config.power_center is not None:
@@ -917,6 +954,14 @@ def _run_in_artifact(
             "panel_time": {
                 "timezone": args.panel_timezone,
                 "tolerance_seconds": args.panel_time_tolerance,
+                "observation_seconds": args.pda_time_observation,
+                "poll_seconds": args.pda_time_poll,
+                "process_offset_seconds": (
+                    target.fake_time_offset_seconds if target is not None else None
+                ),
+                "clock_isolation": (
+                    "libfaketime" if process_environment is not None else None
+                ),
             },
             "timeouts_seconds": {
                 "activation": args.pda_activation_timeout,
@@ -1030,6 +1075,7 @@ def _run_in_artifact(
                     if args.capture_serial == "aqualinkd-log"
                     else ()
                 ),
+                environment=process_environment,
             )
         )
     except KeyboardInterrupt:

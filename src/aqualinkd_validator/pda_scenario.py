@@ -47,6 +47,11 @@ from .protocols.pda.runtime_config import (
     SPA_HEATER_SETPOINT_FINISHED_MARKERS,
     PdaScenarioConfig,
 )
+from .protocols.pda.time_sync import (
+    PdaTimeSyncConfig,
+    PdaTimeSyncValidator,
+    ProcessTimeController,
+)
 from .run_targets import RuntimeCaseId
 from .testcases import (
     DeclarativeScenarioRunner,
@@ -78,11 +83,13 @@ class PdaScenarioRuntime:
         ) = None,
         testcase: TestcaseDefinition | None = None,
         testcases: tuple[TestcaseDefinition, ...] = (),
+        time_controller: ProcessTimeController | None = None,
     ) -> None:
         self._aquapda_client_factory = aquapda_client_factory
         self._select_power_center_mode = select_power_center_mode
         self._set_power_center_temperature = set_power_center_temperature
         self._config = config
+        self._time_controller = time_controller
         if testcase is not None and testcases:
             raise ValueError("specify testcase or testcases, not both")
         self._testcases = testcases or ((testcase,) if testcase is not None else ())
@@ -166,30 +173,34 @@ class PdaScenarioRuntime:
         )
 
     async def run(self, context: ScenarioContext) -> ScenarioOutcome:
-        if self._testcases:
-            return await DeclarativeScenarioRunner(
+        try:
+            if self._testcases:
+                return await DeclarativeScenarioRunner(
+                    suite_name=self._config.suite_name,
+                    testcases=self._testcases,
+                    report=self._session.report,
+                    recorder=self._session.recorder,
+                    restoration=self._session.restoration,
+                    keywords=lambda testcase_id: self._testcase_keywords(
+                        context,
+                        testcase_id,
+                    ),
+                    restore=self._session.restore_with_progress,
+                    initialized=lambda: self._session.initial_snapshot is not None,
+                ).run(context)
+            return await RuntimeCaseRunner(
                 suite_name=self._config.suite_name,
-                testcases=self._testcases,
+                case_ids=self._case_ids,
                 report=self._session.report,
                 recorder=self._session.recorder,
                 restoration=self._session.restoration,
-                keywords=lambda testcase_id: self._testcase_keywords(
-                    context,
-                    testcase_id,
-                ),
-                restore=self._session.restore_with_progress,
+                operation=lambda case_id: self._case_operation(case_id, context)(),
+                restore=lambda name: self._session.restore_with_progress(context, name),
                 initialized=lambda: self._session.initial_snapshot is not None,
             ).run(context)
-        return await RuntimeCaseRunner(
-            suite_name=self._config.suite_name,
-            case_ids=self._case_ids,
-            report=self._session.report,
-            recorder=self._session.recorder,
-            restoration=self._session.restoration,
-            operation=lambda case_id: self._case_operation(case_id, context)(),
-            restore=lambda name: self._session.restore_with_progress(context, name),
-            initialized=lambda: self._session.initial_snapshot is not None,
-        ).run(context)
+        finally:
+            if self._time_controller is not None:
+                await self._restore_real_time(context)
 
     def _testcase_keywords(
         self,
@@ -291,12 +302,46 @@ class PdaScenarioRuntime:
     ) -> Callable[[], Awaitable[None]]:
         operations: dict[RuntimeCaseId, Callable[[], Awaitable[None]]] = {
             RuntimeCaseId.INITIALIZATION: lambda: self._session.initialize(context),
+            RuntimeCaseId.PDA_TIME_SYNC: lambda: self._test_time_sync(context),
             RuntimeCaseId.AQUAPDA_TRANSPORT: lambda: self._test_aquapda_transport(
                 context
             ),
             RuntimeCaseId.AQUAPDA_MENU_WALK: lambda: self._test_menu_walk(context),
         }
         return operations[case_id]
+
+    def _time_validator(self) -> PdaTimeSyncValidator:
+        if self._time_controller is None:
+            raise ScenarioFailure("PDA time suite has no process clock controller")
+        return PdaTimeSyncValidator(
+            api=self._session.api_client,
+            controller=self._time_controller,
+            programmer=self._session.programmer,
+            config=PdaTimeSyncConfig(
+                timezone=self._config.panel_timezone,
+                observation_seconds=self._config.time_observation_seconds,
+                poll_seconds=self._config.time_poll_seconds,
+                convergence_tolerance_seconds=(
+                    self._config.panel_time_tolerance_seconds
+                ),
+                activation_timeout_seconds=self._config.activation_timeout_seconds,
+                action_timeout_seconds=self._config.action_timeout_seconds,
+            ),
+        )
+
+    async def _test_time_sync(self, context: ScenarioContext) -> None:
+        report = await self._time_validator().validate(context)
+        self._session.report["time_sync"] = report
+
+    async def _restore_real_time(self, context: ScenarioContext) -> None:
+        assert self._time_controller is not None
+        if not self._time_controller.panel_requires_restore:
+            return
+        try:
+            await self._time_validator().restore(context)
+        except Exception as error:
+            print(f"[ FAIL ] Could not restore PDA panel clock: {error}", flush=True)
+            raise
 
     async def _test_aquapda_transport(
         self,

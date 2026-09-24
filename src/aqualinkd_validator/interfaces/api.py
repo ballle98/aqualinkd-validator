@@ -15,6 +15,15 @@ class AqualinkApi(Protocol):
 
     async def status(self) -> dict[str, Any]: ...
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        value: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str: ...
+
     async def set_device(self, identifier: str, enabled: bool) -> None: ...
 
     async def set_setpoint(self, identifier: str, value: int) -> None: ...

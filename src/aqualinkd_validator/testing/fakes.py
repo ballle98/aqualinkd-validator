@@ -4,7 +4,7 @@ import asyncio
 import copy
 import io
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
@@ -349,6 +349,7 @@ class FakeProcessRunner:
         scenario: Scenario | None = None,
         scenario_cleanup_seconds: float = 120.0,
         output_observer_factories: tuple[ProcessOutputObserverFactory, ...] = (),
+        environment: Mapping[str, str] | None = None,
     ) -> RunResult:
         del (
             artifact_dir,
@@ -359,6 +360,7 @@ class FakeProcessRunner:
             scenario,
             scenario_cleanup_seconds,
             output_observer_factories,
+            environment,
         )
         self.commands.append(list(command))
         return self.result

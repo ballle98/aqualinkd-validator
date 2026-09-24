@@ -4,10 +4,28 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aqualinkd_validator.run_targets import RUN_TARGETS
+from aqualinkd_validator.run_targets import RUN_TARGETS, RuntimeCaseId
 
 
 class RunTargetRegistryTests(unittest.TestCase):
+    def test_pda_time_suite_uses_isolated_clock_and_disables_sleep(self) -> None:
+        target = RUN_TARGETS.resolve("pda-live-time")
+
+        self.assertEqual(
+            target.case_ids,
+            (RuntimeCaseId.INITIALIZATION, RuntimeCaseId.PDA_TIME_SYNC),
+        )
+        self.assertEqual(target.fake_time_offset_seconds, 7200)
+        self.assertTrue(target.mutates_panel)
+        self.assertEqual(
+            target.override_map(),
+            {
+                "pda_sleep_mode": "no",
+                "sync_panel_time": "yes",
+                "sync_time_accurately": "yes",
+            },
+        )
+
     def test_named_declarative_suite_is_fully_normalized(self) -> None:
         target = RUN_TARGETS.resolve("pda-live-awake")
 

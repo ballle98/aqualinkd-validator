@@ -103,6 +103,9 @@ class PdaRunSession:
                     panel_time_tolerance_seconds=(
                         self.config.panel_time_tolerance_seconds
                     ),
+                    panel_time_offset_seconds=(
+                        self.config.panel_time_offset_seconds
+                    ),
                 ),
                 progress=lambda message: print(message, flush=True),
                 retryable_api_errors=(ApiError,),
