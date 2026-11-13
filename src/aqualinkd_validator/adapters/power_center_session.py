@@ -107,7 +107,14 @@ class ManagedWinePowerCenterSession:
         return self._require_executable(executable)
 
     def _installation(self) -> Path:
-        return self._config.wine_prefix / "drive_c" / "Program Files" / "Alwin32"
+        # The 32-bit installer lands in Program Files (x86) under a WoW64 prefix;
+        # only a win32 prefix has a single Program Files directory.
+        drive_c = self._config.wine_prefix / "drive_c"
+        for directory in ("Program Files (x86)", "Program Files"):
+            candidate = drive_c / directory / "Alwin32"
+            if candidate.is_dir():
+                return candidate
+        return drive_c / "Program Files" / "Alwin32"
 
     @staticmethod
     def _require_executable(path: Path) -> Path:

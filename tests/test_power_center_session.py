@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -45,8 +46,13 @@ class _FakeConnection:
 
 
 class PowerCenterSessionTests(unittest.TestCase):
-    def _config(self, root: Path) -> PowerCenterSiteConfig:
-        installation = root / "drive_c/Program Files/Alwin32"
+    def _config(
+        self,
+        root: Path,
+        *,
+        program_files: str = "Program Files",
+    ) -> PowerCenterSiteConfig:
+        installation = root / "drive_c" / program_files / "Alwin32"
         installation.mkdir(parents=True)
         power_center = installation / "Pwrcntr.exe"
         simio = installation / "Simio.exe"
@@ -264,6 +270,41 @@ class PowerCenterSessionTests(unittest.TestCase):
                 second.close()
 
             self.assertNotEqual(first_display, second_display)
+
+    def test_installation_prefers_wow64_program_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = self._config(root, program_files="Program Files (x86)")
+            (root / "drive_c/Program Files/Alwin32").mkdir(parents=True)
+            session = ManagedWinePowerCenterSession(config)
+
+            self.assertEqual(
+                session._installation(),
+                root / "drive_c/Program Files (x86)/Alwin32",
+            )
+
+    def test_installation_uses_native_program_files_for_win32_prefixes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = self._config(root)
+            session = ManagedWinePowerCenterSession(config)
+
+            self.assertEqual(
+                session._installation(),
+                root / "drive_c/Program Files/Alwin32",
+            )
+
+    def test_installation_defaults_to_native_program_files_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = self._config(root)
+            shutil.rmtree(root / "drive_c")
+            session = ManagedWinePowerCenterSession(config)
+
+            self.assertEqual(
+                session._installation(),
+                root / "drive_c/Program Files/Alwin32",
+            )
 
 
 if __name__ == "__main__":
